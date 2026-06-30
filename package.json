@@ -9,7 +9,9 @@
     "lint": "oxlint",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
-    "check": "npm run typecheck && npm run lint && npm run format:check",
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm run test:run",
+    "test": "vitest",
+    "test:run": "vitest run",
     "typecheck": "tsc -b",
     "preview": "vite preview"
   },
@@ -18,14 +20,19 @@
     "react-dom": "^19.2.7"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@total-typescript/ts-reset": "^0.6.1",
     "@types/node": "^26.0.1",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
+    "jsdom": "^29.1.1",
     "oxfmt": "^0.57.0",
     "oxlint": "^1.71.0",
     "typescript": "^6.0.3",
-    "vite": "^8.1.1"
+    "vite": "^8.1.1",
+    "vitest": "^4.1.9"
   }
 }
