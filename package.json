@@ -7,6 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "check": "npm run typecheck && npm run lint && npm run format:check",
     "typecheck": "tsc -b",
     "preview": "vite preview"
   },
@@ -20,6 +23,7 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
+    "oxfmt": "^0.57.0",
     "oxlint": "^1.71.0",
     "typescript": "^6.0.3",
     "vite": "^8.1.1"
