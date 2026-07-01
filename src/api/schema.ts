@@ -25,6 +25,7 @@ export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
     HealthResponse: {
+      database: components["schemas"]["HealthStatus"];
       status: components["schemas"]["HealthStatus"];
     };
     /** @enum {string} */

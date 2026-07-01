@@ -1,4 +1,5 @@
 mod config;
+mod db;
 mod http;
 mod openapi;
 
@@ -26,12 +27,15 @@ async fn main() -> ExitCode {
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::from_env()?;
+    let db = db::connect(&config).await?;
+    db::migrate(&db).await?;
+
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     let local_addr = listener.local_addr()?;
 
     tracing::info!(%local_addr, ?config.environment, "starting kestrel backend");
 
-    axum::serve(listener, http::app(&config))
+    axum::serve(listener, http::app(&config, http::AppState::new(db)))
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 

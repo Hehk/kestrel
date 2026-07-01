@@ -1,15 +1,28 @@
-use axum::{routing::get, Json, Router};
+use axum::{extract::State, http::StatusCode, routing::get, Json, Router};
 use serde::Serialize;
+use sqlx::SqlitePool;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use utoipa::{OpenApi, ToSchema};
 use utoipa_swagger_ui::SwaggerUi;
 
-use crate::{config::Config, openapi::ApiDoc};
+use crate::{config::Config, db, openapi::ApiDoc};
+
+#[derive(Clone)]
+pub struct AppState {
+    db: SqlitePool,
+}
+
+impl AppState {
+    pub fn new(db: SqlitePool) -> Self {
+        Self { db }
+    }
+}
 
 #[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct HealthResponse {
-    status: HealthStatus,
+    pub status: HealthStatus,
+    pub database: HealthStatus,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -25,13 +38,20 @@ pub enum HealthStatus {
         (status = 200, description = "Backend health check", body = HealthResponse)
     )
 )]
-pub(crate) async fn health() -> Json<HealthResponse> {
-    Json(HealthResponse {
+pub(crate) async fn health(
+    State(state): State<AppState>,
+) -> Result<Json<HealthResponse>, StatusCode> {
+    db::health_check(&state.db)
+        .await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+
+    Ok(Json(HealthResponse {
         status: HealthStatus::Ok,
-    })
+        database: HealthStatus::Ok,
+    }))
 }
 
-pub fn app(config: &Config) -> Router {
+pub fn app(config: &Config, state: AppState) -> Router {
     let api = Router::new()
         .route("/health", get(health))
         .route("/openapi.json", get(openapi_json));
@@ -39,7 +59,8 @@ pub fn app(config: &Config) -> Router {
     let router = Router::new()
         .nest("/api", api)
         .layer(TraceLayer::new_for_http())
-        .layer(CorsLayer::permissive());
+        .layer(CorsLayer::permissive())
+        .with_state(state);
 
     if config.environment.is_development() {
         router.merge(SwaggerUi::new("/api/docs").url("/api/docs/openapi.json", ApiDoc::openapi()))
@@ -61,21 +82,33 @@ mod tests {
     use serde_json::Value;
     use tower::ServiceExt;
 
-    use super::app;
-    use crate::config::{Config, Environment};
+    use super::{app, AppState};
+    use crate::{
+        config::{Config, Environment},
+        db,
+    };
 
     fn test_config(environment: Environment) -> Config {
         Config {
             bind_addr: "127.0.0.1:0"
                 .parse()
                 .expect("test bind address should parse"),
+            database_url: "sqlite::memory:".to_string(),
             environment,
         }
     }
 
+    async fn test_app(environment: Environment) -> axum::Router {
+        let config = test_config(environment);
+        let db = db::connect(&config).await.expect("test db should connect");
+        db::migrate(&db).await.expect("test migrations should run");
+        app(&config, AppState::new(db))
+    }
+
     #[tokio::test]
     async fn health_returns_ok() {
-        let response = app(&test_config(Environment::Development))
+        let response = test_app(Environment::Development)
+            .await
             .oneshot(
                 Request::builder()
                     .uri("/api/health")
@@ -92,12 +125,16 @@ mod tests {
             .expect("body should collect");
         let json: Value = serde_json::from_slice(&body).expect("body should be json");
 
-        assert_eq!(json, serde_json::json!({ "status": "ok" }));
+        assert_eq!(
+            json,
+            serde_json::json!({ "database": "ok", "status": "ok" })
+        );
     }
 
     #[tokio::test]
     async fn openapi_includes_health_path() {
-        let response = app(&test_config(Environment::Development))
+        let response = test_app(Environment::Development)
+            .await
             .oneshot(
                 Request::builder()
                     .uri("/api/openapi.json")
@@ -115,5 +152,9 @@ mod tests {
         let json: Value = serde_json::from_slice(&body).expect("body should be json");
 
         assert!(json["paths"]["/api/health"].is_object());
+        assert!(json["components"]["schemas"]["HealthResponse"]["required"]
+            .as_array()
+            .expect("required fields should be an array")
+            .contains(&serde_json::json!("database")));
     }
 }
