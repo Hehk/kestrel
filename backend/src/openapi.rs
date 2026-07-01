@@ -9,7 +9,11 @@ use crate::http::{HealthResponse, HealthStatus};
         version = "0.1.0",
         description = "Backend API for Kestrel"
     ),
-    paths(crate::http::health),
+    paths(
+        crate::github_oauth::callback,
+        crate::github_oauth::start,
+        crate::http::health
+    ),
     components(schemas(HealthResponse, HealthStatus))
 )]
 pub struct ApiDoc;

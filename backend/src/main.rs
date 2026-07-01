@@ -1,6 +1,7 @@
 mod config;
 mod crypto;
 mod db;
+mod github_oauth;
 mod http;
 mod openapi;
 mod session;
@@ -11,6 +12,8 @@ use crate::config::Config;
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    load_dotenv();
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -27,6 +30,11 @@ async fn main() -> ExitCode {
     }
 }
 
+fn load_dotenv() {
+    let _ = dotenvy::dotenv();
+    let _ = dotenvy::from_path("backend/.env");
+}
+
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::from_env()?;
     let db = db::connect(&config).await?;
@@ -37,9 +45,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!(%local_addr, ?config.environment, "starting kestrel backend");
 
-    axum::serve(listener, http::app(&config, http::AppState::new(db)))
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        http::app(&config, http::AppState::new(db, config.clone())),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     Ok(())
 }

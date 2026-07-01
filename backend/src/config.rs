@@ -4,9 +4,12 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 
 #[derive(Clone, Debug)]
 pub struct Config {
+    pub api_url: String,
+    pub app_url: String,
     pub bind_addr: SocketAddr,
     pub database_url: String,
     pub environment: Environment,
+    pub github_oauth: Option<GitHubOAuthConfig>,
     pub session: SessionConfig,
     pub token_encryption_key: TokenEncryptionKey,
 }
@@ -47,15 +50,61 @@ impl Config {
             Err(_) if environment.is_development() => TokenEncryptionKey::development(),
             Err(_) => return Err(ConfigError::MissingTokenEncryptionKey),
         };
+        let app_url = match env::var("APP_URL") {
+            Ok(value) => value,
+            Err(_) if environment.is_development() => "http://127.0.0.1:5173".to_string(),
+            Err(_) => return Err(ConfigError::MissingAppUrl),
+        };
+        let api_url = match env::var("API_URL") {
+            Ok(value) => value,
+            Err(_) if environment.is_development() => "http://127.0.0.1:3000".to_string(),
+            Err(_) => return Err(ConfigError::MissingApiUrl),
+        };
         let session = SessionConfig::from_env(environment)?;
+        let github_oauth = GitHubOAuthConfig::from_env(environment)?;
 
         Ok(Self {
+            api_url,
+            app_url,
             bind_addr,
             database_url,
             environment,
+            github_oauth,
             session,
             token_encryption_key,
         })
+    }
+}
+
+#[derive(Clone)]
+pub struct GitHubOAuthConfig {
+    pub client_id: String,
+    pub client_secret: String,
+}
+
+impl GitHubOAuthConfig {
+    fn from_env(environment: Environment) -> Result<Option<Self>, ConfigError> {
+        let client_id = env::var("GITHUB_CLIENT_ID").ok();
+        let client_secret = env::var("GITHUB_CLIENT_SECRET").ok();
+
+        match (client_id, client_secret) {
+            (Some(client_id), Some(client_secret)) => Ok(Some(Self {
+                client_id,
+                client_secret,
+            })),
+            (None, None) if environment.is_development() => Ok(None),
+            (None, _) => Err(ConfigError::MissingGitHubClientId),
+            (_, None) => Err(ConfigError::MissingGitHubClientSecret),
+        }
+    }
+}
+
+impl std::fmt::Debug for GitHubOAuthConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GitHubOAuthConfig")
+            .field("client_id", &self.client_id)
+            .field("client_secret", &"<redacted>")
+            .finish()
     }
 }
 
@@ -139,7 +188,11 @@ pub enum ConfigError {
         source: base64::DecodeError,
     },
     InvalidTokenEncryptionKeyLength,
+    MissingApiUrl,
+    MissingAppUrl,
     MissingDatabaseUrl,
+    MissingGitHubClientId,
+    MissingGitHubClientSecret,
     MissingTokenEncryptionKey,
     NonPositiveSessionTtl {
         value: i64,
@@ -166,7 +219,13 @@ impl std::fmt::Display for ConfigError {
             Self::InvalidTokenEncryptionKeyLength => {
                 write!(f, "TOKEN_ENCRYPTION_KEY must decode to exactly 32 bytes")
             }
+            Self::MissingApiUrl => write!(f, "API_URL is required in production"),
+            Self::MissingAppUrl => write!(f, "APP_URL is required in production"),
             Self::MissingDatabaseUrl => write!(f, "DATABASE_URL is required in production"),
+            Self::MissingGitHubClientId => write!(f, "GITHUB_CLIENT_ID is required in production"),
+            Self::MissingGitHubClientSecret => {
+                write!(f, "GITHUB_CLIENT_SECRET is required in production")
+            }
             Self::MissingTokenEncryptionKey => {
                 write!(f, "TOKEN_ENCRYPTION_KEY is required in production")
             }
@@ -189,6 +248,13 @@ mod tests {
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
+    fn clear_oauth_env() {
+        env::remove_var("API_URL");
+        env::remove_var("APP_URL");
+        env::remove_var("GITHUB_CLIENT_ID");
+        env::remove_var("GITHUB_CLIENT_SECRET");
+    }
+
     #[test]
     fn defaults_to_development_database_url() {
         let _lock = ENV_LOCK.lock().expect("env lock should not be poisoned");
@@ -198,10 +264,14 @@ mod tests {
         env::remove_var("SESSION_COOKIE_NAME");
         env::remove_var("SESSION_TTL_DAYS");
         env::remove_var("TOKEN_ENCRYPTION_KEY");
+        clear_oauth_env();
 
         let config = Config::from_env().expect("development config should load");
 
+        assert_eq!(config.api_url, "http://127.0.0.1:3000");
+        assert_eq!(config.app_url, "http://127.0.0.1:5173");
         assert_eq!(config.database_url, "sqlite://data/kestrel.dev.sqlite3");
+        assert!(config.github_oauth.is_none());
         assert_eq!(config.session.cookie_name, "kestrel_session");
         assert!(!config.session.cookie_secure);
         assert_eq!(config.session.ttl_days, 30);
@@ -220,6 +290,7 @@ mod tests {
         env::remove_var("SESSION_COOKIE_NAME");
         env::remove_var("SESSION_TTL_DAYS");
         env::remove_var("TOKEN_ENCRYPTION_KEY");
+        clear_oauth_env();
 
         let error = Config::from_env().expect_err("production config should fail");
 
@@ -237,6 +308,7 @@ mod tests {
         env::remove_var("SESSION_COOKIE_NAME");
         env::remove_var("SESSION_TTL_DAYS");
         env::remove_var("TOKEN_ENCRYPTION_KEY");
+        clear_oauth_env();
 
         let error = Config::from_env().expect_err("production config should fail");
 
@@ -254,6 +326,10 @@ mod tests {
         let _lock = ENV_LOCK.lock().expect("env lock should not be poisoned");
         env::set_var("APP_ENV", "production");
         env::set_var("DATABASE_URL", "sqlite::memory:");
+        env::set_var("API_URL", "https://api.example.test");
+        env::set_var("APP_URL", "https://app.example.test");
+        env::set_var("GITHUB_CLIENT_ID", "client_id");
+        env::set_var("GITHUB_CLIENT_SECRET", "client_secret");
         env::set_var("SESSION_COOKIE_NAME", "custom_session");
         env::set_var("SESSION_TTL_DAYS", "14");
         env::set_var("TOKEN_ENCRYPTION_KEY", STANDARD.encode([9_u8; 32]));
@@ -261,6 +337,16 @@ mod tests {
 
         let config = Config::from_env().expect("production config should load");
 
+        assert_eq!(config.api_url, "https://api.example.test");
+        assert_eq!(config.app_url, "https://app.example.test");
+        assert_eq!(
+            config
+                .github_oauth
+                .as_ref()
+                .expect("github oauth should be configured")
+                .client_id,
+            "client_id"
+        );
         assert_eq!(config.session.cookie_name, "custom_session");
         assert!(config.session.cookie_secure);
         assert_eq!(config.session.ttl_days, 14);
@@ -271,6 +357,7 @@ mod tests {
         env::remove_var("SESSION_COOKIE_NAME");
         env::remove_var("SESSION_TTL_DAYS");
         env::remove_var("TOKEN_ENCRYPTION_KEY");
+        clear_oauth_env();
     }
 
     #[test]
@@ -282,6 +369,7 @@ mod tests {
         env::remove_var("BIND_ADDR");
         env::remove_var("SESSION_COOKIE_NAME");
         env::remove_var("SESSION_TTL_DAYS");
+        clear_oauth_env();
 
         let error = Config::from_env().expect_err("production config should fail");
 
@@ -293,6 +381,33 @@ mod tests {
         env::remove_var("APP_ENV");
         env::remove_var("DATABASE_URL");
         env::remove_var("TOKEN_ENCRYPTION_KEY");
+    }
+
+    #[test]
+    fn requires_github_oauth_in_production() {
+        let _lock = ENV_LOCK.lock().expect("env lock should not be poisoned");
+        env::set_var("APP_ENV", "production");
+        env::set_var("DATABASE_URL", "sqlite::memory:");
+        env::set_var("API_URL", "https://api.example.test");
+        env::set_var("APP_URL", "https://app.example.test");
+        env::set_var("TOKEN_ENCRYPTION_KEY", STANDARD.encode([9_u8; 32]));
+        env::remove_var("BIND_ADDR");
+        env::remove_var("SESSION_COOKIE_NAME");
+        env::remove_var("SESSION_TTL_DAYS");
+        env::remove_var("GITHUB_CLIENT_ID");
+        env::remove_var("GITHUB_CLIENT_SECRET");
+
+        let error = Config::from_env().expect_err("production config should fail");
+
+        assert_eq!(
+            error.to_string(),
+            "GITHUB_CLIENT_ID is required in production"
+        );
+
+        env::remove_var("APP_ENV");
+        env::remove_var("DATABASE_URL");
+        env::remove_var("TOKEN_ENCRYPTION_KEY");
+        clear_oauth_env();
     }
 
     #[test]

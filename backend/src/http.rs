@@ -1,20 +1,30 @@
 use axum::{extract::State, http::StatusCode, routing::get, Json, Router};
+use reqwest::Client;
 use serde::Serialize;
 use sqlx::SqlitePool;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use utoipa::{OpenApi, ToSchema};
 use utoipa_swagger_ui::SwaggerUi;
 
-use crate::{config::Config, db, openapi::ApiDoc};
+use crate::{config::Config, crypto::TokenCipher, db, github_oauth, openapi::ApiDoc};
 
 #[derive(Clone)]
 pub struct AppState {
-    db: SqlitePool,
+    pub(crate) config: Config,
+    pub(crate) db: SqlitePool,
+    pub(crate) http_client: Client,
+    pub(crate) token_cipher: TokenCipher,
 }
 
 impl AppState {
-    pub fn new(db: SqlitePool) -> Self {
-        Self { db }
+    pub fn new(db: SqlitePool, config: Config) -> Self {
+        let token_cipher = TokenCipher::new(&config.token_encryption_key);
+        Self {
+            config,
+            db,
+            http_client: Client::new(),
+            token_cipher,
+        }
     }
 }
 
@@ -53,6 +63,8 @@ pub(crate) async fn health(
 
 pub fn app(config: &Config, state: AppState) -> Router {
     let api = Router::new()
+        .route("/auth/github/callback", get(github_oauth::callback))
+        .route("/auth/github/start", get(github_oauth::start))
         .route("/health", get(health))
         .route("/openapi.json", get(openapi_json));
 
@@ -85,17 +97,23 @@ mod tests {
 
     use super::{app, AppState};
     use crate::{
-        config::{Config, Environment, SessionConfig, TokenEncryptionKey},
+        config::{Config, Environment, GitHubOAuthConfig, SessionConfig, TokenEncryptionKey},
         db,
     };
 
     fn test_config(environment: Environment) -> Config {
         Config {
+            api_url: "http://127.0.0.1:3000".to_string(),
+            app_url: "http://127.0.0.1:5173".to_string(),
             bind_addr: "127.0.0.1:0"
                 .parse()
                 .expect("test bind address should parse"),
             database_url: "sqlite::memory:".to_string(),
             environment,
+            github_oauth: Some(GitHubOAuthConfig {
+                client_id: "client_id".to_string(),
+                client_secret: "client_secret".to_string(),
+            }),
             session: SessionConfig {
                 cookie_name: "test_session".to_string(),
                 cookie_secure: false,
@@ -110,7 +128,7 @@ mod tests {
         let config = test_config(environment);
         let db = db::connect(&config).await.expect("test db should connect");
         db::migrate(&db).await.expect("test migrations should run");
-        app(&config, AppState::new(db))
+        app(&config, AppState::new(db, config.clone()))
     }
 
     #[tokio::test]

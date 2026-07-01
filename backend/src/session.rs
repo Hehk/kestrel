@@ -218,11 +218,14 @@ mod tests {
 
     fn test_config() -> Config {
         Config {
+            api_url: "http://127.0.0.1:3000".to_string(),
+            app_url: "http://127.0.0.1:5173".to_string(),
             bind_addr: "127.0.0.1:0"
                 .parse()
                 .expect("test bind address should parse"),
             database_url: "sqlite::memory:".to_string(),
             environment: Environment::Development,
+            github_oauth: None,
             session: session_config(false),
             token_encryption_key: TokenEncryptionKey::from_base64(
                 &base64::engine::general_purpose::STANDARD.encode([5_u8; 32]),
