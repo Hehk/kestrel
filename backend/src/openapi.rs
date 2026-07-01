@@ -1,6 +1,9 @@
 use utoipa::OpenApi;
 
-use crate::http::{HealthResponse, HealthStatus};
+use crate::{
+    auth::{MeResponse, UserDto},
+    http::{HealthResponse, HealthStatus},
+};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -10,10 +13,12 @@ use crate::http::{HealthResponse, HealthStatus};
         description = "Backend API for Kestrel"
     ),
     paths(
+        crate::auth::logout,
+        crate::auth::me,
         crate::github_oauth::callback,
         crate::github_oauth::start,
         crate::http::health
     ),
-    components(schemas(HealthResponse, HealthStatus))
+    components(schemas(HealthResponse, HealthStatus, MeResponse, UserDto))
 )]
 pub struct ApiDoc;

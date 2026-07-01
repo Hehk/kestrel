@@ -11,6 +11,14 @@ use crate::config::SessionConfig;
 pub struct SessionToken(String);
 
 impl SessionToken {
+    pub(crate) fn from_raw(value: &str) -> Option<Self> {
+        if value.is_empty() {
+            return None;
+        }
+
+        Some(Self(value.to_string()))
+    }
+
     pub fn expose(&self) -> &str {
         &self.0
     }

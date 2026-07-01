@@ -6,7 +6,7 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use utoipa::{OpenApi, ToSchema};
 use utoipa_swagger_ui::SwaggerUi;
 
-use crate::{config::Config, crypto::TokenCipher, db, github_oauth, openapi::ApiDoc};
+use crate::{auth, config::Config, crypto::TokenCipher, db, github_oauth, openapi::ApiDoc};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -65,6 +65,8 @@ pub fn app(config: &Config, state: AppState) -> Router {
     let api = Router::new()
         .route("/auth/github/callback", get(github_oauth::callback))
         .route("/auth/github/start", get(github_oauth::start))
+        .route("/auth/logout", axum::routing::post(auth::logout))
+        .route("/auth/me", get(auth::me))
         .route("/health", get(health))
         .route("/openapi.json", get(openapi_json));
 
