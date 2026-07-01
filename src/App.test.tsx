@@ -20,10 +20,13 @@ const jsonResponse = (body: unknown) => {
 };
 
 const mockAuth = (body: unknown = signedInResponse) => {
+  let theme = "system";
+
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       const url = input instanceof Request ? input.url : input.toString();
+      const method = input instanceof Request ? input.method : "GET";
 
       if (url.endsWith("/api/auth/me")) {
         return jsonResponse(body);
@@ -31,6 +34,16 @@ const mockAuth = (body: unknown = signedInResponse) => {
 
       if (url.endsWith("/api/auth/logout")) {
         return new Response(null, { status: 204 });
+      }
+
+      if (url.endsWith("/api/settings") && method === "GET") {
+        return jsonResponse({ theme });
+      }
+
+      if (url.endsWith("/api/settings") && method === "PUT" && input instanceof Request) {
+        const request = (await input.clone().json()) as { theme: string };
+        theme = request.theme;
+        return jsonResponse({ theme });
       }
 
       return new Response(null, { status: 404 });
@@ -78,9 +91,7 @@ describe("App", () => {
 
     await user.click(screen.getByRole("link", { name: "Settings" }));
     expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
-    expect(
-      screen.getByText("Signed in as User One. Settings controls are next."),
-    ).toBeInTheDocument();
+    expect(await screen.findByLabelText("System")).toBeChecked();
 
     await user.click(screen.getByRole("link", { name: "Sample PR" }));
     expect(screen.getByRole("heading", { name: "kestrel" })).toBeInTheDocument();
@@ -135,6 +146,30 @@ describe("App", () => {
           input instanceof Request &&
           input.method === "POST" &&
           input.url === "http://localhost/api/auth/logout"
+        );
+      }),
+    ).toBe(true);
+  });
+
+  it("saves settings", async () => {
+    const user = userEvent.setup();
+
+    renderApp();
+
+    await screen.findByRole("button", { name: "Sign out" });
+
+    await user.click(screen.getByRole("link", { name: "Settings" }));
+    await user.click(await screen.findByLabelText("Dark"));
+    await user.click(screen.getByRole("button", { name: "Save settings" }));
+
+    expect(await screen.findByText("Settings saved.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Dark")).toBeChecked();
+    expect(
+      vi.mocked(fetch).mock.calls.some(([input]) => {
+        return (
+          input instanceof Request &&
+          input.method === "PUT" &&
+          input.url === "http://localhost/api/settings"
         );
       }),
     ).toBe(true);

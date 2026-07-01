@@ -2,6 +2,7 @@ import "./App.css";
 import { apiUrl } from "./api/client";
 import { Link } from "./Link";
 import { send, useModel } from "./model";
+import type { Theme } from "./model";
 import type * as Router from "./router";
 
 const Page = ({ route }: { route: Router.Route }) => {
@@ -36,6 +37,9 @@ const HomePage = () => {
 
 const SettingsPage = () => {
   const auth = useModel((model) => model.get("auth"));
+  const settings = useModel((model) => model.get("settings"));
+  // TODO: Just scaffolding but the idea of a non-authed user getting to this page
+  // is insane
 
   if (auth.status === "loading") {
     return (
@@ -62,8 +66,55 @@ const SettingsPage = () => {
     <section className="page-card">
       <p className="eyebrow">Settings</p>
       <h1>Settings</h1>
-      <p>Signed in as {auth.user.displayName}. Settings controls are next.</p>
+      <p>Signed in as {auth.user.displayName}.</p>
+      {settings.status === "idle" || settings.status === "loading" ? (
+        <p>Loading settings...</p>
+      ) : settings.status === "error" ? (
+        <p>Settings could not be loaded. Try refreshing the page.</p>
+      ) : (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            send({ kind: "SettingsSaveRequested" });
+          }}
+        >
+          <fieldset disabled={settings.saveStatus === "saving"}>
+            <legend>Theme</legend>
+            <ThemeOption theme="system" currentTheme={settings.draftTheme} label="System" />
+            <ThemeOption theme="light" currentTheme={settings.draftTheme} label="Light" />
+            <ThemeOption theme="dark" currentTheme={settings.draftTheme} label="Dark" />
+          </fieldset>
+          <button type="submit" className="counter" disabled={settings.saveStatus === "saving"}>
+            {settings.saveStatus === "saving" ? "Saving..." : "Save settings"}
+          </button>
+          {settings.saveStatus === "saved" ? <p>Settings saved.</p> : null}
+          {settings.saveStatus === "error" ? <p>Settings could not be saved.</p> : null}
+        </form>
+      )}
     </section>
+  );
+};
+
+const ThemeOption = ({
+  currentTheme,
+  label,
+  theme,
+}: {
+  currentTheme: Theme;
+  label: string;
+  theme: Theme;
+}) => {
+  return (
+    <label>
+      <input
+        type="radio"
+        name="theme"
+        value={theme}
+        checked={currentTheme === theme}
+        onChange={() => send({ kind: "SettingsThemeChanged", theme })}
+      />
+      {label}
+    </label>
   );
 };
 
