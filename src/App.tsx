@@ -67,9 +67,18 @@ function App() {
   return (
     <div className="app-shell">
       <header className="app-header">
-        <Link to={{ name: "Home" }}>Home</Link>
-        <Link to={{ name: "Settings" }}>Settings</Link>
-        <Link to={{ name: "PullRequest", repo: "kestrel", id: "42" }}>Sample PR</Link>
+        <p className="site-title">Kestrel</p>
+        <nav className="app-nav" aria-label="Primary">
+          <Link to={{ name: "Home" }}>Home</Link>
+          <span className="nav-separator" aria-hidden="true">
+            |
+          </span>
+          <Link to={{ name: "Settings" }}>Settings</Link>
+          <span className="nav-separator" aria-hidden="true">
+            |
+          </span>
+          <Link to={{ name: "PullRequest", repo: "kestrel", id: "42" }}>Sample PR</Link>
+        </nav>
       </header>
       <main>
         <Page route={route} />

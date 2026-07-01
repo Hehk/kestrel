@@ -1,43 +1,42 @@
 .app-shell {
-  width: min(760px, calc(100vw - 32px));
+  width: min(720px, calc(100vw - 32px));
   margin: 0 auto;
-  padding: 48px 0;
+  padding: 40px 0 64px;
 }
 
 .app-header {
+  margin-bottom: 2rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.site-title {
+  margin: 0 0 0.5rem;
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.app-nav {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 24px;
+  gap: 0.35rem 0.5rem;
+  font-size: 0.95rem;
+}
 
-  a {
-    color: var(--text-h);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 8px 14px;
-    text-decoration: none;
-    transition:
-      border-color 0.2s,
-      box-shadow 0.2s;
+.app-nav a {
+  color: var(--link);
+}
 
-    &:hover {
-      border-color: var(--accent-border);
-      box-shadow: var(--shadow);
-    }
+.app-nav a:visited {
+  color: var(--link);
+}
 
-    &:focus-visible {
-      outline: 2px solid var(--accent);
-      outline-offset: 2px;
-    }
-  }
+.nav-separator {
+  color: var(--text-muted);
 }
 
 .page-card {
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 32px;
   text-align: left;
-  background: var(--card-bg, transparent);
 }
 
 .page-card h1 {
@@ -45,39 +44,22 @@
 }
 
 .eyebrow {
-  margin: 0 0 8px;
-  color: var(--accent);
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  margin: 0 0 0.35rem;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 0.78rem;
 }
 
 .counter {
-  font-size: 16px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  color: var(--accent);
-  background: var(--accent-bg);
-  border: 2px solid transparent;
-  transition: border-color 0.3s;
-
-  &:hover {
-    border-color: var(--accent-border);
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
+  display: inline-block;
+  margin-top: 0.25rem;
+  padding: 0.25rem 0.55rem;
+  font-size: 0.88rem;
 }
 
 @media (max-width: 640px) {
   .app-shell {
-    padding: 24px 0;
-  }
-
-  .page-card {
-    padding: 24px;
+    width: min(100% - 24px, 720px);
+    padding: 24px 0 48px;
   }
 }
