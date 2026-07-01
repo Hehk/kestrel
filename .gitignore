@@ -12,6 +12,10 @@ dist
 dist-ssr
 data
 target
+.env
+.env.*
+!.env.example
+!backend/.env.example
 *.local
 
 # Editor directories and files

@@ -79,12 +79,13 @@ mod tests {
         body::{to_bytes, Body},
         http::{Request, StatusCode},
     };
+    use base64::{engine::general_purpose::STANDARD, Engine};
     use serde_json::Value;
     use tower::ServiceExt;
 
     use super::{app, AppState};
     use crate::{
-        config::{Config, Environment},
+        config::{Config, Environment, TokenEncryptionKey},
         db,
     };
 
@@ -95,6 +96,8 @@ mod tests {
                 .expect("test bind address should parse"),
             database_url: "sqlite::memory:".to_string(),
             environment,
+            token_encryption_key: TokenEncryptionKey::from_base64(&STANDARD.encode([3_u8; 32]))
+                .expect("test key should parse"),
         }
     }
 
