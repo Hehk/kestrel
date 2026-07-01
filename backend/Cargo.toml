@@ -7,13 +7,17 @@ edition = "2021"
 aes-gcm = "0.10"
 axum = "0.8"
 base64 = "0.22"
+cookie = "0.18"
+rand = "0.8"
 serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
 sqlx = { version = "0.8", default-features = false, features = [
   "macros",
   "migrate",
   "runtime-tokio",
   "sqlite",
 ] }
+time = { version = "0.3", features = ["formatting", "parsing"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 tracing = "0.1"

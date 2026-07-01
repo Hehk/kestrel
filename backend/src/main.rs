@@ -3,6 +3,7 @@ mod crypto;
 mod db;
 mod http;
 mod openapi;
+mod session;
 
 use std::process::ExitCode;
 

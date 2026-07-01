@@ -85,7 +85,7 @@ mod tests {
 
     use super::{app, AppState};
     use crate::{
-        config::{Config, Environment, TokenEncryptionKey},
+        config::{Config, Environment, SessionConfig, TokenEncryptionKey},
         db,
     };
 
@@ -96,6 +96,11 @@ mod tests {
                 .expect("test bind address should parse"),
             database_url: "sqlite::memory:".to_string(),
             environment,
+            session: SessionConfig {
+                cookie_name: "test_session".to_string(),
+                cookie_secure: false,
+                ttl_days: 30,
+            },
             token_encryption_key: TokenEncryptionKey::from_base64(&STANDARD.encode([3_u8; 32]))
                 .expect("test key should parse"),
         }

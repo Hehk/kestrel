@@ -7,6 +7,7 @@ pub struct Config {
     pub bind_addr: SocketAddr,
     pub database_url: String,
     pub environment: Environment,
+    pub session: SessionConfig,
     pub token_encryption_key: TokenEncryptionKey,
 }
 
@@ -46,12 +47,47 @@ impl Config {
             Err(_) if environment.is_development() => TokenEncryptionKey::development(),
             Err(_) => return Err(ConfigError::MissingTokenEncryptionKey),
         };
+        let session = SessionConfig::from_env(environment)?;
 
         Ok(Self {
             bind_addr,
             database_url,
             environment,
+            session,
             token_encryption_key,
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SessionConfig {
+    pub cookie_name: String,
+    pub cookie_secure: bool,
+    pub ttl_days: i64,
+}
+
+impl SessionConfig {
+    fn from_env(environment: Environment) -> Result<Self, ConfigError> {
+        let cookie_name =
+            env::var("SESSION_COOKIE_NAME").unwrap_or_else(|_| "kestrel_session".to_string());
+        if cookie_name.trim().is_empty() {
+            return Err(ConfigError::InvalidSessionCookieName);
+        }
+
+        let ttl_days = match env::var("SESSION_TTL_DAYS") {
+            Ok(value) => value
+                .parse()
+                .map_err(|source| ConfigError::InvalidSessionTtl { value, source })?,
+            Err(_) => 30,
+        };
+        if ttl_days <= 0 {
+            return Err(ConfigError::NonPositiveSessionTtl { value: ttl_days });
+        }
+
+        Ok(Self {
+            cookie_name,
+            cookie_secure: !environment.is_development(),
+            ttl_days,
         })
     }
 }
@@ -88,12 +124,26 @@ impl std::fmt::Debug for TokenEncryptionKey {
 
 #[derive(Debug)]
 pub enum ConfigError {
-    InvalidBindAddr { source: std::net::AddrParseError },
-    InvalidEnvironment { value: String },
-    InvalidTokenEncryptionKey { source: base64::DecodeError },
+    InvalidBindAddr {
+        source: std::net::AddrParseError,
+    },
+    InvalidEnvironment {
+        value: String,
+    },
+    InvalidSessionCookieName,
+    InvalidSessionTtl {
+        value: String,
+        source: std::num::ParseIntError,
+    },
+    InvalidTokenEncryptionKey {
+        source: base64::DecodeError,
+    },
     InvalidTokenEncryptionKeyLength,
     MissingDatabaseUrl,
     MissingTokenEncryptionKey,
+    NonPositiveSessionTtl {
+        value: i64,
+    },
 }
 
 impl std::fmt::Display for ConfigError {
@@ -106,6 +156,10 @@ impl std::fmt::Display for ConfigError {
                     "invalid APP_ENV {value:?}; expected development or production"
                 )
             }
+            Self::InvalidSessionCookieName => write!(f, "SESSION_COOKIE_NAME cannot be empty"),
+            Self::InvalidSessionTtl { value, source } => {
+                write!(f, "invalid SESSION_TTL_DAYS {value:?}: {source}")
+            }
             Self::InvalidTokenEncryptionKey { source } => {
                 write!(f, "invalid TOKEN_ENCRYPTION_KEY base64: {source}")
             }
@@ -115,6 +169,9 @@ impl std::fmt::Display for ConfigError {
             Self::MissingDatabaseUrl => write!(f, "DATABASE_URL is required in production"),
             Self::MissingTokenEncryptionKey => {
                 write!(f, "TOKEN_ENCRYPTION_KEY is required in production")
+            }
+            Self::NonPositiveSessionTtl { value } => {
+                write!(f, "SESSION_TTL_DAYS must be positive, got {value}")
             }
         }
     }
@@ -138,11 +195,16 @@ mod tests {
         env::remove_var("APP_ENV");
         env::remove_var("DATABASE_URL");
         env::remove_var("BIND_ADDR");
+        env::remove_var("SESSION_COOKIE_NAME");
+        env::remove_var("SESSION_TTL_DAYS");
         env::remove_var("TOKEN_ENCRYPTION_KEY");
 
         let config = Config::from_env().expect("development config should load");
 
         assert_eq!(config.database_url, "sqlite://data/kestrel.dev.sqlite3");
+        assert_eq!(config.session.cookie_name, "kestrel_session");
+        assert!(!config.session.cookie_secure);
+        assert_eq!(config.session.ttl_days, 30);
         assert_eq!(
             format!("{:?}", config.token_encryption_key),
             "TokenEncryptionKey(<redacted>)"
@@ -155,6 +217,8 @@ mod tests {
         env::set_var("APP_ENV", "production");
         env::remove_var("DATABASE_URL");
         env::remove_var("BIND_ADDR");
+        env::remove_var("SESSION_COOKIE_NAME");
+        env::remove_var("SESSION_TTL_DAYS");
         env::remove_var("TOKEN_ENCRYPTION_KEY");
 
         let error = Config::from_env().expect_err("production config should fail");
@@ -170,6 +234,8 @@ mod tests {
         env::set_var("APP_ENV", "production");
         env::set_var("DATABASE_URL", "sqlite::memory:");
         env::remove_var("BIND_ADDR");
+        env::remove_var("SESSION_COOKIE_NAME");
+        env::remove_var("SESSION_TTL_DAYS");
         env::remove_var("TOKEN_ENCRYPTION_KEY");
 
         let error = Config::from_env().expect_err("production config should fail");
@@ -188,15 +254,22 @@ mod tests {
         let _lock = ENV_LOCK.lock().expect("env lock should not be poisoned");
         env::set_var("APP_ENV", "production");
         env::set_var("DATABASE_URL", "sqlite::memory:");
+        env::set_var("SESSION_COOKIE_NAME", "custom_session");
+        env::set_var("SESSION_TTL_DAYS", "14");
         env::set_var("TOKEN_ENCRYPTION_KEY", STANDARD.encode([9_u8; 32]));
         env::remove_var("BIND_ADDR");
 
         let config = Config::from_env().expect("production config should load");
 
+        assert_eq!(config.session.cookie_name, "custom_session");
+        assert!(config.session.cookie_secure);
+        assert_eq!(config.session.ttl_days, 14);
         assert_eq!(config.token_encryption_key.as_bytes(), &[9_u8; 32]);
 
         env::remove_var("APP_ENV");
         env::remove_var("DATABASE_URL");
+        env::remove_var("SESSION_COOKIE_NAME");
+        env::remove_var("SESSION_TTL_DAYS");
         env::remove_var("TOKEN_ENCRYPTION_KEY");
     }
 
@@ -207,6 +280,8 @@ mod tests {
         env::set_var("DATABASE_URL", "sqlite::memory:");
         env::set_var("TOKEN_ENCRYPTION_KEY", STANDARD.encode([1_u8; 31]));
         env::remove_var("BIND_ADDR");
+        env::remove_var("SESSION_COOKIE_NAME");
+        env::remove_var("SESSION_TTL_DAYS");
 
         let error = Config::from_env().expect_err("production config should fail");
 
@@ -218,5 +293,25 @@ mod tests {
         env::remove_var("APP_ENV");
         env::remove_var("DATABASE_URL");
         env::remove_var("TOKEN_ENCRYPTION_KEY");
+    }
+
+    #[test]
+    fn rejects_non_positive_session_ttl() {
+        let _lock = ENV_LOCK.lock().expect("env lock should not be poisoned");
+        env::remove_var("APP_ENV");
+        env::remove_var("DATABASE_URL");
+        env::remove_var("BIND_ADDR");
+        env::remove_var("SESSION_COOKIE_NAME");
+        env::set_var("SESSION_TTL_DAYS", "0");
+        env::remove_var("TOKEN_ENCRYPTION_KEY");
+
+        let error = Config::from_env().expect_err("config should fail");
+
+        assert_eq!(
+            error.to_string(),
+            "SESSION_TTL_DAYS must be positive, got 0"
+        );
+
+        env::remove_var("SESSION_TTL_DAYS");
     }
 }
