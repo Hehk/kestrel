@@ -84,6 +84,22 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/settings": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["get_settings"];
+    put: operations["put_settings"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -96,6 +112,14 @@ export interface components {
     HealthStatus: "ok";
     MeResponse: {
       user?: null | components["schemas"]["UserDto"];
+    };
+    SettingsResponse: {
+      theme: components["schemas"]["Theme"];
+    };
+    /** @enum {string} */
+    Theme: "dark" | "light" | "system";
+    UpdateSettingsRequest: {
+      theme: components["schemas"]["Theme"];
     };
     UserDto: {
       avatarUrl?: string | null;
@@ -220,6 +244,64 @@ export interface operations {
         content: {
           "application/json": components["schemas"]["HealthResponse"];
         };
+      };
+    };
+  };
+  get_settings: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Current user settings */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SettingsResponse"];
+        };
+      };
+      /** @description Authentication required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  put_settings: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UpdateSettingsRequest"];
+      };
+    };
+    responses: {
+      /** @description Updated user settings */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SettingsResponse"];
+        };
+      };
+      /** @description Authentication required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
     };
   };

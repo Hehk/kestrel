@@ -69,11 +69,19 @@ pub(crate) async fn logout(State(state): State<AppState>, headers: HeaderMap) ->
         .into_response()
 }
 
-async fn current_user(state: &AppState, headers: &HeaderMap) -> Result<Option<UserDto>, AuthError> {
+pub(crate) async fn current_user_id(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<Option<String>, AuthError> {
     let Some(token) = session_token_from_headers(state, headers) else {
         return Ok(None);
     };
-    let Some(user_id) = session::load_session_user_id(&state.db, &token).await? else {
+
+    Ok(session::load_session_user_id(&state.db, &token).await?)
+}
+
+async fn current_user(state: &AppState, headers: &HeaderMap) -> Result<Option<UserDto>, AuthError> {
+    let Some(user_id) = current_user_id(state, headers).await? else {
         return Ok(None);
     };
 
@@ -106,7 +114,7 @@ fn session_token_from_headers(state: &AppState, headers: &HeaderMap) -> Option<S
 }
 
 #[derive(Debug)]
-enum AuthError {
+pub(crate) enum AuthError {
     Session(session::SessionError),
     Sql(sqlx::Error),
 }

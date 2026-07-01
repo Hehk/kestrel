@@ -6,7 +6,9 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use utoipa::{OpenApi, ToSchema};
 use utoipa_swagger_ui::SwaggerUi;
 
-use crate::{auth, config::Config, crypto::TokenCipher, db, github_oauth, openapi::ApiDoc};
+use crate::{
+    auth, config::Config, crypto::TokenCipher, db, github_oauth, openapi::ApiDoc, settings,
+};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -69,6 +71,10 @@ pub fn app(config: &Config, state: AppState) -> Router {
         .route("/auth/me", get(auth::me))
         .route("/health", get(health))
         .route("/openapi.json", get(openapi_json));
+    let api = api.route(
+        "/settings",
+        get(settings::get_settings).put(settings::put_settings),
+    );
 
     let router = Router::new()
         .nest("/api", api)

@@ -6,6 +6,7 @@ mod github_oauth;
 mod http;
 mod openapi;
 mod session;
+mod settings;
 
 use std::process::ExitCode;
 
