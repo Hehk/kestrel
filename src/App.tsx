@@ -1,4 +1,5 @@
 import "./App.css";
+import { apiUrl } from "./api/client";
 import { Link } from "./Link";
 import { send, useModel } from "./model";
 import type * as Router from "./router";
@@ -9,6 +10,8 @@ const Page = ({ route }: { route: Router.Route }) => {
       return <HomePage />;
     case "Settings":
       return <SettingsPage />;
+    case "Login":
+      return <LoginPage />;
     case "PullRequest":
       return <PullRequestPage repo={route.repo} id={route.id} />;
     case "NotFound":
@@ -32,11 +35,60 @@ const HomePage = () => {
 };
 
 const SettingsPage = () => {
+  const auth = useModel((model) => model.get("auth"));
+
+  if (auth.status === "loading") {
+    return (
+      <section className="page-card">
+        <p className="eyebrow">Settings</p>
+        <h1>Settings</h1>
+        <p>Checking your session...</p>
+      </section>
+    );
+  }
+
+  if (auth.status === "signedOut") {
+    return (
+      <section className="page-card">
+        <p className="eyebrow">Settings</p>
+        <h1>Sign in required</h1>
+        <p>You need to sign in before changing your settings.</p>
+        <Link to={{ name: "Login" }}>Go to login</Link>
+      </section>
+    );
+  }
+
   return (
     <section className="page-card">
       <p className="eyebrow">Settings</p>
       <h1>Settings</h1>
-      <p>This is the placeholder settings page.</p>
+      <p>Signed in as {auth.user.displayName}. Settings controls are next.</p>
+    </section>
+  );
+};
+
+const LoginPage = () => {
+  const auth = useModel((model) => model.get("auth"));
+
+  if (auth.status === "signedIn") {
+    return (
+      <section className="page-card">
+        <p className="eyebrow">Login</p>
+        <h1>You are signed in</h1>
+        <p>Signed in as {auth.user.displayName}.</p>
+        <Link to={{ name: "Settings" }}>Go to settings</Link>
+      </section>
+    );
+  }
+
+  return (
+    <section className="page-card">
+      <p className="eyebrow">Login</p>
+      <h1>Sign in to Kestrel</h1>
+      <p>Use your GitHub account to create or continue your Kestrel session.</p>
+      <a className="counter" href={apiUrl("/api/auth/github/start")}>
+        Sign in with GitHub
+      </a>
     </section>
   );
 };
@@ -61,6 +113,30 @@ const NotFoundPage = ({ path }: { path: string }) => {
   );
 };
 
+const AuthNav = () => {
+  const auth = useModel((model) => model.get("auth"));
+
+  switch (auth.status) {
+    case "loading":
+      return <span>Checking session...</span>;
+    case "signedOut":
+      return <Link to={{ name: "Login" }}>Login</Link>;
+    case "signedIn":
+      return (
+        <>
+          <span>{auth.user.displayName}</span>
+          <button
+            type="button"
+            className="counter"
+            onClick={() => send({ kind: "LogoutRequested" })}
+          >
+            Sign out
+          </button>
+        </>
+      );
+  }
+};
+
 function App() {
   const route = useModel((model) => model.get("route"));
 
@@ -78,6 +154,10 @@ function App() {
             |
           </span>
           <Link to={{ name: "PullRequest", repo: "kestrel", id: "42" }}>Sample PR</Link>
+          <span className="nav-separator" aria-hidden="true">
+            |
+          </span>
+          <AuthNav />
         </nav>
       </header>
       <main>

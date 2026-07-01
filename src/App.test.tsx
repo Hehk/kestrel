@@ -1,23 +1,65 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
-import { resetForTest } from "./model";
+import { appSetup, resetForTest } from "./model";
+
+const signedInResponse = {
+  user: {
+    avatarUrl: "https://avatars.example.test/user_1",
+    displayName: "User One",
+    id: "user_1",
+  },
+};
+
+const jsonResponse = (body: unknown) => {
+  return new Response(JSON.stringify(body), {
+    headers: { "content-type": "application/json" },
+    status: 200,
+  });
+};
+
+const mockAuth = (body: unknown = signedInResponse) => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = input instanceof Request ? input.url : input.toString();
+
+      if (url.endsWith("/api/auth/me")) {
+        return jsonResponse(body);
+      }
+
+      if (url.endsWith("/api/auth/logout")) {
+        return new Response(null, { status: 204 });
+      }
+
+      return new Response(null, { status: 404 });
+    }),
+  );
+};
+
+const renderApp = () => {
+  const view = render(<App />);
+  appSetup();
+  return view;
+};
 
 describe("App", () => {
   beforeEach(() => {
     window.history.replaceState({}, "", "/");
+    mockAuth();
     resetForTest();
   });
 
   afterEach(() => {
     cleanup();
+    vi.unstubAllGlobals();
   });
 
   it("increments the counter", async () => {
     const user = userEvent.setup();
 
-    render(<App />);
+    renderApp();
 
     const button = screen.getByRole("button", { name: /count is 0/i });
 
@@ -29,12 +71,16 @@ describe("App", () => {
   it("navigates between the basic pages", async () => {
     const user = userEvent.setup();
 
-    render(<App />);
+    renderApp();
 
     expect(screen.getByRole("heading", { name: "Kestrel" })).toBeInTheDocument();
+    await screen.findByRole("button", { name: "Sign out" });
 
     await user.click(screen.getByRole("link", { name: "Settings" }));
     expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
+    expect(
+      screen.getByText("Signed in as User One. Settings controls are next."),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("link", { name: "Sample PR" }));
     expect(screen.getByRole("heading", { name: "kestrel" })).toBeInTheDocument();
@@ -42,5 +88,55 @@ describe("App", () => {
 
     await user.click(screen.getByRole("link", { name: "Home" }));
     expect(screen.getByRole("heading", { name: "Kestrel" })).toBeInTheDocument();
+  });
+
+  it("shows the login page when signed out", async () => {
+    const user = userEvent.setup();
+    mockAuth({ user: null });
+
+    renderApp();
+
+    await screen.findByRole("link", { name: "Login" });
+
+    await user.click(screen.getByRole("link", { name: "Login" }));
+
+    expect(screen.getByRole("heading", { name: "Sign in to Kestrel" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Sign in with GitHub" })).toHaveAttribute(
+      "href",
+      "http://localhost/api/auth/github/start",
+    );
+  });
+
+  it("protects settings when signed out", async () => {
+    const user = userEvent.setup();
+    mockAuth({ user: null });
+
+    renderApp();
+
+    await screen.findByRole("link", { name: "Login" });
+
+    await user.click(screen.getByRole("link", { name: "Settings" }));
+
+    expect(screen.getByRole("heading", { name: "Sign in required" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Go to login" })).toBeInTheDocument();
+  });
+
+  it("logs out", async () => {
+    const user = userEvent.setup();
+
+    renderApp();
+
+    await user.click(await screen.findByRole("button", { name: "Sign out" }));
+
+    expect(await screen.findByRole("link", { name: "Login" })).toBeInTheDocument();
+    expect(
+      vi.mocked(fetch).mock.calls.some(([input]) => {
+        return (
+          input instanceof Request &&
+          input.method === "POST" &&
+          input.url === "http://localhost/api/auth/logout"
+        );
+      }),
+    ).toBe(true);
   });
 });

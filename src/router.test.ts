@@ -4,6 +4,7 @@ import * as Router from "./router";
 describe("router", () => {
   it("encodes link routes", () => {
     expect(Router.fromRoute({ name: "Home" })).toBe("/");
+    expect(Router.fromRoute({ name: "Login" })).toBe("/login");
     expect(Router.fromRoute({ name: "Settings" })).toBe("/settings");
     expect(Router.fromRoute({ name: "PullRequest", repo: "kestrel", id: "123" })).toBe(
       "/pull/kestrel/123",
@@ -12,6 +13,7 @@ describe("router", () => {
 
   it("decodes paths", () => {
     expect(Router.toRoute("/")).toEqual({ name: "Home" });
+    expect(Router.toRoute("/login")).toEqual({ name: "Login" });
     expect(Router.toRoute("/settings")).toEqual({ name: "Settings" });
     expect(Router.toRoute("/pull/kestrel/123")).toEqual({
       name: "PullRequest",
@@ -35,6 +37,7 @@ describe("router", () => {
   it("roundtrips link routes", () => {
     const routes: Router.LinkRoute[] = [
       { name: "Home" },
+      { name: "Login" },
       { name: "Settings" },
       { name: "PullRequest", repo: "kestrel", id: "123" },
     ];

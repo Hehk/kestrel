@@ -6,6 +6,9 @@ export type LinkRoute =
       name: "Settings";
     }
   | {
+      name: "Login";
+    }
+  | {
       name: "PullRequest";
       repo: string;
       id: string;
@@ -24,6 +27,8 @@ export const fromRoute = (route: LinkRoute): string => {
       return "/";
     case "Settings":
       return "/settings";
+    case "Login":
+      return "/login";
     case "PullRequest":
       return `/pull/${encodeURIComponent(route.repo)}/${encodeURIComponent(route.id)}`;
   }
@@ -34,6 +39,8 @@ export const toRoute = (path: string): Route => {
     return { name: "Home" };
   } else if (path === "/settings") {
     return { name: "Settings" };
+  } else if (path === "/login") {
+    return { name: "Login" };
   } else if (path.startsWith("/pull/")) {
     const [, kind, repo, id, ...rest] = path.split("/");
     if (kind !== "pull" || !repo || !id || rest.length > 0) {
