@@ -1,18 +1,21 @@
 import "./App.css";
-import { apiUrl } from "./api/client";
+import { useEffectEvent, useEffect, useState } from "react";
+import { api } from "./api/client";
+import * as Cache from "./cache";
 import { Link } from "./Link";
+import { LoggedOut } from "./LoggedOut";
+import * as Model from "./model";
 import { send, useModel } from "./model";
-import type { Theme } from "./model";
+import type { Theme, User } from "./model";
 import type * as Router from "./router";
+import * as RouterValue from "./router";
 
-const Page = ({ route }: { route: Router.Route }) => {
+const Page = ({ route }: { route: Router.AuthenticatedRoute }) => {
   switch (route.name) {
     case "Home":
       return <HomePage />;
     case "Settings":
       return <SettingsPage />;
-    case "Login":
-      return <LoginPage />;
     case "PullRequest":
       return <PullRequestPage repo={route.repo} id={route.id} />;
     case "NotFound":
@@ -36,38 +39,15 @@ const HomePage = () => {
 };
 
 const SettingsPage = () => {
-  const auth = useModel((model) => model.get("auth"));
   const settings = useModel((model) => model.get("settings"));
-  // TODO: Just scaffolding but the idea of a non-authed user getting to this page
-  // is insane
-
-  if (auth.status === "loading") {
-    return (
-      <section className="page-card">
-        <p className="eyebrow">Settings</p>
-        <h1>Settings</h1>
-        <p>Checking your session...</p>
-      </section>
-    );
-  }
-
-  if (auth.status === "signedOut") {
-    return (
-      <section className="page-card">
-        <p className="eyebrow">Settings</p>
-        <h1>Sign in required</h1>
-        <p>You need to sign in before changing your settings.</p>
-        <Link to={{ name: "Login" }}>Go to login</Link>
-      </section>
-    );
-  }
+  const user = useModel((model) => model.get("user"));
 
   return (
     <section className="page-card">
       <p className="eyebrow">Settings</p>
       <h1>Settings</h1>
-      <p>Signed in as {auth.user.displayName}.</p>
-      {settings.status === "idle" || settings.status === "loading" ? (
+      <p>Signed in as {user.displayName}.</p>
+      {settings.status === "loading" ? (
         <p>Loading settings...</p>
       ) : settings.status === "error" ? (
         <p>Settings could not be loaded. Try refreshing the page.</p>
@@ -118,32 +98,6 @@ const ThemeOption = ({
   );
 };
 
-const LoginPage = () => {
-  const auth = useModel((model) => model.get("auth"));
-
-  if (auth.status === "signedIn") {
-    return (
-      <section className="page-card">
-        <p className="eyebrow">Login</p>
-        <h1>You are signed in</h1>
-        <p>Signed in as {auth.user.displayName}.</p>
-        <Link to={{ name: "Settings" }}>Go to settings</Link>
-      </section>
-    );
-  }
-
-  return (
-    <section className="page-card">
-      <p className="eyebrow">Login</p>
-      <h1>Sign in to Kestrel</h1>
-      <p>Use your GitHub account to create or continue your Kestrel session.</p>
-      <a className="counter" href={apiUrl("/api/auth/github/start")}>
-        Sign in with GitHub
-      </a>
-    </section>
-  );
-};
-
 const PullRequestPage = ({ repo, id }: { repo: string; id: string }) => {
   return (
     <section className="page-card">
@@ -164,31 +118,20 @@ const NotFoundPage = ({ path }: { path: string }) => {
   );
 };
 
-const AuthNav = () => {
-  const auth = useModel((model) => model.get("auth"));
+const AuthNav = ({ onLogout }: { onLogout: () => void }) => {
+  const displayName = useModel((model) => model.get("user").displayName);
 
-  switch (auth.status) {
-    case "loading":
-      return <span>Checking session...</span>;
-    case "signedOut":
-      return <Link to={{ name: "Login" }}>Login</Link>;
-    case "signedIn":
-      return (
-        <>
-          <span>{auth.user.displayName}</span>
-          <button
-            type="button"
-            className="counter"
-            onClick={() => send({ kind: "LogoutRequested" })}
-          >
-            Sign out
-          </button>
-        </>
-      );
-  }
+  return (
+    <>
+      <span>{displayName}</span>
+      <button type="button" className="counter" onClick={onLogout}>
+        Sign out
+      </button>
+    </>
+  );
 };
 
-function App() {
+const AuthenticatedApp = ({ onLogout }: { onLogout: () => void }) => {
   const route = useModel((model) => model.get("route"));
 
   return (
@@ -208,7 +151,7 @@ function App() {
           <span className="nav-separator" aria-hidden="true">
             |
           </span>
-          <AuthNav />
+          <AuthNav onLogout={onLogout} />
         </nav>
       </header>
       <main>
@@ -216,6 +159,99 @@ function App() {
       </main>
     </div>
   );
+};
+
+const equalUser = (a: User, b: User) => {
+  return a.id === b.id && a.displayName === b.displayName && a.avatarUrl === b.avatarUrl;
+};
+
+function App() {
+  const [user, setUser] = useState<User | null>(() => {
+    const cachedUser = Cache.readCachedUser();
+    if (cachedUser !== null) {
+      Model.start(cachedUser);
+    }
+
+    return cachedUser;
+  });
+  const [shouldCheckSession, setShouldCheckSession] = useState(true);
+
+  const startAuthenticated = useEffectEvent((nextUser: User, route: Router.AuthenticatedRoute) => {
+    Cache.writeCachedUser(nextUser);
+    Model.start(nextUser, route);
+    setShouldCheckSession(false);
+    setUser(nextUser);
+  });
+
+  const endSession = useEffectEvent((route: Router.LoginRoute) => {
+    if (user !== null) {
+      Cache.clearCachedSettings(user.id);
+    }
+
+    Cache.clearCachedUser();
+    Model.stop();
+    RouterValue.navigate(route, { replace: true });
+    setShouldCheckSession(false);
+    setUser(null);
+  });
+
+  useEffect(() => {
+    if (!shouldCheckSession) {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    const checkSession = async () => {
+      const { data, error } = await api.GET("/api/auth/me", { signal: controller.signal });
+      if (controller.signal.aborted || error || data === undefined) {
+        return;
+      }
+
+      const loadedUser = data.user;
+      if (loadedUser == null) {
+        setShouldCheckSession(false);
+        if (user !== null) {
+          endSession({ name: "Login" });
+        }
+        return;
+      }
+
+      setShouldCheckSession(false);
+
+      if (user === null) {
+        startAuthenticated(loadedUser, { name: "Home" });
+        return;
+      }
+
+      Cache.writeCachedUser(loadedUser);
+      send({ kind: "UserRefreshed", user: loadedUser });
+      setUser((currentUser) => {
+        if (currentUser !== null && equalUser(currentUser, loadedUser)) {
+          return currentUser;
+        }
+
+        return loadedUser;
+      });
+    };
+
+    void checkSession();
+
+    return () => {
+      controller.abort();
+    };
+  }, [shouldCheckSession, user]);
+
+  const logout = useEffectEvent(() => {
+    endSession({ name: "Login" });
+    void api.POST("/api/auth/logout");
+  });
+
+  if (user === null) {
+    return <LoggedOut />;
+  }
+
+  return <AuthenticatedApp onLogout={logout} />;
 }
 
 export default App;

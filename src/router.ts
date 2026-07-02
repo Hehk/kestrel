@@ -1,4 +1,4 @@
-export type LinkRoute =
+export type ProtectedRoute =
   | {
       name: "Home";
     }
@@ -6,20 +6,27 @@ export type LinkRoute =
       name: "Settings";
     }
   | {
-      name: "Login";
-    }
-  | {
       name: "PullRequest";
       repo: string;
       id: string;
     };
 
-export type Route =
-  | LinkRoute
-  | {
-      name: "NotFound";
-      path: string;
-    };
+export type LoginRoute = {
+  name: "Login";
+};
+
+export type LinkRoute = ProtectedRoute | LoginRoute;
+
+export type NotFoundRoute = {
+  name: "NotFound";
+  path: string;
+};
+
+export type AuthenticatedRoute = ProtectedRoute | NotFoundRoute;
+
+export type PublicRoute = LoginRoute | NotFoundRoute;
+
+export type Route = LinkRoute | NotFoundRoute;
 
 export const fromRoute = (route: LinkRoute): string => {
   switch (route.name) {
@@ -35,14 +42,17 @@ export const fromRoute = (route: LinkRoute): string => {
 };
 
 export const toRoute = (path: string): Route => {
-  if (path === "/") {
+  const parts = path.split("?", 2);
+  const pathname = parts[0] ?? "";
+
+  if (pathname === "/") {
     return { name: "Home" };
-  } else if (path === "/settings") {
+  } else if (pathname === "/settings") {
     return { name: "Settings" };
-  } else if (path === "/login") {
+  } else if (pathname === "/login") {
     return { name: "Login" };
-  } else if (path.startsWith("/pull/")) {
-    const [, kind, repo, id, ...rest] = path.split("/");
+  } else if (pathname.startsWith("/pull/")) {
+    const [, kind, repo, id, ...rest] = pathname.split("/");
     if (kind !== "pull" || !repo || !id || rest.length > 0) {
       return { name: "NotFound", path };
     }
@@ -50,6 +60,26 @@ export const toRoute = (path: string): Route => {
   }
 
   return { name: "NotFound", path };
+};
+
+export const isProtectedRoute = (route: Route): route is ProtectedRoute => {
+  return route.name === "Home" || route.name === "Settings" || route.name === "PullRequest";
+};
+
+export const toAuthenticatedRoute = (route: Route): AuthenticatedRoute => {
+  if (route.name === "Login") {
+    return { name: "Home" };
+  }
+
+  return route;
+};
+
+export const toPublicRoute = (route: Route): PublicRoute => {
+  if (isProtectedRoute(route)) {
+    return { name: "Login" };
+  }
+
+  return route;
 };
 
 // TODO: Eventually find a good structural equality checking algorithm
@@ -65,8 +95,12 @@ export const equal = (a: Route, b: Route): boolean => {
 };
 
 export const getRoute = (): Route => {
-  const path = window.location.pathname;
+  const path = `${window.location.pathname}${window.location.search}`;
   return toRoute(path);
+};
+
+export const getCurrentPath = (): string => {
+  return `${window.location.pathname}${window.location.search}`;
 };
 
 export const navigate = (route: LinkRoute, options: { replace: boolean }) => {

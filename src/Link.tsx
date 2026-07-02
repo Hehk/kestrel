@@ -3,7 +3,7 @@ import * as Router from "./router";
 import * as Model from "./model";
 
 type LinkProps = Omit<React.AnchorHTMLAttributes<HTMLAnchorElement>, "href"> & {
-  to: Router.LinkRoute;
+  to: Router.ProtectedRoute;
   replace?: boolean;
 };
 

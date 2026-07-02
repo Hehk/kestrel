@@ -1,6 +1,7 @@
 import { Record } from "immutable";
 import { useSyncExternalStore } from "react";
 import { api } from "./api/client";
+import * as Cache from "./cache";
 import * as Router from "./router";
 
 export type User = {
@@ -9,91 +10,55 @@ export type User = {
   avatarUrl?: string | null;
 };
 
-export type AuthState =
-  | {
-      status: "loading";
-    }
-  | {
-      status: "signedOut";
-    }
-  | {
-      status: "signedIn";
-      user: User;
-    };
-
 export type Theme = "dark" | "light" | "system";
 
 export type SettingsState =
   | {
-      status: "idle";
-    }
+    status: "loading";
+  }
   | {
-      status: "loading";
-    }
+    status: "loaded";
+    theme: Theme;
+    draftTheme: Theme;
+    saveStatus: "idle" | "saving" | "saved" | "error";
+  }
   | {
-      status: "loaded";
-      theme: Theme;
-      draftTheme: Theme;
-      saveStatus: "idle" | "saving" | "saved" | "error";
-    }
-  | {
-      status: "error";
-    };
+    status: "error";
+  };
 
-type Model = Record<{
-  auth: AuthState;
+export type Model = Record<{
   count: number;
-  route: Router.Route;
+  route: Router.AuthenticatedRoute;
   settings: SettingsState;
+  user: User;
 }>;
 
 export type Cmd =
   | {
-      kind: "AuthLoad";
-    }
+    kind: "Navigate";
+    route: Router.ProtectedRoute;
+    replace: boolean;
+  }
   | {
-      kind: "Logout";
-    }
+    kind: "SettingsLoad";
+  }
   | {
-      kind: "Navigate";
-      route: Router.LinkRoute;
-      replace: boolean;
-    }
+    kind: "SettingsSave";
+    theme: Theme;
+  }
   | {
-      kind: "SettingsLoad";
-    }
-  | {
-      kind: "SettingsSave";
-      theme: Theme;
-    }
-  | {
-      kind: "ThemeApply";
-      theme: Theme;
-    };
+    kind: "ThemeApply";
+    theme: Theme;
+  };
 
 type UpdateContext = {
   runCmd: (cmd: Cmd) => void;
 };
 
-const init = (): Model => {
-  const route = Router.getRoute();
-  return Record({
-    auth: { status: "loading" } satisfies AuthState,
-    count: 0,
-    route,
-    settings: { status: "idle" } satisfies SettingsState,
-  })();
-};
-
 export type Msg =
-  | { kind: "AuthLoadRequested" }
-  | { kind: "AuthLoaded"; user: User | null }
-  | { kind: "AuthLoadFailed" }
   | { kind: "CountIncrement" }
   | { kind: "CountDecrement" }
-  | { kind: "LogoutRequested" }
-  | { kind: "LogoutFinished" }
-  | { kind: "RouteRequested"; route: Router.LinkRoute; replace: boolean }
+  | { kind: "RouteRequested"; route: Router.ProtectedRoute; replace: boolean }
   | { kind: "RouteChanged"; route: Router.Route }
   | { kind: "SettingsLoadRequested" }
   | { kind: "SettingsLoaded"; theme: Theme }
@@ -101,41 +66,34 @@ export type Msg =
   | { kind: "SettingsThemeChanged"; theme: Theme }
   | { kind: "SettingsSaveRequested" }
   | { kind: "SettingsSaved"; theme: Theme }
-  | { kind: "SettingsSaveFailed" };
+  | { kind: "SettingsSaveFailed" }
+  | { kind: "UserRefreshed"; user: User };
 
-const loadSettingsIfNeeded = (ctx: UpdateContext, model: Model): Model => {
-  const auth = model.get("auth");
-
-  if (auth.status !== "signedIn") {
-    return model;
+const settingsFromCache = (userId: string): SettingsState => {
+  const theme = Cache.readCachedSettings(userId);
+  if (theme === null) {
+    return { status: "loading" };
   }
 
-  const settings = model.get("settings");
-  if (settings.status === "loading" || settings.status === "loaded") {
-    return model;
-  }
+  return {
+    status: "loaded",
+    theme,
+    draftTheme: theme,
+    saveStatus: "idle",
+  };
+};
 
-  ctx.runCmd({ kind: "SettingsLoad" });
-  return model.set("settings", { status: "loading" });
+const createModel = (user: User, route: Router.AuthenticatedRoute): Model => {
+  return Record({
+    count: 0,
+    route,
+    settings: settingsFromCache(user.id),
+    user,
+  })();
 };
 
 export const update = (ctx: UpdateContext, msg: Msg, model: Model): Model => {
   switch (msg.kind) {
-    case "AuthLoadRequested": {
-      ctx.runCmd({ kind: "AuthLoad" });
-      return model.set("auth", { status: "loading" });
-    }
-    case "AuthLoaded": {
-      if (msg.user === null) {
-        ctx.runCmd({ kind: "ThemeApply", theme: "system" });
-        return model.set("auth", { status: "signedOut" }).set("settings", { status: "idle" });
-      }
-      return loadSettingsIfNeeded(ctx, model.set("auth", { status: "signedIn", user: msg.user }));
-    }
-    case "AuthLoadFailed": {
-      ctx.runCmd({ kind: "ThemeApply", theme: "system" });
-      return model.set("auth", { status: "signedOut" }).set("settings", { status: "idle" });
-    }
     case "CountIncrement": {
       const oldCount = model.get("count");
       return model.set("count", oldCount + 1);
@@ -143,14 +101,6 @@ export const update = (ctx: UpdateContext, msg: Msg, model: Model): Model => {
     case "CountDecrement": {
       const oldCount = model.get("count");
       return model.set("count", oldCount - 1);
-    }
-    case "LogoutRequested": {
-      ctx.runCmd({ kind: "Logout" });
-      return model;
-    }
-    case "LogoutFinished": {
-      ctx.runCmd({ kind: "ThemeApply", theme: "system" });
-      return model.set("auth", { status: "signedOut" }).set("settings", { status: "idle" });
     }
     case "RouteRequested": {
       if (Router.equal(model.get("route"), msg.route)) {
@@ -161,13 +111,24 @@ export const update = (ctx: UpdateContext, msg: Msg, model: Model): Model => {
       return model;
     }
     case "RouteChanged": {
-      return loadSettingsIfNeeded(ctx, model.set("route", msg.route));
+      const route = Router.toAuthenticatedRoute(msg.route);
+      if (msg.route.name === "Login") {
+        ctx.runCmd({ kind: "Navigate", route: { name: "Home" }, replace: true });
+      }
+
+      if (Router.equal(model.get("route"), route)) {
+        return model;
+      }
+
+      return model.set("route", route);
     }
     case "SettingsLoadRequested": {
       ctx.runCmd({ kind: "SettingsLoad" });
       return model.set("settings", { status: "loading" });
     }
     case "SettingsLoaded": {
+      const user = model.get("user");
+      Cache.writeCachedSettings(user.id, msg.theme);
       ctx.runCmd({ kind: "ThemeApply", theme: msg.theme });
       return model.set("settings", {
         status: "loaded",
@@ -177,6 +138,10 @@ export const update = (ctx: UpdateContext, msg: Msg, model: Model): Model => {
       });
     }
     case "SettingsLoadFailed": {
+      if (model.get("settings").status === "loaded") {
+        return model;
+      }
+
       return model.set("settings", { status: "error" });
     }
     case "SettingsThemeChanged": {
@@ -197,6 +162,8 @@ export const update = (ctx: UpdateContext, msg: Msg, model: Model): Model => {
       return model.set("settings", { ...settings, saveStatus: "saving" });
     }
     case "SettingsSaved": {
+      const user = model.get("user");
+      Cache.writeCachedSettings(user.id, msg.theme);
       ctx.runCmd({ kind: "ThemeApply", theme: msg.theme });
       return model.set("settings", {
         status: "loaded",
@@ -213,22 +180,21 @@ export const update = (ctx: UpdateContext, msg: Msg, model: Model): Model => {
 
       return model.set("settings", { ...settings, saveStatus: "error" });
     }
+    case "UserRefreshed": {
+      if (model.get("user").id === msg.user.id) {
+        return model.set("user", msg.user);
+      }
+
+      return createModel(msg.user, model.get("route"));
+    }
   }
 };
 
-let model = init();
+let model: Model | null = null;
 let subs: Set<() => void> = new Set();
 
 const defaultRunCmd = (cmd: Cmd) => {
   switch (cmd.kind) {
-    case "AuthLoad": {
-      void loadAuth();
-      return;
-    }
-    case "Logout": {
-      void logout();
-      return;
-    }
     case "Navigate": {
       Router.navigate(cmd.route, { replace: cmd.replace });
       send({ kind: "RouteChanged", route: cmd.route });
@@ -247,21 +213,6 @@ const defaultRunCmd = (cmd: Cmd) => {
       return;
     }
   }
-};
-
-const loadAuth = async () => {
-  const { data, error } = await api.GET("/api/auth/me");
-  if (error || data === undefined) {
-    send({ kind: "AuthLoadFailed" });
-    return;
-  }
-
-  send({ kind: "AuthLoaded", user: data.user ?? null });
-};
-
-const logout = async () => {
-  await api.POST("/api/auth/logout");
-  send({ kind: "LogoutFinished" });
 };
 
 const loadSettings = async () => {
@@ -295,7 +246,35 @@ const applyTheme = (theme: Theme) => {
 
 let runCmd = defaultRunCmd;
 
+export const start = (
+  user: User,
+  route: Router.AuthenticatedRoute = Router.toAuthenticatedRoute(Router.getRoute()),
+) => {
+  model = createModel(user, route);
+  subs.forEach((sub) => sub());
+
+  const settings = model.get("settings");
+  if (settings.status === "loaded") {
+    runCmd({ kind: "ThemeApply", theme: settings.theme });
+  }
+
+  if (Router.getRoute().name === "Login" && route.name !== "NotFound") {
+    runCmd({ kind: "Navigate", route, replace: true });
+  }
+
+  runCmd({ kind: "SettingsLoad" });
+};
+
+export const stop = () => {
+  model = null;
+  subs.forEach((sub) => sub());
+};
+
 export const send = (msg: Msg) => {
+  if (model === null) {
+    throw new Error("Authenticated model was updated before a user was available");
+  }
+
   const cmds: Cmd[] = [];
   const ctx: UpdateContext = {
     runCmd: (cmd) => {
@@ -309,26 +288,32 @@ export const send = (msg: Msg) => {
 };
 
 Router.onStateChange((route) => {
-  send({ kind: "RouteChanged", route });
+  if (model !== null) {
+    send({ kind: "RouteChanged", route });
+  }
 });
 
+const subscribe = (onStoreChange: () => void) => {
+  subs.add(onStoreChange);
+  return () => subs.delete(onStoreChange);
+};
+
 export const useModel = <A>(selector: (model: Model) => A) => {
-  const value = useSyncExternalStore(
-    (onStoreChange) => {
-      subs.add(onStoreChange);
-      return () => subs.delete(onStoreChange);
-    },
-    () => selector(model),
-  );
-  return value;
+  return useSyncExternalStore(subscribe, () => {
+    if (model === null) {
+      throw new Error("Authenticated model was read before a user was available");
+    }
+
+    return selector(model);
+  });
 };
 
 export const get = (): Model => {
-  return model;
-};
+  if (model === null) {
+    throw new Error("Authenticated model was read before a user was available");
+  }
 
-export const appSetup = () => {
-  send({ kind: "AuthLoadRequested" });
+  return model;
 };
 
 // NOTE: I am not 100% about these, testing patterns but once we are using the commands
@@ -343,7 +328,7 @@ export const setRunCmdForTest = (nextRunCmd: (cmd: Cmd) => void) => {
 // NOTE: I am not 100% about these, testing patterns but once we are using the commands
 // more, I will probably want to refactor them.
 export const resetForTest = () => {
-  model = init();
+  model = null;
   subs = new Set();
   runCmd = defaultRunCmd;
 };

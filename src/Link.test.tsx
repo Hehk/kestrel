@@ -4,9 +4,18 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Link } from "./Link";
 import * as Model from "./model";
 
+const testUser = {
+  displayName: "User One",
+  id: "user_1",
+};
+
 const resetLocation = (path: string) => {
   window.history.replaceState({}, "", path);
+  window.localStorage.clear();
   Model.resetForTest();
+  const restoreRunCmd = Model.setRunCmdForTest(() => {});
+  Model.start(testUser);
+  restoreRunCmd();
 };
 
 // NOTE: I am not 100% about these, testing patterns but once we are using the commands

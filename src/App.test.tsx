@@ -2,7 +2,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
-import { appSetup, resetForTest } from "./model";
+import { resetForTest } from "./model";
 
 const signedInResponse = {
   user: {
@@ -52,22 +52,61 @@ const mockAuth = (body: unknown = signedInResponse, initialTheme = "system") => 
 };
 
 const renderApp = () => {
-  const view = render(<App />);
-  appSetup();
-  return view;
+  return render(<App />);
+};
+
+const clearCache = () => {
+  window.localStorage.clear();
+};
+
+const writeCachedUser = (user: typeof signedInResponse.user) => {
+  window.localStorage.setItem("kestrel.session", JSON.stringify({ version: 1, user }));
+};
+
+const readCachedUser = () => {
+  return JSON.parse(window.localStorage.getItem("kestrel.session") ?? "null") as unknown;
+};
+
+const writeCachedSettings = (userId: string, theme: string) => {
+  window.localStorage.setItem(
+    `kestrel.settings.${userId}`,
+    JSON.stringify({ version: 1, userId, theme }),
+  );
 };
 
 describe("App", () => {
   beforeEach(() => {
     window.history.replaceState({}, "", "/");
+    clearCache();
     mockAuth();
+    writeCachedUser(signedInResponse.user);
+    writeCachedSettings(signedInResponse.user.id, "system");
     resetForTest();
   });
 
   afterEach(() => {
     cleanup();
+    clearCache();
     document.documentElement.removeAttribute("data-theme");
     vi.unstubAllGlobals();
+  });
+
+  it("renders cached authenticated state before the session check resolves", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => {})),
+    );
+    clearCache();
+    writeCachedUser(signedInResponse.user);
+    writeCachedSettings(signedInResponse.user.id, "dark");
+    resetForTest();
+
+    renderApp();
+
+    expect(screen.getByRole("heading", { name: "Kestrel" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /count is 0/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
+    expect(document.documentElement).toHaveAttribute("data-theme", "dark");
   });
 
   it("increments the counter", async () => {
@@ -104,7 +143,9 @@ describe("App", () => {
 
   it("shows the login page when signed out", async () => {
     const user = userEvent.setup();
+    clearCache();
     mockAuth({ user: null });
+    resetForTest();
 
     renderApp();
 
@@ -120,17 +161,35 @@ describe("App", () => {
   });
 
   it("protects settings when signed out", async () => {
-    const user = userEvent.setup();
+    window.history.replaceState({}, "", "/settings");
+    clearCache();
+    mockAuth({ user: null });
+    resetForTest();
+
+    renderApp();
+
+    expect(await screen.findByRole("heading", { name: "Sign in to Kestrel" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Sign in with GitHub" })).toBeInTheDocument();
+  });
+
+  it("boots a stale cached session after validation", async () => {
     mockAuth({ user: null });
 
     renderApp();
 
-    await screen.findByRole("link", { name: "Login" });
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "Login" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Sign in to Kestrel" })).toBeInTheDocument();
+  });
 
-    await user.click(screen.getByRole("link", { name: "Settings" }));
+  it("stores the loaded user for future optimistic boots", async () => {
+    clearCache();
+    resetForTest();
 
-    expect(screen.getByRole("heading", { name: "Sign in required" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Go to login" })).toBeInTheDocument();
+    renderApp();
+
+    await screen.findByRole("button", { name: "Sign out" });
+    expect(readCachedUser()).toEqual({ version: 1, user: signedInResponse.user });
   });
 
   it("logs out", async () => {
