@@ -65,6 +65,10 @@ export type Cmd =
   | {
       kind: "SettingsSave";
       theme: Theme;
+    }
+  | {
+      kind: "ThemeApply";
+      theme: Theme;
     };
 
 type UpdateContext = {
@@ -101,9 +105,8 @@ export type Msg =
 
 const loadSettingsIfNeeded = (ctx: UpdateContext, model: Model): Model => {
   const auth = model.get("auth");
-  const route = model.get("route");
 
-  if (auth.status !== "signedIn" || route.name !== "Settings") {
+  if (auth.status !== "signedIn") {
     return model;
   }
 
@@ -124,11 +127,13 @@ export const update = (ctx: UpdateContext, msg: Msg, model: Model): Model => {
     }
     case "AuthLoaded": {
       if (msg.user === null) {
+        ctx.runCmd({ kind: "ThemeApply", theme: "system" });
         return model.set("auth", { status: "signedOut" }).set("settings", { status: "idle" });
       }
       return loadSettingsIfNeeded(ctx, model.set("auth", { status: "signedIn", user: msg.user }));
     }
     case "AuthLoadFailed": {
+      ctx.runCmd({ kind: "ThemeApply", theme: "system" });
       return model.set("auth", { status: "signedOut" }).set("settings", { status: "idle" });
     }
     case "CountIncrement": {
@@ -144,6 +149,7 @@ export const update = (ctx: UpdateContext, msg: Msg, model: Model): Model => {
       return model;
     }
     case "LogoutFinished": {
+      ctx.runCmd({ kind: "ThemeApply", theme: "system" });
       return model.set("auth", { status: "signedOut" }).set("settings", { status: "idle" });
     }
     case "RouteRequested": {
@@ -162,6 +168,7 @@ export const update = (ctx: UpdateContext, msg: Msg, model: Model): Model => {
       return model.set("settings", { status: "loading" });
     }
     case "SettingsLoaded": {
+      ctx.runCmd({ kind: "ThemeApply", theme: msg.theme });
       return model.set("settings", {
         status: "loaded",
         theme: msg.theme,
@@ -190,6 +197,7 @@ export const update = (ctx: UpdateContext, msg: Msg, model: Model): Model => {
       return model.set("settings", { ...settings, saveStatus: "saving" });
     }
     case "SettingsSaved": {
+      ctx.runCmd({ kind: "ThemeApply", theme: msg.theme });
       return model.set("settings", {
         status: "loaded",
         theme: msg.theme,
@@ -234,6 +242,10 @@ const defaultRunCmd = (cmd: Cmd) => {
       void saveSettings(cmd.theme);
       return;
     }
+    case "ThemeApply": {
+      applyTheme(cmd.theme);
+      return;
+    }
   }
 };
 
@@ -270,6 +282,15 @@ const saveSettings = async (theme: Theme) => {
   }
 
   send({ kind: "SettingsSaved", theme: data.theme });
+};
+
+const applyTheme = (theme: Theme) => {
+  if (theme === "system") {
+    document.documentElement.removeAttribute("data-theme");
+    return;
+  }
+
+  document.documentElement.setAttribute("data-theme", theme);
 };
 
 let runCmd = defaultRunCmd;

@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
@@ -19,8 +19,8 @@ const jsonResponse = (body: unknown) => {
   });
 };
 
-const mockAuth = (body: unknown = signedInResponse) => {
-  let theme = "system";
+const mockAuth = (body: unknown = signedInResponse, initialTheme = "system") => {
+  let theme = initialTheme;
 
   vi.stubGlobal(
     "fetch",
@@ -66,6 +66,7 @@ describe("App", () => {
 
   afterEach(() => {
     cleanup();
+    document.documentElement.removeAttribute("data-theme");
     vi.unstubAllGlobals();
   });
 
@@ -173,5 +174,20 @@ describe("App", () => {
         );
       }),
     ).toBe(true);
+  });
+
+  it("applies the loaded and saved theme", async () => {
+    const user = userEvent.setup();
+    mockAuth(signedInResponse, "dark");
+
+    renderApp();
+
+    await waitFor(() => expect(document.documentElement).toHaveAttribute("data-theme", "dark"));
+
+    await user.click(screen.getByRole("link", { name: "Settings" }));
+    await user.click(await screen.findByLabelText("Light"));
+    await user.click(screen.getByRole("button", { name: "Save settings" }));
+
+    await waitFor(() => expect(document.documentElement).toHaveAttribute("data-theme", "light"));
   });
 });
