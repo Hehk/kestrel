@@ -1,6 +1,10 @@
-import { useEffect, useState } from "react";
 import { apiUrl } from "./api/client";
 import * as Router from "./router";
+import * as Session from "./session";
+
+type LoggedOutProps = {
+  route: Router.PublicRoute;
+};
 
 const PublicLink = ({ children, to }: { children: React.ReactNode; to: Router.LoginRoute }) => {
   const href = Router.fromRoute(to);
@@ -21,7 +25,7 @@ const PublicLink = ({ children, to }: { children: React.ReactNode; to: Router.Lo
         }
 
         event.preventDefault();
-        Router.navigate(to, { replace: false });
+        Session.send({ kind: "RouteRequested", route: to, replace: false });
       }}
     >
       {children}
@@ -61,30 +65,7 @@ const Page = ({ route }: { route: Router.PublicRoute }) => {
   }
 };
 
-const getPublicRoute = () => Router.toPublicRoute(Router.getRoute());
-export const LoggedOut = () => {
-  const [route, setRoute] = useState(getPublicRoute);
-
-  useEffect(() => {
-    const publicRoute = getPublicRoute();
-    if (publicRoute.name === "Login" && Router.getRoute().name !== publicRoute.name) {
-      Router.navigate(publicRoute, { replace: true });
-    }
-
-    const unsubscribe = Router.onStateChange((nextRoute) => {
-      const nextPublicRoute = Router.toPublicRoute(nextRoute);
-      if (Router.isProtectedRoute(nextRoute) && nextPublicRoute.name === "Login") {
-        Router.navigate(nextPublicRoute, { replace: true });
-      }
-
-      setRoute(nextPublicRoute);
-    });
-
-    return () => {
-      unsubscribe();
-    };
-  }, []);
-
+export const LoggedOut = ({ route }: LoggedOutProps) => {
   return (
     <div className="app-shell">
       <header className="app-header">

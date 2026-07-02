@@ -1,14 +1,10 @@
 import "./App.css";
-import { useEffectEvent, useEffect, useState } from "react";
-import { api } from "./api/client";
-import * as Cache from "./cache";
 import { Link } from "./Link";
 import { LoggedOut } from "./LoggedOut";
-import * as Model from "./model";
 import { send, useModel } from "./model";
-import type { Theme, User } from "./model";
+import type { Theme } from "./model";
 import type * as Router from "./router";
-import * as RouterValue from "./router";
+import * as Session from "./session";
 
 const Page = ({ route }: { route: Router.AuthenticatedRoute }) => {
   switch (route.name) {
@@ -161,97 +157,14 @@ const AuthenticatedApp = ({ onLogout }: { onLogout: () => void }) => {
   );
 };
 
-const equalUser = (a: User, b: User) => {
-  return a.id === b.id && a.displayName === b.displayName && a.avatarUrl === b.avatarUrl;
-};
-
 function App() {
-  const [user, setUser] = useState<User | null>(() => {
-    const cachedUser = Cache.readCachedUser();
-    if (cachedUser !== null) {
-      Model.start(cachedUser);
-    }
+  const session = Session.useSession((state) => state);
 
-    return cachedUser;
-  });
-  const [shouldCheckSession, setShouldCheckSession] = useState(true);
-
-  const startAuthenticated = useEffectEvent((nextUser: User, route: Router.AuthenticatedRoute) => {
-    Cache.writeCachedUser(nextUser);
-    Model.start(nextUser, route);
-    setShouldCheckSession(false);
-    setUser(nextUser);
-  });
-
-  const endSession = useEffectEvent((route: Router.LoginRoute) => {
-    if (user !== null) {
-      Cache.clearCachedSettings(user.id);
-    }
-
-    Cache.clearCachedUser();
-    Model.stop();
-    RouterValue.navigate(route, { replace: true });
-    setShouldCheckSession(false);
-    setUser(null);
-  });
-
-  useEffect(() => {
-    if (!shouldCheckSession) {
-      return;
-    }
-
-    const controller = new AbortController();
-
-    const checkSession = async () => {
-      const { data, error } = await api.GET("/api/auth/me", { signal: controller.signal });
-      if (controller.signal.aborted || error || data === undefined) {
-        return;
-      }
-
-      const loadedUser = data.user;
-      if (loadedUser == null) {
-        setShouldCheckSession(false);
-        if (user !== null) {
-          endSession({ name: "Login" });
-        }
-        return;
-      }
-
-      setShouldCheckSession(false);
-
-      if (user === null) {
-        startAuthenticated(loadedUser, { name: "Home" });
-        return;
-      }
-
-      Cache.writeCachedUser(loadedUser);
-      send({ kind: "UserRefreshed", user: loadedUser });
-      setUser((currentUser) => {
-        if (currentUser !== null && equalUser(currentUser, loadedUser)) {
-          return currentUser;
-        }
-
-        return loadedUser;
-      });
-    };
-
-    void checkSession();
-
-    return () => {
-      controller.abort();
-    };
-  }, [shouldCheckSession, user]);
-
-  const logout = useEffectEvent(() => {
-    endSession({ name: "Login" });
-    void api.POST("/api/auth/logout");
-  });
-
-  if (user === null) {
-    return <LoggedOut />;
+  if (session.status === "loggedOut") {
+    return <LoggedOut route={session.route} />;
   }
 
-  return <AuthenticatedApp onLogout={logout} />;
+  return <AuthenticatedApp onLogout={() => Session.send({ kind: "LogoutRequested" })} />;
 }
 
 export default App;

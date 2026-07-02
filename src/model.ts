@@ -14,17 +14,17 @@ export type Theme = "dark" | "light" | "system";
 
 export type SettingsState =
   | {
-    status: "loading";
-  }
+      status: "loading";
+    }
   | {
-    status: "loaded";
-    theme: Theme;
-    draftTheme: Theme;
-    saveStatus: "idle" | "saving" | "saved" | "error";
-  }
+      status: "loaded";
+      theme: Theme;
+      draftTheme: Theme;
+      saveStatus: "idle" | "saving" | "saved" | "error";
+    }
   | {
-    status: "error";
-  };
+      status: "error";
+    };
 
 export type Model = Record<{
   count: number;
@@ -35,21 +35,21 @@ export type Model = Record<{
 
 export type Cmd =
   | {
-    kind: "Navigate";
-    route: Router.ProtectedRoute;
-    replace: boolean;
-  }
+      kind: "Navigate";
+      route: Router.ProtectedRoute;
+      replace: boolean;
+    }
   | {
-    kind: "SettingsLoad";
-  }
+      kind: "SettingsLoad";
+    }
   | {
-    kind: "SettingsSave";
-    theme: Theme;
-  }
+      kind: "SettingsSave";
+      theme: Theme;
+    }
   | {
-    kind: "ThemeApply";
-    theme: Theme;
-  };
+      kind: "ThemeApply";
+      theme: Theme;
+    };
 
 type UpdateContext = {
   runCmd: (cmd: Cmd) => void;
@@ -235,7 +235,7 @@ const saveSettings = async (theme: Theme) => {
   send({ kind: "SettingsSaved", theme: data.theme });
 };
 
-const applyTheme = (theme: Theme) => {
+export const applyTheme = (theme: Theme) => {
   if (theme === "system") {
     document.documentElement.removeAttribute("data-theme");
     return;
@@ -258,14 +258,11 @@ export const start = (
     runCmd({ kind: "ThemeApply", theme: settings.theme });
   }
 
-  if (Router.getRoute().name === "Login" && route.name !== "NotFound") {
-    runCmd({ kind: "Navigate", route, replace: true });
-  }
-
   runCmd({ kind: "SettingsLoad" });
 };
 
 export const stop = () => {
+  applyTheme("system");
   model = null;
   subs.forEach((sub) => sub());
 };

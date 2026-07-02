@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { resetForTest } from "./model";
+import * as Session from "./session";
 
 const signedInResponse = {
   user: {
@@ -52,6 +53,7 @@ const mockAuth = (body: unknown = signedInResponse, initialTheme = "system") => 
 };
 
 const renderApp = () => {
+  Session.start();
   return render(<App />);
 };
 
@@ -82,10 +84,12 @@ describe("App", () => {
     writeCachedUser(signedInResponse.user);
     writeCachedSettings(signedInResponse.user.id, "system");
     resetForTest();
+    Session.resetForTest();
   });
 
   afterEach(() => {
     cleanup();
+    Session.resetForTest();
     clearCache();
     document.documentElement.removeAttribute("data-theme");
     vi.unstubAllGlobals();
@@ -100,6 +104,7 @@ describe("App", () => {
     writeCachedUser(signedInResponse.user);
     writeCachedSettings(signedInResponse.user.id, "dark");
     resetForTest();
+    Session.resetForTest();
 
     renderApp();
 
@@ -146,6 +151,7 @@ describe("App", () => {
     clearCache();
     mockAuth({ user: null });
     resetForTest();
+    Session.resetForTest();
 
     renderApp();
 
@@ -165,6 +171,7 @@ describe("App", () => {
     clearCache();
     mockAuth({ user: null });
     resetForTest();
+    Session.resetForTest();
 
     renderApp();
 
@@ -185,6 +192,7 @@ describe("App", () => {
   it("stores the loaded user for future optimistic boots", async () => {
     clearCache();
     resetForTest();
+    Session.resetForTest();
 
     renderApp();
 
