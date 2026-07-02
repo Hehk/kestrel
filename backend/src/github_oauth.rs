@@ -631,12 +631,7 @@ mod tests {
         .expect("oauth account should load");
 
         assert_ne!(stored_token, "access_token");
-        assert_eq!(
-            token_cipher
-                .decrypt(&stored_token)
-                .expect("token should decrypt"),
-            "access_token"
-        );
+        assert!(stored_token.starts_with("v1:"));
         assert_eq!(scopes_json, r#"["read:user","user:email"]"#);
 
         let settings_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user_settings")

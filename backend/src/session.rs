@@ -31,9 +31,7 @@ impl std::fmt::Debug for SessionToken {
 }
 
 pub struct CreatedSession {
-    pub id: String,
     pub token: SessionToken,
-    pub expires_at: OffsetDateTime,
 }
 
 pub async fn create_session(
@@ -67,11 +65,7 @@ async fn create_session_with_expiry(
     .execute(db)
     .await?;
 
-    Ok(CreatedSession {
-        id,
-        token,
-        expires_at,
-    })
+    Ok(CreatedSession { token })
 }
 
 pub async fn load_session_user_id(
@@ -268,14 +262,11 @@ mod tests {
             .expect("session should create");
 
         assert_eq!(format!("{:?}", created.token), "SessionToken(<redacted>)");
-        assert!(created.expires_at > time::OffsetDateTime::now_utc());
 
-        let stored_hash: String =
-            sqlx::query_scalar("SELECT token_hash FROM sessions WHERE id = ?")
-                .bind(&created.id)
-                .fetch_one(&db)
-                .await
-                .expect("session hash should load");
+        let stored_hash: String = sqlx::query_scalar("SELECT token_hash FROM sessions")
+            .fetch_one(&db)
+            .await
+            .expect("session hash should load");
 
         assert_ne!(stored_hash, created.token.expose());
         assert_eq!(stored_hash, hash_token(&created.token));

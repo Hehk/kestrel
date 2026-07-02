@@ -41,6 +41,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::from_env()?;
     let db = db::connect(&config).await?;
     db::migrate(&db).await?;
+    session::cleanup_expired_sessions(&db).await?;
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     let local_addr = listener.local_addr()?;

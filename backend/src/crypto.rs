@@ -35,54 +35,17 @@ impl TokenCipher {
             URL_SAFE_NO_PAD.encode(ciphertext)
         ))
     }
-
-    pub fn decrypt(&self, encrypted: &str) -> Result<String, CryptoError> {
-        let (version, rest) = encrypted
-            .split_once(':')
-            .ok_or(CryptoError::InvalidFormat)?;
-        if version != TOKEN_CIPHERTEXT_VERSION {
-            return Err(CryptoError::UnsupportedVersion);
-        }
-
-        let (nonce, ciphertext) = rest.split_once(':').ok_or(CryptoError::InvalidFormat)?;
-        if ciphertext.contains(':') {
-            return Err(CryptoError::InvalidFormat);
-        }
-
-        let nonce = URL_SAFE_NO_PAD
-            .decode(nonce)
-            .map_err(|_| CryptoError::InvalidFormat)?;
-        let nonce: [u8; 12] = nonce.try_into().map_err(|_| CryptoError::InvalidFormat)?;
-        let ciphertext = URL_SAFE_NO_PAD
-            .decode(ciphertext)
-            .map_err(|_| CryptoError::InvalidFormat)?;
-
-        let plaintext = self
-            .cipher
-            .decrypt(Nonce::from_slice(&nonce), ciphertext.as_ref())
-            .map_err(|_| CryptoError::Decrypt)?;
-
-        String::from_utf8(plaintext).map_err(|_| CryptoError::InvalidUtf8)
-    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum CryptoError {
-    Decrypt,
     Encrypt,
-    InvalidFormat,
-    InvalidUtf8,
-    UnsupportedVersion,
 }
 
 impl std::fmt::Display for CryptoError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Decrypt => write!(f, "token decryption failed"),
             Self::Encrypt => write!(f, "token encryption failed"),
-            Self::InvalidFormat => write!(f, "encrypted token has an invalid format"),
-            Self::InvalidUtf8 => write!(f, "decrypted token is not valid UTF-8"),
-            Self::UnsupportedVersion => write!(f, "encrypted token version is unsupported"),
         }
     }
 }
@@ -93,7 +56,7 @@ impl std::error::Error for CryptoError {}
 mod tests {
     use base64::{engine::general_purpose::STANDARD, Engine};
 
-    use super::{CryptoError, TokenCipher};
+    use super::TokenCipher;
     use crate::config::TokenEncryptionKey;
 
     fn test_cipher() -> TokenCipher {
@@ -103,7 +66,7 @@ mod tests {
     }
 
     #[test]
-    fn encrypts_and_decrypts_token() {
+    fn encrypts_token() {
         let cipher = test_cipher();
 
         let encrypted = cipher
@@ -111,10 +74,7 @@ mod tests {
             .expect("token should encrypt");
 
         assert_ne!(encrypted, "github_access_token");
-        assert_eq!(
-            cipher.decrypt(&encrypted).expect("token should decrypt"),
-            "github_access_token"
-        );
+        assert!(encrypted.starts_with("v1:"));
     }
 
     #[test]
@@ -125,15 +85,5 @@ mod tests {
         let second = cipher.encrypt("same_token").expect("token should encrypt");
 
         assert_ne!(first, second);
-    }
-
-    #[test]
-    fn rejects_tampered_token() {
-        let cipher = test_cipher();
-        let mut tampered = cipher.encrypt("token").expect("token should encrypt");
-        let last = tampered.pop().expect("encrypted token should not be empty");
-        tampered.push(if last == 'A' { 'B' } else { 'A' });
-
-        assert_eq!(cipher.decrypt(&tampered), Err(CryptoError::Decrypt));
     }
 }
