@@ -1,8 +1,7 @@
 import { Record } from "immutable";
 import { useSyncExternalStore } from "react";
-import { api } from "./api/client";
-import * as Cache from "./cache";
 import * as Router from "./router";
+import * as Settings from "./settingsSlice";
 
 export type User = {
   id: string;
@@ -10,26 +9,10 @@ export type User = {
   avatarUrl?: string | null;
 };
 
-export type Theme = "dark" | "light" | "system";
-
-export type SettingsState =
-  | {
-      status: "loading";
-    }
-  | {
-      status: "loaded";
-      theme: Theme;
-      draftTheme: Theme;
-      saveStatus: "idle" | "saving" | "saved" | "error";
-    }
-  | {
-      status: "error";
-    };
-
 export type Model = Record<{
   count: number;
   route: Router.AuthenticatedRoute;
-  settings: SettingsState;
+  settings: Settings.State;
   user: User;
 }>;
 
@@ -40,15 +23,8 @@ export type Cmd =
       replace: boolean;
     }
   | {
-      kind: "SettingsLoad";
-    }
-  | {
-      kind: "SettingsSave";
-      theme: Theme;
-    }
-  | {
-      kind: "ThemeApply";
-      theme: Theme;
+      kind: "Settings";
+      cmd: Settings.Cmd;
     };
 
 type UpdateContext = {
@@ -60,34 +36,14 @@ export type Msg =
   | { kind: "CountDecrement" }
   | { kind: "RouteRequested"; route: Router.ProtectedRoute; replace: boolean }
   | { kind: "RouteChanged"; route: Router.Route }
-  | { kind: "SettingsLoadRequested" }
-  | { kind: "SettingsLoaded"; theme: Theme }
-  | { kind: "SettingsLoadFailed" }
-  | { kind: "SettingsThemeChanged"; theme: Theme }
-  | { kind: "SettingsSaveRequested" }
-  | { kind: "SettingsSaved"; theme: Theme }
-  | { kind: "SettingsSaveFailed" }
+  | { kind: "Settings"; msg: Settings.Msg }
   | { kind: "UserRefreshed"; user: User };
-
-const settingsFromCache = (userId: string): SettingsState => {
-  const theme = Cache.readCachedSettings(userId);
-  if (theme === null) {
-    return { status: "loading" };
-  }
-
-  return {
-    status: "loaded",
-    theme,
-    draftTheme: theme,
-    saveStatus: "idle",
-  };
-};
 
 const createModel = (user: User, route: Router.AuthenticatedRoute): Model => {
   return Record({
     count: 0,
     route,
-    settings: settingsFromCache(user.id),
+    settings: Settings.fromCache(user.id),
     user,
   })();
 };
@@ -122,63 +78,18 @@ export const update = (ctx: UpdateContext, msg: Msg, model: Model): Model => {
 
       return model.set("route", route);
     }
-    case "SettingsLoadRequested": {
-      ctx.runCmd({ kind: "SettingsLoad" });
-      return model.set("settings", { status: "loading" });
-    }
-    case "SettingsLoaded": {
+    case "Settings": {
       const user = model.get("user");
-      Cache.writeCachedSettings(user.id, msg.theme);
-      ctx.runCmd({ kind: "ThemeApply", theme: msg.theme });
-      return model.set("settings", {
-        status: "loaded",
-        theme: msg.theme,
-        draftTheme: msg.theme,
-        saveStatus: "idle",
-      });
-    }
-    case "SettingsLoadFailed": {
-      if (model.get("settings").status === "loaded") {
-        return model;
-      }
+      const settings = Settings.update(
+        {
+          runCmd: (cmd) => ctx.runCmd({ kind: "Settings", cmd }),
+          userId: user.id,
+        },
+        msg.msg,
+        model.get("settings"),
+      );
 
-      return model.set("settings", { status: "error" });
-    }
-    case "SettingsThemeChanged": {
-      const settings = model.get("settings");
-      if (settings.status !== "loaded") {
-        return model;
-      }
-
-      return model.set("settings", { ...settings, draftTheme: msg.theme, saveStatus: "idle" });
-    }
-    case "SettingsSaveRequested": {
-      const settings = model.get("settings");
-      if (settings.status !== "loaded") {
-        return model;
-      }
-
-      ctx.runCmd({ kind: "SettingsSave", theme: settings.draftTheme });
-      return model.set("settings", { ...settings, saveStatus: "saving" });
-    }
-    case "SettingsSaved": {
-      const user = model.get("user");
-      Cache.writeCachedSettings(user.id, msg.theme);
-      ctx.runCmd({ kind: "ThemeApply", theme: msg.theme });
-      return model.set("settings", {
-        status: "loaded",
-        theme: msg.theme,
-        draftTheme: msg.theme,
-        saveStatus: "saved",
-      });
-    }
-    case "SettingsSaveFailed": {
-      const settings = model.get("settings");
-      if (settings.status !== "loaded") {
-        return model.set("settings", { status: "error" });
-      }
-
-      return model.set("settings", { ...settings, saveStatus: "error" });
+      return model.set("settings", settings);
     }
     case "UserRefreshed": {
       if (model.get("user").id === msg.user.id) {
@@ -200,48 +111,11 @@ const defaultRunCmd = (cmd: Cmd) => {
       send({ kind: "RouteChanged", route: cmd.route });
       return;
     }
-    case "SettingsLoad": {
-      void loadSettings();
-      return;
-    }
-    case "SettingsSave": {
-      void saveSettings(cmd.theme);
-      return;
-    }
-    case "ThemeApply": {
-      applyTheme(cmd.theme);
+    case "Settings": {
+      Settings.runCmd(cmd.cmd, (msg) => send({ kind: "Settings", msg }));
       return;
     }
   }
-};
-
-const loadSettings = async () => {
-  const { data, error } = await api.GET("/api/settings");
-  if (error || data === undefined) {
-    send({ kind: "SettingsLoadFailed" });
-    return;
-  }
-
-  send({ kind: "SettingsLoaded", theme: data.theme });
-};
-
-const saveSettings = async (theme: Theme) => {
-  const { data, error } = await api.PUT("/api/settings", { body: { theme } });
-  if (error || data === undefined) {
-    send({ kind: "SettingsSaveFailed" });
-    return;
-  }
-
-  send({ kind: "SettingsSaved", theme: data.theme });
-};
-
-export const applyTheme = (theme: Theme) => {
-  if (theme === "system") {
-    document.documentElement.removeAttribute("data-theme");
-    return;
-  }
-
-  document.documentElement.setAttribute("data-theme", theme);
 };
 
 let runCmd = defaultRunCmd;
@@ -255,14 +129,14 @@ export const start = (
 
   const settings = model.get("settings");
   if (settings.status === "loaded") {
-    runCmd({ kind: "ThemeApply", theme: settings.theme });
+    runCmd({ kind: "Settings", cmd: { kind: "ApplyTheme", theme: settings.theme } });
   }
 
-  runCmd({ kind: "SettingsLoad" });
+  runCmd({ kind: "Settings", cmd: { kind: "Load" } });
 };
 
 export const stop = () => {
-  applyTheme("system");
+  Settings.applyTheme("system");
   model = null;
   subs.forEach((sub) => sub());
 };

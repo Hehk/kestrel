@@ -20,7 +20,13 @@ const jsonResponse = (body: unknown) => {
   });
 };
 
-const mockAuth = (body: unknown = signedInResponse, initialTheme = "system") => {
+type SaveSettings = (theme: string) => Response | Promise<Response>;
+
+const mockAuth = (
+  body: unknown = signedInResponse,
+  initialTheme = "system",
+  saveSettings?: SaveSettings,
+) => {
   let theme = initialTheme;
 
   vi.stubGlobal(
@@ -43,6 +49,10 @@ const mockAuth = (body: unknown = signedInResponse, initialTheme = "system") => 
 
       if (url.endsWith("/api/settings") && method === "PUT" && input instanceof Request) {
         const request = (await input.clone().json()) as { theme: string };
+        if (saveSettings !== undefined) {
+          return saveSettings(request.theme);
+        }
+
         theme = request.theme;
         return jsonResponse({ theme });
       }
@@ -67,6 +77,20 @@ const writeCachedUser = (user: typeof signedInResponse.user) => {
 
 const readCachedUser = () => {
   return JSON.parse(window.localStorage.getItem("kestrel.session") ?? "null") as unknown;
+};
+
+const selectTheme = async (user: ReturnType<typeof userEvent.setup>, theme: string) => {
+  await user.click(screen.getByRole("combobox", { name: "Theme" }));
+  await user.click(await screen.findByRole("option", { name: theme }));
+};
+
+const deferredResponse = () => {
+  let resolve!: (response: Response) => void;
+  const promise = new Promise<Response>((nextResolve) => {
+    resolve = nextResolve;
+  });
+
+  return { promise, resolve };
 };
 
 const writeCachedSettings = (userId: string, theme: string) => {
@@ -136,7 +160,7 @@ describe("App", () => {
 
     await user.click(screen.getByRole("link", { name: "Settings" }));
     expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
-    expect(await screen.findByLabelText("System")).toBeChecked();
+    expect(await screen.findByRole("combobox", { name: "Theme" })).toHaveTextContent("System");
 
     await user.click(screen.getByRole("link", { name: "Sample PR" }));
     expect(screen.getByRole("heading", { name: "kestrel" })).toBeInTheDocument();
@@ -219,7 +243,7 @@ describe("App", () => {
     ).toBe(true);
   });
 
-  it("saves settings", async () => {
+  it("saves theme when the selection changes", async () => {
     const user = userEvent.setup();
 
     renderApp();
@@ -227,20 +251,88 @@ describe("App", () => {
     await screen.findByRole("button", { name: "Sign out" });
 
     await user.click(screen.getByRole("link", { name: "Settings" }));
-    await user.click(await screen.findByLabelText("Dark"));
-    await user.click(screen.getByRole("button", { name: "Save settings" }));
+    await selectTheme(user, "Dark");
 
-    expect(await screen.findByText("Settings saved.")).toBeInTheDocument();
-    expect(screen.getByLabelText("Dark")).toBeChecked();
+    expect(screen.getByRole("combobox", { name: "Theme" })).toHaveTextContent("Dark");
+    expect(document.documentElement).toHaveAttribute("data-theme", "dark");
+    await waitFor(() =>
+      expect(
+        vi.mocked(fetch).mock.calls.some(([input]) => {
+          return (
+            input instanceof Request &&
+            input.method === "PUT" &&
+            input.url === "http://localhost/api/settings"
+          );
+        }),
+      ).toBe(true),
+    );
+  });
+
+  it("rolls back theme when saving fails", async () => {
+    const user = userEvent.setup();
+    const save = deferredResponse();
+    mockAuth(signedInResponse, "system", () => save.promise);
+
+    renderApp();
+
+    await screen.findByRole("button", { name: "Sign out" });
+
+    await user.click(screen.getByRole("link", { name: "Settings" }));
+    await selectTheme(user, "Dark");
+
+    expect(screen.getByRole("combobox", { name: "Theme" })).toHaveTextContent("Dark");
+    expect(document.documentElement).toHaveAttribute("data-theme", "dark");
+
+    save.resolve(new Response(null, { status: 500 }));
+    await save.promise;
+
     expect(
-      vi.mocked(fetch).mock.calls.some(([input]) => {
-        return (
-          input instanceof Request &&
-          input.method === "PUT" &&
-          input.url === "http://localhost/api/settings"
-        );
-      }),
-    ).toBe(true);
+      await screen.findByText("Theme could not be saved. Reverted to last saved theme."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Theme" })).toHaveTextContent("System");
+    expect(document.documentElement).not.toHaveAttribute("data-theme");
+  });
+
+  it("ignores stale theme save failures", async () => {
+    const user = userEvent.setup();
+    const firstSave = deferredResponse();
+    const secondSave = deferredResponse();
+    const savedThemes: string[] = [];
+
+    mockAuth(signedInResponse, "system", (theme) => {
+      savedThemes.push(theme);
+      return savedThemes.length === 1 ? firstSave.promise : secondSave.promise;
+    });
+
+    renderApp();
+
+    await screen.findByRole("button", { name: "Sign out" });
+
+    await user.click(screen.getByRole("link", { name: "Settings" }));
+    await selectTheme(user, "Dark");
+
+    await waitFor(() => expect(savedThemes).toEqual(["dark"]));
+    expect(document.documentElement).toHaveAttribute("data-theme", "dark");
+
+    await selectTheme(user, "Light");
+
+    await waitFor(() => expect(savedThemes).toEqual(["dark", "light"]));
+    expect(document.documentElement).toHaveAttribute("data-theme", "light");
+
+    secondSave.resolve(jsonResponse({ theme: "light" }));
+    await secondSave.promise;
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Theme" })).toHaveTextContent("Light"),
+    );
+
+    firstSave.resolve(new Response(null, { status: 500 }));
+    await firstSave.promise;
+
+    expect(screen.getByRole("combobox", { name: "Theme" })).toHaveTextContent("Light");
+    expect(document.documentElement).toHaveAttribute("data-theme", "light");
+    expect(
+      screen.queryByText("Theme could not be saved. Reverted to last saved theme."),
+    ).not.toBeInTheDocument();
   });
 
   it("applies the loaded and saved theme", async () => {
@@ -252,9 +344,19 @@ describe("App", () => {
     await waitFor(() => expect(document.documentElement).toHaveAttribute("data-theme", "dark"));
 
     await user.click(screen.getByRole("link", { name: "Settings" }));
-    await user.click(await screen.findByLabelText("Light"));
-    await user.click(screen.getByRole("button", { name: "Save settings" }));
+    await selectTheme(user, "Light");
 
-    await waitFor(() => expect(document.documentElement).toHaveAttribute("data-theme", "light"));
+    expect(document.documentElement).toHaveAttribute("data-theme", "light");
+    await waitFor(() =>
+      expect(
+        vi.mocked(fetch).mock.calls.some(([input]) => {
+          return (
+            input instanceof Request &&
+            input.method === "PUT" &&
+            input.url === "http://localhost/api/settings"
+          );
+        }),
+      ).toBe(true),
+    );
   });
 });

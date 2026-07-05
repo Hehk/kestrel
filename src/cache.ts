@@ -1,4 +1,5 @@
-import type { Theme, User } from "./model";
+import type { User } from "./model";
+import type { Theme } from "./settingsSlice";
 
 const SESSION_KEY = "kestrel.session";
 const SETTINGS_KEY_PREFIX = "kestrel.settings.";
