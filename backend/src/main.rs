@@ -5,6 +5,7 @@ mod db;
 mod github_oauth;
 mod http;
 mod openapi;
+mod repositories;
 mod session;
 mod settings;
 
