@@ -50,6 +50,14 @@ pub enum RepositoryErrorCode {
     RepositorySaveFailed,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/repositories",
+    responses(
+        (status = 200, description = "Current user's tracked repositories", body = ListRepositoriesResponse),
+        (status = 401, description = "Authentication required")
+    )
+)]
 pub(crate) async fn list_repositories(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -63,6 +71,17 @@ pub(crate) async fn list_repositories(
     Ok(Json(ListRepositoriesResponse { repositories }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/repositories",
+    request_body = CreateRepositoryRequest,
+    responses(
+        (status = 201, description = "Tracked repository created", body = CreateRepositoryResponse),
+        (status = 400, description = "Invalid GitHub repository", body = RepositoryErrorResponse),
+        (status = 401, description = "Authentication required", body = RepositoryErrorResponse),
+        (status = 409, description = "Repository is already tracked", body = RepositoryErrorResponse)
+    )
+)]
 pub(crate) async fn create_repository(
     State(state): State<AppState>,
     headers: HeaderMap,

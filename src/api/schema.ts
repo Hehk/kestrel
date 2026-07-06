@@ -84,6 +84,22 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/repositories": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["list_repositories"];
+    put?: never;
+    post: operations["create_repository"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/settings": {
     parameters: {
       query?: never;
@@ -104,14 +120,35 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
+    CreateRepositoryRequest: {
+      repository: string;
+    };
+    CreateRepositoryResponse: {
+      repository: components["schemas"]["RepositoryDto"];
+    };
     HealthResponse: {
       database: components["schemas"]["HealthStatus"];
       status: components["schemas"]["HealthStatus"];
     };
     /** @enum {string} */
     HealthStatus: "ok";
+    ListRepositoriesResponse: {
+      repositories: components["schemas"]["RepositoryDto"][];
+    };
     MeResponse: {
       user?: null | components["schemas"]["UserDto"];
+    };
+    RepositoryDto: {
+      createdAt: string;
+      fullName: string;
+      htmlUrl: string;
+      name: string;
+      owner: string;
+    };
+    /** @enum {string} */
+    RepositoryErrorCode: "duplicate_repository" | "invalid_repository" | "repository_save_failed";
+    RepositoryErrorResponse: {
+      error: components["schemas"]["RepositoryErrorCode"];
     };
     SettingsResponse: {
       theme: components["schemas"]["Theme"];
@@ -243,6 +280,84 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["HealthResponse"];
+        };
+      };
+    };
+  };
+  list_repositories: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Current user's tracked repositories */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ListRepositoriesResponse"];
+        };
+      };
+      /** @description Authentication required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  create_repository: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateRepositoryRequest"];
+      };
+    };
+    responses: {
+      /** @description Tracked repository created */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CreateRepositoryResponse"];
+        };
+      };
+      /** @description Invalid GitHub repository */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RepositoryErrorResponse"];
+        };
+      };
+      /** @description Authentication required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RepositoryErrorResponse"];
+        };
+      };
+      /** @description Repository is already tracked */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RepositoryErrorResponse"];
         };
       };
     };

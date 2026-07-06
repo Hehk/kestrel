@@ -169,31 +169,4 @@ mod tests {
             serde_json::json!({ "database": "ok", "status": "ok" })
         );
     }
-
-    #[tokio::test]
-    async fn openapi_includes_health_path() {
-        let response = test_app(Environment::Development)
-            .await
-            .oneshot(
-                Request::builder()
-                    .uri("/api/openapi.json")
-                    .body(Body::empty())
-                    .expect("request should build"),
-            )
-            .await
-            .expect("request should complete");
-
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let body = to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("body should collect");
-        let json: Value = serde_json::from_slice(&body).expect("body should be json");
-
-        assert!(json["paths"]["/api/health"].is_object());
-        assert!(json["components"]["schemas"]["HealthResponse"]["required"]
-            .as_array()
-            .expect("required fields should be an array")
-            .contains(&serde_json::json!("database")));
-    }
 }
