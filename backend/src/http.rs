@@ -7,7 +7,8 @@ use utoipa::{OpenApi, ToSchema};
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::{
-    auth, config::Config, crypto::TokenCipher, db, github_oauth, openapi::ApiDoc, settings,
+    auth, config::Config, crypto::TokenCipher, db, github_oauth, openapi::ApiDoc, repositories,
+    settings,
 };
 
 #[derive(Clone)]
@@ -74,6 +75,10 @@ pub fn app(config: &Config, state: AppState) -> Router {
     let api = api.route(
         "/settings",
         get(settings::get_settings).put(settings::put_settings),
+    );
+    let api = api.route(
+        "/repositories",
+        get(repositories::list_repositories).post(repositories::create_repository),
     );
 
     let router = Router::new()
