@@ -98,22 +98,6 @@ pub(crate) async fn create_repository(
         )
     })?;
 
-    let existing = load_repository(&state, &user_id, &repository)
-        .await
-        .map_err(|error| {
-            tracing::error!(%error, "failed to check tracked repository");
-            api_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                RepositoryErrorCode::RepositorySaveFailed,
-            )
-        })?;
-    if existing.is_some() {
-        return Err(api_error(
-            StatusCode::CONFLICT,
-            RepositoryErrorCode::DuplicateRepository,
-        ));
-    }
-
     let repository = insert_repository(&state, &user_id, &repository)
         .await
         .map_err(|error| {
@@ -121,6 +105,12 @@ pub(crate) async fn create_repository(
             api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 RepositoryErrorCode::RepositorySaveFailed,
+            )
+        })?
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::CONFLICT,
+                RepositoryErrorCode::DuplicateRepository,
             )
         })?;
 
@@ -158,32 +148,14 @@ async fn load_repositories(
         .collect())
 }
 
-async fn load_repository(
-    state: &AppState,
-    user_id: &str,
-    repository: &ParsedRepository,
-) -> Result<Option<RepositoryDto>, RepositoryError> {
-    let row = sqlx::query_as::<_, (String, String, String)>(
-        "SELECT owner, name, created_at FROM tracked_repositories WHERE user_id = ? AND provider = ? AND owner = ? AND name = ?",
-    )
-    .bind(user_id)
-    .bind(GITHUB_PROVIDER)
-    .bind(&repository.owner)
-    .bind(&repository.name)
-    .fetch_optional(&state.db)
-    .await?;
-
-    Ok(row.map(|(owner, name, created_at)| repository_dto(owner, name, created_at)))
-}
-
 async fn insert_repository(
     state: &AppState,
     user_id: &str,
     repository: &ParsedRepository,
-) -> Result<RepositoryDto, RepositoryError> {
+) -> Result<Option<RepositoryDto>, RepositoryError> {
     let created_at = format_timestamp(OffsetDateTime::now_utc())?;
-    sqlx::query(
-        "INSERT INTO tracked_repositories (user_id, provider, owner, name, created_at) VALUES (?, ?, ?, ?, ?)",
+    let result = sqlx::query(
+        "INSERT INTO tracked_repositories (user_id, provider, owner, name, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, provider, owner, name) DO NOTHING",
     )
     .bind(user_id)
     .bind(GITHUB_PROVIDER)
@@ -192,12 +164,15 @@ async fn insert_repository(
     .bind(&created_at)
     .execute(&state.db)
     .await?;
+    if result.rows_affected() == 0 {
+        return Ok(None);
+    }
 
-    Ok(repository_dto(
+    Ok(Some(repository_dto(
         repository.owner.clone(),
         repository.name.clone(),
         created_at,
-    ))
+    )))
 }
 
 fn repository_dto(owner: String, name: String, created_at: String) -> RepositoryDto {
@@ -255,10 +230,6 @@ fn parse_github_url(input: &str) -> Result<String, RepositoryParseError> {
     if url.host_str() != Some("github.com") {
         return Err(RepositoryParseError);
     }
-    if url.query().is_some() || url.fragment().is_some() {
-        return Err(RepositoryParseError);
-    }
-
     Ok(url.path().trim_start_matches('/').to_string())
 }
 
@@ -291,7 +262,6 @@ fn valid_owner(owner: &str) -> bool {
 fn valid_repo_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 100
-        && !name.starts_with('.')
         && name
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
@@ -458,6 +428,30 @@ mod tests {
     }
 
     #[test]
+    fn allows_dot_prefixed_repository_names() {
+        assert_eq!(
+            parse_repository_input("Owner/.github"),
+            Ok(parsed("owner", ".github")),
+        );
+    }
+
+    #[test]
+    fn ignores_github_url_query_strings_and_fragments() {
+        assert_eq!(
+            parse_repository_input("https://github.com/Owner/Repo?tab=readme"),
+            Ok(parsed("owner", "repo")),
+        );
+        assert_eq!(
+            parse_repository_input("https://github.com/Owner/Repo#readme"),
+            Ok(parsed("owner", "repo")),
+        );
+        assert_eq!(
+            parse_repository_input("https://github.com/Owner/Repo/?tab=readme#readme"),
+            Ok(parsed("owner", "repo")),
+        );
+    }
+
+    #[test]
     fn rejects_invalid_input() {
         for input in [
             "",
@@ -468,11 +462,9 @@ mod tests {
             "/name",
             "-owner/name",
             "owner-/name",
-            "owner/.name",
             "owner/name with spaces",
             "https://example.com/owner/name",
             "https://github.com/owner/name/issues",
-            "https://github.com/owner/name?tab=readme",
         ] {
             assert_eq!(parse_repository_input(input), Err(RepositoryParseError));
         }
