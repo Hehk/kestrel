@@ -1,7 +1,9 @@
+import { useEffect, useId, useRef, useState } from "react";
 import "./App.css";
 import { Link } from "./Link";
 import { LoggedOut } from "./LoggedOut";
 import { send, useModel } from "./model";
+import type * as Repositories from "./repositoriesSlice";
 import type * as Router from "./router";
 import * as Session from "./session";
 import { SettingsPage } from "./SettingsPage";
@@ -20,18 +22,117 @@ const Page = ({ route }: { route: Router.AuthenticatedRoute }) => {
 };
 
 const HomePage = () => {
-  const count = useModel((model) => model.get("count"));
+  const repositories = useModel((model) => model.get("repositories"));
 
   return (
     <section className="page-card">
-      <p className="eyebrow">Home</p>
-      <h1>Kestrel</h1>
-      <p>The home route is wired through the typed link and command-based navigation flow.</p>
-      <button type="button" className="counter" onClick={() => send({ kind: "CountIncrement" })}>
-        Count is {count}
-      </button>
+      <p className="eyebrow">Repositories</p>
+      <h1>Tracked repositories</h1>
+      <RepositoryList repositories={repositories} />
+      <AddRepositoryForm repositories={repositories} />
     </section>
   );
+};
+
+const RepositoryList = ({ repositories }: { repositories: Repositories.State }) => {
+  if (repositories.status === "loading") {
+    return <p className="repo-status">Loading repositories...</p>;
+  }
+
+  if (repositories.status === "error") {
+    return <p className="repo-status">Repositories could not be loaded.</p>;
+  }
+
+  if (repositories.repositories.length === 0) {
+    return <p className="repo-status">No repositories tracked yet.</p>;
+  }
+
+  return (
+    <ul className="repo-list" aria-label="Tracked repositories">
+      {repositories.repositories.map((repository) => (
+        <li className="repo-row" key={repository.fullName}>
+          <a href={repository.htmlUrl}>{repository.fullName}</a>
+          <span className="repo-provider">GitHub</span>
+        </li>
+      ))}
+    </ul>
+  );
+};
+
+const AddRepositoryForm = ({ repositories }: { repositories: Repositories.State }) => {
+  const [input, setInput] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+  const errorId = useId();
+  const previousAddStatus = useRef(addStatus(repositories));
+  const currentAddStatus = addStatus(repositories);
+  const saving = currentAddStatus === "saving";
+  const error = repositories.status === "loaded" ? addErrorText(repositories.addError) : undefined;
+
+  useEffect(() => {
+    if (submitted && previousAddStatus.current === "saving" && currentAddStatus === "idle") {
+      setInput("");
+      setSubmitted(false);
+    } else if (submitted && currentAddStatus === "error") {
+      setSubmitted(false);
+    }
+
+    previousAddStatus.current = currentAddStatus;
+  }, [currentAddStatus, submitted]);
+
+  return (
+    <form
+      className="repo-add-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (repositories.status !== "loaded" || saving) {
+          return;
+        }
+
+        setSubmitted(true);
+        send({ kind: "Repositories", msg: { kind: "AddRequested", repository: input } });
+      }}
+    >
+      <label className="repo-add-label" htmlFor="repository-input">
+        Add GitHub repository
+      </label>
+      <div className="repo-add-controls">
+        <input
+          aria-describedby={error ? errorId : undefined}
+          disabled={repositories.status !== "loaded"}
+          id="repository-input"
+          onChange={(event) => setInput(event.currentTarget.value)}
+          placeholder="owner/name or GitHub URL"
+          type="text"
+          value={input}
+        />
+        <button disabled={repositories.status !== "loaded" || saving} type="submit">
+          {saving ? "Tracking..." : "Track repo"}
+        </button>
+      </div>
+      {error ? (
+        <p className="repo-add-error" id={errorId}>
+          {error}
+        </p>
+      ) : null}
+    </form>
+  );
+};
+
+const addStatus = (repositories: Repositories.State) => {
+  return repositories.status === "loaded" ? repositories.addStatus : "idle";
+};
+
+const addErrorText = (error: Repositories.AddError | undefined) => {
+  switch (error) {
+    case "duplicate":
+      return "That repository is already tracked.";
+    case "invalid":
+      return "Enter a GitHub repository as owner/name or a GitHub URL.";
+    case "saveFailed":
+      return "Repository could not be added. Try again.";
+    case undefined:
+      return undefined;
+  }
 };
 
 const PullRequestPage = ({ repo, id }: { repo: string; id: string }) => {
