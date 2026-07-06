@@ -1,5 +1,6 @@
 import { Record } from "immutable";
 import { useSyncExternalStore } from "react";
+import * as Repositories from "./repositoriesSlice";
 import * as Router from "./router";
 import * as Settings from "./settingsSlice";
 
@@ -11,6 +12,7 @@ export type User = {
 
 export type Model = Record<{
   count: number;
+  repositories: Repositories.State;
   route: Router.AuthenticatedRoute;
   settings: Settings.State;
   user: User;
@@ -25,6 +27,10 @@ export type Cmd =
   | {
       kind: "Settings";
       cmd: Settings.Cmd;
+    }
+  | {
+      kind: "Repositories";
+      cmd: Repositories.Cmd;
     };
 
 type UpdateContext = {
@@ -36,12 +42,14 @@ export type Msg =
   | { kind: "CountDecrement" }
   | { kind: "RouteRequested"; route: Router.ProtectedRoute; replace: boolean }
   | { kind: "RouteChanged"; route: Router.Route }
+  | { kind: "Repositories"; msg: Repositories.Msg }
   | { kind: "Settings"; msg: Settings.Msg }
   | { kind: "UserRefreshed"; user: User };
 
 const createModel = (user: User, route: Router.AuthenticatedRoute): Model => {
   return Record({
     count: 0,
+    repositories: Repositories.initialState(),
     route,
     settings: Settings.fromCache(user.id),
     user,
@@ -91,6 +99,17 @@ export const update = (ctx: UpdateContext, msg: Msg, model: Model): Model => {
 
       return model.set("settings", settings);
     }
+    case "Repositories": {
+      const repositories = Repositories.update(
+        {
+          runCmd: (cmd) => ctx.runCmd({ kind: "Repositories", cmd }),
+        },
+        msg.msg,
+        model.get("repositories"),
+      );
+
+      return model.set("repositories", repositories);
+    }
     case "UserRefreshed": {
       if (model.get("user").id === msg.user.id) {
         return model.set("user", msg.user);
@@ -115,6 +134,10 @@ const defaultRunCmd = (cmd: Cmd) => {
       Settings.runCmd(cmd.cmd, (msg) => send({ kind: "Settings", msg }));
       return;
     }
+    case "Repositories": {
+      Repositories.runCmd(cmd.cmd, (msg) => send({ kind: "Repositories", msg }));
+      return;
+    }
   }
 };
 
@@ -133,6 +156,7 @@ export const start = (
   }
 
   runCmd({ kind: "Settings", cmd: { kind: "Load" } });
+  runCmd({ kind: "Repositories", cmd: { kind: "Load" } });
 };
 
 export const stop = () => {
