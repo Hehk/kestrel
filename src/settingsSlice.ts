@@ -11,32 +11,32 @@ export const DEFAULT_THEME: Theme = "system";
 
 export type State =
   | {
-    status: "loading";
-  }
+      status: "loading";
+    }
   | {
-    status: "loaded";
-    theme: Theme;
-    confirmedTheme: Theme;
-    themeSaveRequestId: number;
-    themeSyncStatus: "idle" | "saving" | "error";
-  }
+      status: "loaded";
+      theme: Theme;
+      confirmedTheme: Theme;
+      themeSaveRequestId: number;
+      themeSyncStatus: "idle" | "saving" | "error";
+    }
   | {
-    status: "error";
-  };
+      status: "error";
+    };
 
 export type Cmd =
   | {
-    kind: "Load";
-  }
+      kind: "Load";
+    }
   | {
-    kind: "SaveTheme";
-    requestId: number;
-    theme: Theme;
-  }
+      kind: "SaveTheme";
+      requestId: number;
+      theme: Theme;
+    }
   | {
-    kind: "ApplyTheme";
-    theme: Theme;
-  };
+      kind: "ApplyTheme";
+      theme: Theme;
+    };
 
 export type Msg =
   // This one is never actually used...
