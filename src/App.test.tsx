@@ -276,7 +276,7 @@ describe("App", () => {
 
     await user.click(screen.getByRole("link", { name: "Sample PR" }));
     expect(screen.getByRole("heading", { name: "kestrel" })).toBeInTheDocument();
-    expect(screen.getByText("Viewing pull request #42.")).toBeInTheDocument();
+    expect(screen.getByText("Repository is not tracked.")).toBeInTheDocument();
 
     await user.click(screen.getByRole("link", { name: "Home" }));
     expect(screen.getByRole("heading", { name: "Tracked repositories" })).toBeInTheDocument();
@@ -305,6 +305,43 @@ describe("App", () => {
     const link = await screen.findByRole("link", { name: "#42 Add syncing" });
     expect(link).toHaveAttribute("href", "/pull/kestrel%2Fapp/42");
     expect(screen.getByText("open")).toBeInTheDocument();
+  });
+
+  it("renders stored pull request details", async () => {
+    const user = userEvent.setup();
+    mockAuth(signedInResponse, "system", undefined, [repository("kestrel/app")], undefined, {
+      "kestrel/app": [pullRequest(42, "Add syncing")],
+    });
+
+    renderApp();
+
+    await user.click(await screen.findByRole("button", { name: "Load PRs for kestrel/app" }));
+    await user.click(await screen.findByRole("link", { name: "#42 Add syncing" }));
+
+    expect(screen.getByRole("heading", { name: "Add syncing" })).toBeInTheDocument();
+    expect(screen.getByText("kestrel/app")).toBeInTheDocument();
+    expect(screen.getByText("#42")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open on GitHub" })).toHaveAttribute(
+      "href",
+      "https://github.com/kestrel/app/pull/42",
+    );
+  });
+
+  it("loads pull requests from the pull request route", async () => {
+    const user = userEvent.setup();
+    window.history.replaceState({}, "", "/pull/kestrel%2Fapp/42");
+    mockAuth(signedInResponse, "system", undefined, [repository("kestrel/app")], undefined, {
+      "kestrel/app": [pullRequest(42, "Add syncing")],
+    });
+
+    renderApp();
+
+    expect(
+      await screen.findByText("Pull requests have not been loaded for this repository."),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Load pull requests" }));
+
+    expect(await screen.findByRole("heading", { name: "Add syncing" })).toBeInTheDocument();
   });
 
   it("syncs pull requests for tracked repositories", async () => {

@@ -148,6 +148,28 @@
   color: var(--text-muted);
 }
 
+.pr-details {
+  display: grid;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+
+.pr-details div {
+  display: grid;
+  grid-template-columns: 6rem 1fr;
+  gap: 1rem;
+}
+
+.pr-details dt {
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+.pr-details dd {
+  margin: 0;
+}
+
 .settings-form {
   display: grid;
   gap: 0.85rem;
@@ -235,8 +257,10 @@
 
   .repo-add-controls,
   .repo-row-header,
+  .pr-details div,
   .repo-pr-list li {
     align-items: stretch;
     flex-direction: column;
+    grid-template-columns: 1fr;
   }
 }

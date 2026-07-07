@@ -230,11 +230,145 @@ const addErrorText = (error: Repositories.AddError | null) => {
 };
 
 const PullRequestPage = ({ repo, id }: { repo: string; id: string }) => {
+  const repositories = useModel((model) => model.get("repositories"));
+
+  if (repositories.status === "loading") {
+    return (
+      <section className="page-card">
+        <p className="eyebrow">Pull Request</p>
+        <h1>{repo}</h1>
+        <p>Loading repository...</p>
+      </section>
+    );
+  }
+
+  if (repositories.status === "error") {
+    return (
+      <section className="page-card">
+        <p className="eyebrow">Pull Request</p>
+        <h1>{repo}</h1>
+        <p>Repositories could not be loaded.</p>
+      </section>
+    );
+  }
+
+  const repository = repositories.repositories.find((candidate) => candidate.fullName === repo);
+  if (repository === undefined) {
+    return (
+      <section className="page-card">
+        <p className="eyebrow">Pull Request</p>
+        <h1>{repo}</h1>
+        <p>Repository is not tracked.</p>
+      </section>
+    );
+  }
+
+  const number = Number(id);
+  if (!Number.isInteger(number) || number <= 0) {
+    return (
+      <section className="page-card">
+        <p className="eyebrow">Pull Request</p>
+        <h1>{repo}</h1>
+        <p>Pull request number is invalid.</p>
+      </section>
+    );
+  }
+
+  const pullRequests = repositories.pullRequests.get(repository.fullName);
+  if (pullRequests === undefined) {
+    return (
+      <section className="page-card">
+        <p className="eyebrow">Pull Request</p>
+        <h1>
+          {repo} #{id}
+        </h1>
+        <p>Pull requests have not been loaded for this repository.</p>
+        <button
+          onClick={() =>
+            send({ kind: "Repositories", msg: { kind: "PullRequestsLoadRequested", repository } })
+          }
+          type="button"
+        >
+          Load pull requests
+        </button>
+      </section>
+    );
+  }
+
+  if (pullRequests.status === "loading" || pullRequests.status === "syncing") {
+    return (
+      <section className="page-card">
+        <p className="eyebrow">Pull Request</p>
+        <h1>
+          {repo} #{id}
+        </h1>
+        <p>{pullRequests.status === "loading" ? "Loading" : "Syncing"} pull requests...</p>
+      </section>
+    );
+  }
+
+  if (pullRequests.status === "error") {
+    return (
+      <section className="page-card">
+        <p className="eyebrow">Pull Request</p>
+        <h1>
+          {repo} #{id}
+        </h1>
+        <PullRequestsError error={pullRequests.error} />
+      </section>
+    );
+  }
+
+  const pullRequest = pullRequests.pullRequests.find((candidate) => candidate.number === number);
+  if (pullRequest === undefined) {
+    return (
+      <section className="page-card">
+        <p className="eyebrow">Pull Request</p>
+        <h1>
+          {repo} #{id}
+        </h1>
+        <p>Pull request is not stored yet.</p>
+        <button
+          onClick={() =>
+            send({ kind: "Repositories", msg: { kind: "PullRequestsSyncRequested", repository } })
+          }
+          type="button"
+        >
+          Sync pull requests
+        </button>
+      </section>
+    );
+  }
+
   return (
     <section className="page-card">
       <p className="eyebrow">Pull Request</p>
-      <h1>{repo}</h1>
-      <p>Viewing pull request #{id}.</p>
+      <h1>{pullRequest.title}</h1>
+      <dl className="pr-details">
+        <div>
+          <dt>Repository</dt>
+          <dd>{repository.fullName}</dd>
+        </div>
+        <div>
+          <dt>Number</dt>
+          <dd>#{pullRequest.number}</dd>
+        </div>
+        <div>
+          <dt>State</dt>
+          <dd>{pullRequest.state}</dd>
+        </div>
+        <div>
+          <dt>Author</dt>
+          <dd>{pullRequest.authorLogin ?? "Unknown"}</dd>
+        </div>
+        <div>
+          <dt>Updated</dt>
+          <dd>{pullRequest.updatedAt}</dd>
+        </div>
+      </dl>
+      <p>
+        <a href={pullRequest.htmlUrl}>Open on GitHub</a>
+      </p>
     </section>
   );
 };
