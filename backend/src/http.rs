@@ -7,8 +7,8 @@ use utoipa::{OpenApi, ToSchema};
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::{
-    auth, config::Config, crypto::TokenCipher, db, github_oauth, openapi::ApiDoc, repositories,
-    settings,
+    auth, config::Config, crypto::TokenCipher, db, github_app, github_oauth, openapi::ApiDoc,
+    repositories, settings,
 };
 
 #[derive(Clone)]
@@ -70,6 +70,8 @@ pub fn app(config: &Config, state: AppState) -> Router {
         .route("/auth/github/start", get(github_oauth::start))
         .route("/auth/logout", axum::routing::post(auth::logout))
         .route("/auth/me", get(auth::me))
+        .route("/github-app/authorize", get(github_app::authorize))
+        .route("/github-app/callback", get(github_app::callback))
         .route("/health", get(health))
         .route("/openapi.json", get(openapi_json));
     let api = api.route(
@@ -123,6 +125,7 @@ mod tests {
                 .expect("test bind address should parse"),
             database_url: "sqlite::memory:".to_string(),
             environment,
+            github_app: None,
             github_oauth: Some(GitHubOAuthConfig {
                 client_id: "client_id".to_string(),
                 client_secret: "client_secret".to_string(),

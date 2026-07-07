@@ -2,6 +2,7 @@ mod auth;
 mod config;
 mod crypto;
 mod db;
+mod github_app;
 mod github_oauth;
 mod http;
 mod openapi;

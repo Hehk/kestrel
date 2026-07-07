@@ -227,6 +227,7 @@ mod tests {
                 .expect("test bind address should parse"),
             database_url: "sqlite::memory:".to_string(),
             environment: Environment::Development,
+            github_app: None,
             github_oauth: None,
             session: session_config(false),
             token_encryption_key: TokenEncryptionKey::from_base64(

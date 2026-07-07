@@ -20,6 +20,8 @@ use crate::{
     paths(
         crate::auth::logout,
         crate::auth::me,
+        crate::github_app::authorize,
+        crate::github_app::callback,
         crate::github_oauth::callback,
         crate::github_oauth::start,
         crate::http::health,

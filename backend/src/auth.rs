@@ -169,6 +169,7 @@ mod tests {
                 .expect("test bind address should parse"),
             database_url: "sqlite::memory:".to_string(),
             environment: Environment::Development,
+            github_app: None,
             github_oauth: None,
             session: SessionConfig {
                 cookie_name: "test_session".to_string(),
