@@ -70,15 +70,47 @@
 }
 
 .repo-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 1rem;
+  display: grid;
+  gap: 0.45rem;
   padding: 0.45rem 0;
   border-bottom: 1px solid var(--rule);
 }
 
+.repo-row-header,
+.repo-actions,
+.repo-pr-list li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.repo-actions {
+  justify-content: flex-start;
+  gap: 0.5rem;
+}
+
 .repo-provider {
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+.repo-pr-status {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.92rem;
+}
+
+.repo-pr-list {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0;
+  margin: 0.15rem 0 0;
+  list-style: none;
+}
+
+.repo-pr-meta {
   color: var(--text-muted);
   font-family: var(--mono);
   font-size: 0.78rem;
@@ -202,7 +234,8 @@
   }
 
   .repo-add-controls,
-  .repo-row {
+  .repo-row-header,
+  .repo-pr-list li {
     align-items: stretch;
     flex-direction: column;
   }

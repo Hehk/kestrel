@@ -1,5 +1,6 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useRef } from "react";
 import "./App.css";
+import { apiUrl } from "./api/client";
 import { Link } from "./Link";
 import { LoggedOut } from "./LoggedOut";
 import { send, useModel } from "./model";
@@ -22,19 +23,18 @@ const Page = ({ route }: { route: Router.AuthenticatedRoute }) => {
 };
 
 const HomePage = () => {
-  const repositories = useModel((model) => model.get("repositories"));
-
   return (
     <section className="page-card">
       <p className="eyebrow">Repositories</p>
       <h1>Tracked repositories</h1>
-      <RepositoryList repositories={repositories} />
-      <AddRepositoryForm repositories={repositories} />
+      <RepositoryList />
+      <AddRepositoryForm />
     </section>
   );
 };
 
-const RepositoryList = ({ repositories }: { repositories: Repositories.State }) => {
+const RepositoryList = () => {
+  const repositories = useModel((model) => model.get("repositories"));
   if (repositories.status === "loading") {
     return <p className="repo-status">Loading repositories...</p>;
   }
@@ -50,34 +50,126 @@ const RepositoryList = ({ repositories }: { repositories: Repositories.State }) 
   return (
     <ul className="repo-list" aria-label="Tracked repositories">
       {repositories.repositories.toArray().map((repository) => (
-        <li className="repo-row" key={repository.fullName}>
-          <a href={repository.htmlUrl}>{repository.fullName}</a>
-          <span className="repo-provider">GitHub</span>
-        </li>
+        <RepositoryRow
+          key={repository.fullName}
+          pullRequests={repositories.pullRequests.get(repository.fullName)}
+          repository={repository}
+        />
       ))}
     </ul>
   );
 };
 
-const AddRepositoryForm = ({ repositories }: { repositories: Repositories.State }) => {
-  const [input, setInput] = useState("");
-  const [submitted, setSubmitted] = useState(false);
+const RepositoryRow = ({
+  pullRequests,
+  repository,
+}: {
+  pullRequests: Repositories.PullRequestsState | undefined;
+  repository: Repositories.Repository;
+}) => {
+  const busy = pullRequests?.status === "loading" || pullRequests?.status === "syncing";
+
+  return (
+    <li className="repo-row">
+      <div className="repo-row-header">
+        <a href={repository.htmlUrl}>{repository.fullName}</a>
+        <span className="repo-provider">GitHub</span>
+      </div>
+      <div className="repo-actions">
+        <button
+          aria-label={`Load PRs for ${repository.fullName}`}
+          disabled={busy}
+          onClick={() =>
+            send({ kind: "Repositories", msg: { kind: "PullRequestsLoadRequested", repository } })
+          }
+          type="button"
+        >
+          Load PRs
+        </button>
+        <button
+          aria-label={`Sync PRs for ${repository.fullName}`}
+          disabled={pullRequests?.status === "syncing"}
+          onClick={() =>
+            send({ kind: "Repositories", msg: { kind: "PullRequestsSyncRequested", repository } })
+          }
+          type="button"
+        >
+          {pullRequests?.status === "syncing" ? "Syncing..." : "Sync PRs"}
+        </button>
+      </div>
+      <PullRequestsSummary pullRequests={pullRequests} repository={repository} />
+    </li>
+  );
+};
+
+const PullRequestsSummary = ({
+  pullRequests,
+  repository,
+}: {
+  pullRequests: Repositories.PullRequestsState | undefined;
+  repository: Repositories.Repository;
+}) => {
+  if (pullRequests === undefined) {
+    return <p className="repo-pr-status">Pull requests not loaded.</p>;
+  }
+
+  switch (pullRequests.status) {
+    case "loading":
+      return <p className="repo-pr-status">Loading pull requests...</p>;
+    case "syncing":
+      return <p className="repo-pr-status">Syncing pull requests...</p>;
+    case "error":
+      return <PullRequestsError error={pullRequests.error} />;
+    case "loaded":
+      if (pullRequests.pullRequests.isEmpty()) {
+        return <p className="repo-pr-status">No pull requests stored yet.</p>;
+      }
+
+      return (
+        <ul className="repo-pr-list" aria-label={`Pull requests for ${repository.fullName}`}>
+          {pullRequests.pullRequests.toArray().map((pullRequest) => (
+            <li key={pullRequest.number}>
+              <Link
+                to={{
+                  name: "PullRequest",
+                  repo: repository.fullName,
+                  id: String(pullRequest.number),
+                }}
+              >
+                #{pullRequest.number} {pullRequest.title}
+              </Link>
+              <span className="repo-pr-meta">{pullRequest.state}</span>
+            </li>
+          ))}
+        </ul>
+      );
+  }
+};
+
+const PullRequestsError = ({ error }: { error: Repositories.PullRequestsError }) => {
+  switch (error) {
+    case "authorizationRequired":
+      return (
+        <p className="repo-pr-status">
+          GitHub App authorization required.{" "}
+          <a href={apiUrl("/api/github-app/authorize")}>Authorize more repos</a>.
+        </p>
+      );
+    case "repositoryNotTracked":
+      return <p className="repo-pr-status">Repository is not tracked.</p>;
+    case "syncFailed":
+      return <p className="repo-pr-status">Pull requests could not be synced.</p>;
+  }
+};
+
+const AddRepositoryForm = () => {
   const errorId = useId();
-  const previousAddStatus = useRef(addStatus(repositories));
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const repositories = useModel((model) => model.get("repositories"));
   const currentAddStatus = addStatus(repositories);
   const saving = currentAddStatus === "saving";
   const error = repositories.status === "loaded" ? addErrorText(repositories.addError) : undefined;
-
-  useEffect(() => {
-    if (submitted && previousAddStatus.current === "saving" && currentAddStatus === "idle") {
-      setInput("");
-      setSubmitted(false);
-    } else if (submitted && currentAddStatus === "error") {
-      setSubmitted(false);
-    }
-
-    previousAddStatus.current = currentAddStatus;
-  }, [currentAddStatus, submitted]);
 
   return (
     <form
@@ -88,8 +180,11 @@ const AddRepositoryForm = ({ repositories }: { repositories: Repositories.State 
           return;
         }
 
-        setSubmitted(true);
-        send({ kind: "Repositories", msg: { kind: "AddRequested", repository: input } });
+        send({
+          kind: "Repositories",
+          msg: { kind: "AddRequested", repository: inputRef.current?.value ?? "" },
+        });
+        event.currentTarget.reset();
       }}
     >
       <label className="repo-add-label" htmlFor="repository-input">
@@ -98,12 +193,11 @@ const AddRepositoryForm = ({ repositories }: { repositories: Repositories.State 
       <div className="repo-add-controls">
         <input
           aria-describedby={error ? errorId : undefined}
-          disabled={repositories.status !== "loaded"}
+          disabled={repositories.status !== "loaded" || saving}
           id="repository-input"
-          onChange={(event) => setInput(event.currentTarget.value)}
           placeholder="owner/name or GitHub URL"
+          ref={inputRef}
           type="text"
-          value={input}
         />
         <button disabled={repositories.status !== "loaded" || saving} type="submit">
           {saving ? "Tracking..." : "Track repo"}

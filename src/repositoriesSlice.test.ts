@@ -115,6 +115,15 @@ describe("repositoriesSlice", () => {
     expect(result.cmds).toEqual([{ kind: "Add", repository: "Kestrel/App" }]);
   });
 
+  it("ignores add requests while saving", () => {
+    const state: Repositories.State = { ...loadedState(), addStatus: "saving" };
+
+    const result = update(state, { kind: "AddRequested", repository: "Kestrel/App" });
+
+    expect(result.state).toBe(state);
+    expect(result.cmds).toEqual([]);
+  });
+
   it("adds returned repositories", () => {
     const existing = repository("kestrel/old");
     const added = repository("kestrel/app");

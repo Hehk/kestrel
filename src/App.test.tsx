@@ -28,7 +28,22 @@ type Repository = {
   name: string;
   owner: string;
 };
+type PullRequest = {
+  authorLogin: string | null;
+  closedAt: string | null;
+  createdAt: string;
+  draft: boolean;
+  githubId: number;
+  htmlUrl: string;
+  mergedAt: string | null;
+  number: number;
+  state: string;
+  syncedAt: string;
+  title: string;
+  updatedAt: string;
+};
 type SaveRepository = (repository: string) => Response | Promise<Response>;
+type SyncPullRequests = (fullName: string) => Response | Promise<Response>;
 
 const repository = (fullName: string): Repository => {
   const [owner = "", name = ""] = fullName.split("/");
@@ -41,15 +56,35 @@ const repository = (fullName: string): Repository => {
   };
 };
 
+const pullRequest = (number: number, title = `PR ${number}`): PullRequest => {
+  return {
+    authorLogin: "octocat",
+    closedAt: null,
+    createdAt: "2026-01-01T00:00:00Z",
+    draft: false,
+    githubId: 1000 + number,
+    htmlUrl: `https://github.com/kestrel/app/pull/${number}`,
+    mergedAt: null,
+    number,
+    state: "open",
+    syncedAt: "2026-01-03T00:00:00Z",
+    title,
+    updatedAt: "2026-01-02T00:00:00Z",
+  };
+};
+
 const mockAuth = (
   body: unknown = signedInResponse,
   initialTheme = "system",
   saveSettings?: SaveSettings,
   initialRepositories: Repository[] = [],
   saveRepository?: SaveRepository,
+  initialPullRequests: Record<string, PullRequest[]> = {},
+  syncPullRequests?: SyncPullRequests,
 ) => {
   let theme = initialTheme;
   let repositories = initialRepositories;
+  let pullRequestsByRepository = initialPullRequests;
 
   vi.stubGlobal(
     "fetch",
@@ -92,6 +127,34 @@ const mockAuth = (
         const nextRepository = repositoryFromInput(request.repository);
         repositories = [...repositories, nextRepository];
         return jsonResponse({ repository: nextRepository }, 201);
+      }
+
+      const pullRequestsMatch = url.match(
+        /\/api\/repositories\/([^/]+)\/([^/]+)\/pull-requests(?:\/sync)?$/,
+      );
+      if (pullRequestsMatch) {
+        const owner = decodeURIComponent(pullRequestsMatch[1] ?? "");
+        const name = decodeURIComponent(pullRequestsMatch[2] ?? "");
+        const fullName = `${owner}/${name}`;
+
+        if (method === "GET") {
+          return jsonResponse({ pullRequests: pullRequestsByRepository[fullName] ?? [] });
+        }
+
+        if (method === "POST") {
+          if (syncPullRequests !== undefined) {
+            return syncPullRequests(fullName);
+          }
+
+          const synced = pullRequestsByRepository[fullName] ?? [];
+          pullRequestsByRepository = { ...pullRequestsByRepository, [fullName]: synced };
+          return jsonResponse({
+            complete: true,
+            nextPage: null,
+            pullRequests: synced,
+            syncedCount: synced.length,
+          });
+        }
       }
 
       return new Response(null, { status: 404 });
@@ -229,6 +292,69 @@ describe("App", () => {
     expect(screen.queryByText("No repositories tracked yet.")).not.toBeInTheDocument();
   });
 
+  it("loads stored pull requests for tracked repositories", async () => {
+    const user = userEvent.setup();
+    mockAuth(signedInResponse, "system", undefined, [repository("kestrel/app")], undefined, {
+      "kestrel/app": [pullRequest(42, "Add syncing")],
+    });
+
+    renderApp();
+
+    await user.click(await screen.findByRole("button", { name: "Load PRs for kestrel/app" }));
+
+    const link = await screen.findByRole("link", { name: "#42 Add syncing" });
+    expect(link).toHaveAttribute("href", "/pull/kestrel%2Fapp/42");
+    expect(screen.getByText("open")).toBeInTheDocument();
+  });
+
+  it("syncs pull requests for tracked repositories", async () => {
+    const user = userEvent.setup();
+    const syncedRepositories: string[] = [];
+    mockAuth(
+      signedInResponse,
+      "system",
+      undefined,
+      [repository("kestrel/app")],
+      undefined,
+      {},
+      (fullName) => {
+        syncedRepositories.push(fullName);
+        const pullRequests = [pullRequest(7, "Fix checkout")];
+        return jsonResponse({ complete: true, nextPage: null, pullRequests, syncedCount: 1 });
+      },
+    );
+
+    renderApp();
+
+    await user.click(await screen.findByRole("button", { name: "Sync PRs for kestrel/app" }));
+
+    expect(await screen.findByRole("link", { name: "#7 Fix checkout" })).toBeInTheDocument();
+    expect(syncedRepositories).toEqual(["kestrel/app"]);
+  });
+
+  it("shows GitHub App authorization failures when syncing pull requests", async () => {
+    const user = userEvent.setup();
+    mockAuth(
+      signedInResponse,
+      "system",
+      undefined,
+      [repository("kestrel/app")],
+      undefined,
+      {},
+      () => jsonResponse({ error: "authorization_required" }, 403),
+    );
+
+    renderApp();
+
+    await user.click(await screen.findByRole("button", { name: "Sync PRs for kestrel/app" }));
+
+    expect(await screen.findByText(/GitHub App authorization required/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Authorize more repos" })).toHaveAttribute(
+      "href",
+      "http://localhost/api/github-app/authorize",
+    );
+  });
+
   it("adds owner/name repositories", async () => {
     const user = userEvent.setup();
     const addedRepositories: string[] = [];
@@ -269,6 +395,25 @@ describe("App", () => {
     expect(addedRepositories).toEqual(["https://github.com/Kestrel/App.git"]);
   });
 
+  it("disables repository additions while saving", async () => {
+    const user = userEvent.setup();
+    const deferred = deferredResponse();
+    mockAuth(signedInResponse, "system", undefined, [], () => deferred.promise);
+
+    renderApp();
+
+    const input = await screen.findByRole("textbox", { name: "Add GitHub repository" });
+    await user.type(input, "Kestrel/App");
+    await user.click(screen.getByRole("button", { name: "Track repo" }));
+
+    expect(input).toHaveValue("");
+    expect(input).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Tracking..." })).toBeDisabled();
+
+    deferred.resolve(jsonResponse({ repository: repository("kestrel/app") }, 201));
+    expect(await screen.findByRole("link", { name: "kestrel/app" })).toBeInTheDocument();
+  });
+
   it("shows duplicate repository add errors", async () => {
     const user = userEvent.setup();
     mockAuth(signedInResponse, "system", undefined, [repository("kestrel/app")], () =>
@@ -283,7 +428,7 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Track repo" }));
 
     expect(await screen.findByText("That repository is already tracked.")).toBeInTheDocument();
-    expect(input).toHaveValue("Kestrel/App");
+    expect(input).toHaveValue("");
   });
 
   it("shows invalid repository add errors", async () => {
@@ -302,7 +447,7 @@ describe("App", () => {
     expect(
       await screen.findByText("Enter a GitHub repository as owner/name or a GitHub URL."),
     ).toBeInTheDocument();
-    expect(input).toHaveValue("owner/name/issues");
+    expect(input).toHaveValue("");
   });
 
   it("shows generic repository add errors", async () => {

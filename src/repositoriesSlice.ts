@@ -118,7 +118,7 @@ export const update = (ctx: UpdateContext, msg: Msg, state: State): State => {
         : { status: "error", repositories: state.repositories, pullRequests: state.pullRequests };
     }
     case "AddRequested": {
-      if (state.status !== "loaded") {
+      if (state.status !== "loaded" || state.addStatus === "saving") {
         return state;
       }
 
