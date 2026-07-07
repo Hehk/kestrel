@@ -43,13 +43,13 @@ const RepositoryList = ({ repositories }: { repositories: Repositories.State }) 
     return <p className="repo-status">Repositories could not be loaded.</p>;
   }
 
-  if (repositories.repositories.length === 0) {
+  if (repositories.repositories.isEmpty()) {
     return <p className="repo-status">No repositories tracked yet.</p>;
   }
 
   return (
     <ul className="repo-list" aria-label="Tracked repositories">
-      {repositories.repositories.map((repository) => (
+      {repositories.repositories.toArray().map((repository) => (
         <li className="repo-row" key={repository.fullName}>
           <a href={repository.htmlUrl}>{repository.fullName}</a>
           <span className="repo-provider">GitHub</span>
@@ -122,7 +122,7 @@ const addStatus = (repositories: Repositories.State) => {
   return repositories.status === "loaded" ? repositories.addStatus : "idle";
 };
 
-const addErrorText = (error: Repositories.AddError | undefined) => {
+const addErrorText = (error: Repositories.AddError | null) => {
   switch (error) {
     case "duplicate":
       return "That repository is already tracked.";
@@ -130,7 +130,7 @@ const addErrorText = (error: Repositories.AddError | undefined) => {
       return "Enter a GitHub repository as owner/name or a GitHub URL.";
     case "saveFailed":
       return "Repository could not be added. Try again.";
-    case undefined:
+    case null:
       return undefined;
   }
 };
