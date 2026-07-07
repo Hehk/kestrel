@@ -79,22 +79,85 @@ impl Config {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct GitHubAppConfig {
+    pub app_id: Option<String>,
+    pub private_key_pem: Option<String>,
     pub slug: String,
 }
 
 impl GitHubAppConfig {
     fn from_env(environment: Environment) -> Result<Option<Self>, ConfigError> {
+        let app_id = env::var("GITHUB_APP_ID").ok();
+        let private_key_pem = env::var("GITHUB_APP_PRIVATE_KEY").ok();
         let slug = env::var("GITHUB_APP_SLUG").ok();
-        match slug {
-            Some(slug) if slug.trim().is_empty() => Err(ConfigError::InvalidGitHubAppSlug),
-            Some(slug) => Ok(Some(Self {
-                slug: slug.trim().to_string(),
-            })),
-            None if environment.is_development() => Ok(None),
-            None => Err(ConfigError::MissingGitHubAppSlug),
+
+        let has_any = app_id.is_some() || private_key_pem.is_some() || slug.is_some();
+        if !has_any && environment.is_development() {
+            return Ok(None);
         }
+
+        let slug = required_github_app_value(slug, ConfigError::MissingGitHubAppSlug)?;
+        let app_id = optional_github_app_value(app_id)?;
+        let private_key_pem =
+            optional_github_app_value(private_key_pem)?.map(|value| value.replace("\\n", "\n"));
+
+        if environment == Environment::Production {
+            if app_id.is_none() {
+                return Err(ConfigError::MissingGitHubAppId);
+            }
+            if private_key_pem.is_none() {
+                return Err(ConfigError::MissingGitHubAppPrivateKey);
+            }
+        }
+
+        Ok(Some(Self {
+            app_id,
+            private_key_pem,
+            slug,
+        }))
+    }
+}
+
+fn required_github_app_value(
+    value: Option<String>,
+    missing: ConfigError,
+) -> Result<String, ConfigError> {
+    let Some(value) = value else {
+        return Err(missing);
+    };
+
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(ConfigError::InvalidGitHubAppConfig);
+    }
+
+    Ok(value.to_string())
+}
+
+fn optional_github_app_value(value: Option<String>) -> Result<Option<String>, ConfigError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(ConfigError::InvalidGitHubAppConfig);
+    }
+
+    Ok(Some(value.to_string()))
+}
+
+impl std::fmt::Debug for GitHubAppConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GitHubAppConfig")
+            .field("app_id", &self.app_id)
+            .field(
+                "private_key_pem",
+                &self.private_key_pem.as_ref().map(|_| "<redacted>"),
+            )
+            .field("slug", &self.slug)
+            .finish()
     }
 }
 
@@ -213,7 +276,9 @@ pub enum ConfigError {
     MissingApiUrl,
     MissingAppUrl,
     MissingDatabaseUrl,
-    InvalidGitHubAppSlug,
+    InvalidGitHubAppConfig,
+    MissingGitHubAppId,
+    MissingGitHubAppPrivateKey,
     MissingGitHubAppSlug,
     MissingGitHubClientId,
     MissingGitHubClientSecret,
@@ -246,7 +311,11 @@ impl std::fmt::Display for ConfigError {
             Self::MissingApiUrl => write!(f, "API_URL is required in production"),
             Self::MissingAppUrl => write!(f, "APP_URL is required in production"),
             Self::MissingDatabaseUrl => write!(f, "DATABASE_URL is required in production"),
-            Self::InvalidGitHubAppSlug => write!(f, "GITHUB_APP_SLUG cannot be empty"),
+            Self::InvalidGitHubAppConfig => write!(f, "GitHub App config values cannot be empty"),
+            Self::MissingGitHubAppId => write!(f, "GITHUB_APP_ID is required in production"),
+            Self::MissingGitHubAppPrivateKey => {
+                write!(f, "GITHUB_APP_PRIVATE_KEY is required in production")
+            }
             Self::MissingGitHubAppSlug => write!(f, "GITHUB_APP_SLUG is required in production"),
             Self::MissingGitHubClientId => write!(f, "GITHUB_CLIENT_ID is required in production"),
             Self::MissingGitHubClientSecret => {
@@ -282,6 +351,8 @@ mod tests {
     }
 
     fn clear_github_app_env() {
+        env::remove_var("GITHUB_APP_ID");
+        env::remove_var("GITHUB_APP_PRIVATE_KEY");
         env::remove_var("GITHUB_APP_SLUG");
     }
 
@@ -364,6 +435,8 @@ mod tests {
         env::set_var("APP_URL", "https://app.example.test");
         env::set_var("GITHUB_CLIENT_ID", "client_id");
         env::set_var("GITHUB_CLIENT_SECRET", "client_secret");
+        env::set_var("GITHUB_APP_ID", "12345");
+        env::set_var("GITHUB_APP_PRIVATE_KEY", "private\\nkey");
         env::set_var("GITHUB_APP_SLUG", "kestrel-app");
         env::set_var("SESSION_COOKIE_NAME", "custom_session");
         env::set_var("SESSION_TTL_DAYS", "14");
@@ -381,6 +454,24 @@ mod tests {
                 .expect("github app should be configured")
                 .slug,
             "kestrel-app"
+        );
+        assert_eq!(
+            config
+                .github_app
+                .as_ref()
+                .expect("github app should be configured")
+                .app_id
+                .as_deref(),
+            Some("12345")
+        );
+        assert_eq!(
+            config
+                .github_app
+                .as_ref()
+                .expect("github app should be configured")
+                .private_key_pem
+                .as_deref(),
+            Some("private\nkey")
         );
         assert_eq!(
             config
@@ -469,9 +560,69 @@ mod tests {
 
         let error = Config::from_env().expect_err("config should fail");
 
-        assert_eq!(error.to_string(), "GITHUB_APP_SLUG cannot be empty");
+        assert_eq!(
+            error.to_string(),
+            "GitHub App config values cannot be empty"
+        );
 
         clear_github_app_env();
+    }
+
+    #[test]
+    fn requires_github_app_id_in_production() {
+        let _lock = ENV_LOCK.lock().expect("env lock should not be poisoned");
+        env::set_var("APP_ENV", "production");
+        env::set_var("DATABASE_URL", "sqlite::memory:");
+        clear_oauth_env();
+        env::set_var("API_URL", "https://api.example.test");
+        env::set_var("APP_URL", "https://app.example.test");
+        env::set_var("TOKEN_ENCRYPTION_KEY", STANDARD.encode([9_u8; 32]));
+        env::set_var("GITHUB_APP_SLUG", "kestrel-app");
+        env::remove_var("BIND_ADDR");
+        env::remove_var("SESSION_COOKIE_NAME");
+        env::remove_var("SESSION_TTL_DAYS");
+        env::remove_var("GITHUB_APP_ID");
+        env::remove_var("GITHUB_APP_PRIVATE_KEY");
+
+        let error = Config::from_env().expect_err("production config should fail");
+
+        assert_eq!(error.to_string(), "GITHUB_APP_ID is required in production");
+
+        env::remove_var("APP_ENV");
+        env::remove_var("DATABASE_URL");
+        env::remove_var("TOKEN_ENCRYPTION_KEY");
+        clear_github_app_env();
+        clear_oauth_env();
+    }
+
+    #[test]
+    fn requires_github_app_private_key_in_production() {
+        let _lock = ENV_LOCK.lock().expect("env lock should not be poisoned");
+        env::set_var("APP_ENV", "production");
+        env::set_var("DATABASE_URL", "sqlite::memory:");
+        clear_oauth_env();
+        env::set_var("API_URL", "https://api.example.test");
+        env::set_var("APP_URL", "https://app.example.test");
+        env::set_var("TOKEN_ENCRYPTION_KEY", STANDARD.encode([9_u8; 32]));
+        env::set_var("GITHUB_APP_SLUG", "kestrel-app");
+        env::set_var("GITHUB_APP_ID", "12345");
+        env::remove_var("BIND_ADDR");
+        env::remove_var("SESSION_COOKIE_NAME");
+        env::remove_var("SESSION_TTL_DAYS");
+        env::remove_var("GITHUB_APP_PRIVATE_KEY");
+
+        let error = Config::from_env().expect_err("production config should fail");
+
+        assert_eq!(
+            error.to_string(),
+            "GITHUB_APP_PRIVATE_KEY is required in production"
+        );
+
+        env::remove_var("APP_ENV");
+        env::remove_var("DATABASE_URL");
+        env::remove_var("TOKEN_ENCRYPTION_KEY");
+        clear_github_app_env();
+        clear_oauth_env();
     }
 
     #[test]
@@ -482,6 +633,8 @@ mod tests {
         env::set_var("API_URL", "https://api.example.test");
         env::set_var("APP_URL", "https://app.example.test");
         env::set_var("TOKEN_ENCRYPTION_KEY", STANDARD.encode([9_u8; 32]));
+        env::set_var("GITHUB_APP_ID", "12345");
+        env::set_var("GITHUB_APP_PRIVATE_KEY", "private-key");
         env::set_var("GITHUB_APP_SLUG", "kestrel-app");
         env::remove_var("BIND_ADDR");
         env::remove_var("SESSION_COOKIE_NAME");
