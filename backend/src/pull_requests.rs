@@ -69,6 +69,17 @@ pub enum PullRequestErrorCode {
     SyncFailed,
 }
 
+impl PullRequestErrorCode {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::AuthorizationRequired => "authorization_required",
+            Self::InvalidRepository => "invalid_repository",
+            Self::RepositoryNotTracked => "repository_not_tracked",
+            Self::SyncFailed => "sync_failed",
+        }
+    }
+}
+
 #[utoipa::path(
     get,
     path = "/api/repositories/{owner}/{name}/pull-requests",
@@ -154,18 +165,26 @@ pub(crate) async fn sync_pull_requests(
             )
         })?;
 
-    let github_pull_requests = fetch_pull_requests_with_installation(&state, &user_id, &tracked)
-        .await
-        .map_err(|error| match error {
-            PullRequestSyncError::AuthorizationRequired => api_error(
-                StatusCode::FORBIDDEN,
-                PullRequestErrorCode::AuthorizationRequired,
-            ),
-            PullRequestSyncError::Other(error) => {
-                tracing::error!(%error, "failed to sync pull requests");
-                api_error(StatusCode::BAD_GATEWAY, PullRequestErrorCode::SyncFailed)
+    let github_pull_requests =
+        match fetch_pull_requests_with_installation(&state, &user_id, &tracked).await {
+            Ok(pull_requests) => pull_requests,
+            Err(error) => {
+                let (status, code) = match error {
+                    PullRequestSyncError::AuthorizationRequired => (
+                        StatusCode::FORBIDDEN,
+                        PullRequestErrorCode::AuthorizationRequired,
+                    ),
+                    PullRequestSyncError::Other(error) => {
+                        tracing::error!(%error, "failed to sync pull requests");
+                        (StatusCode::BAD_GATEWAY, PullRequestErrorCode::SyncFailed)
+                    }
+                };
+                if let Err(error) = update_sync_error(&state.db, &tracked, code.as_str()).await {
+                    tracing::error!(%error, "failed to store pull request sync error");
+                }
+                return Err(api_error(status, code));
             }
-        })?;
+        };
     let synced_at = format_timestamp(OffsetDateTime::now_utc()).map_err(|error| {
         tracing::error!(%error, "failed to format pull request sync timestamp");
         api_error(
@@ -403,6 +422,25 @@ async fn update_sync_state(
     Ok(())
 }
 
+async fn update_sync_error(
+    db: &SqlitePool,
+    repository: &TrackedRepository,
+    sync_error: &str,
+) -> Result<(), PullRequestDataError> {
+    sqlx::query(
+        "UPDATE tracked_repositories SET pull_requests_sync_error = ? WHERE user_id = ? AND provider = ? AND owner = ? AND name = ?",
+    )
+    .bind(sync_error)
+    .bind(&repository.user_id)
+    .bind(GITHUB_PROVIDER)
+    .bind(&repository.owner)
+    .bind(&repository.name)
+    .execute(db)
+    .await?;
+
+    Ok(())
+}
+
 fn api_error(
     status: StatusCode,
     error: PullRequestErrorCode,
@@ -542,8 +580,8 @@ mod tests {
     use tower::ServiceExt;
 
     use super::{
-        load_pull_requests, load_tracked_repository, update_sync_state, upsert_pull_requests,
-        GitHubPullRequest, GitHubUser,
+        load_pull_requests, load_tracked_repository, update_sync_error, update_sync_state,
+        upsert_pull_requests, GitHubPullRequest, GitHubUser,
     };
     use crate::{
         config::{Config, Environment, SessionConfig, TokenEncryptionKey},
@@ -792,7 +830,7 @@ mod tests {
         let db = test_db().await;
         insert_tracked_repository(&db).await;
         let cookie = session_cookie(&db, &config).await;
-        let response = app(&config, AppState::new(db, config.clone()))
+        let response = app(&config, AppState::new(db.clone(), config.clone()))
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -808,6 +846,19 @@ mod tests {
         assert_eq!(
             response_json(response).await,
             serde_json::json!({ "error": "authorization_required" }),
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT pull_requests_sync_error FROM tracked_repositories WHERE user_id = ? AND provider = ? AND owner = ? AND name = ?",
+            )
+            .bind("user_1")
+            .bind("github")
+            .bind("kestrel")
+            .bind("app")
+            .fetch_one(&db)
+            .await
+            .expect("sync error should load"),
+            "authorization_required",
         );
     }
 
@@ -845,6 +896,9 @@ mod tests {
         let saved = upsert_pull_requests(&db, &repository, &pull_requests, "2026-01-03T00:00:00Z")
             .await
             .expect("pull requests should upsert");
+        update_sync_error(&db, &repository, "sync_failed")
+            .await
+            .expect("sync error should update");
         update_sync_state(&db, &repository, Some(2), "2026-01-03T00:00:00Z")
             .await
             .expect("sync state should update");
@@ -868,6 +922,19 @@ mod tests {
             .await
             .expect("sync page should load"),
             2,
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, Option<String>>(
+                "SELECT pull_requests_sync_error FROM tracked_repositories WHERE user_id = ? AND provider = ? AND owner = ? AND name = ?",
+            )
+            .bind("user_1")
+            .bind("github")
+            .bind("kestrel")
+            .bind("app")
+            .fetch_one(&db)
+            .await
+            .expect("sync error should load"),
+            None,
         );
     }
 }
