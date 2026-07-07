@@ -327,19 +327,13 @@ describe("App", () => {
     );
   });
 
-  it("loads pull requests from the pull request route", async () => {
-    const user = userEvent.setup();
+  it("loads pull requests automatically from the pull request route", async () => {
     window.history.replaceState({}, "", "/pull/kestrel%2Fapp/42");
     mockAuth(signedInResponse, "system", undefined, [repository("kestrel/app")], undefined, {
       "kestrel/app": [pullRequest(42, "Add syncing")],
     });
 
     renderApp();
-
-    expect(
-      await screen.findByText("Pull requests have not been loaded for this repository."),
-    ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Load pull requests" }));
 
     expect(await screen.findByRole("heading", { name: "Add syncing" })).toBeInTheDocument();
   });

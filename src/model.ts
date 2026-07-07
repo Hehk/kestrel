@@ -84,7 +84,7 @@ export const update = (ctx: UpdateContext, msg: Msg, model: Model): Model => {
         return model;
       }
 
-      return model.set("route", route);
+      return queuePullRequestRouteLoad(ctx, model.set("route", route));
     }
     case "Settings": {
       const user = model.get("user");
@@ -108,7 +108,7 @@ export const update = (ctx: UpdateContext, msg: Msg, model: Model): Model => {
         model.get("repositories"),
       );
 
-      return model.set("repositories", repositories);
+      return queuePullRequestRouteLoad(ctx, model.set("repositories", repositories));
     }
     case "UserRefreshed": {
       if (model.get("user").id === msg.user.id) {
@@ -118,6 +118,28 @@ export const update = (ctx: UpdateContext, msg: Msg, model: Model): Model => {
       return createModel(msg.user, model.get("route"));
     }
   }
+};
+
+const queuePullRequestRouteLoad = (ctx: UpdateContext, model: Model): Model => {
+  const route = model.get("route");
+  if (route.name !== "PullRequest") {
+    return model;
+  }
+
+  const repositories = model.get("repositories");
+  if (repositories.status !== "loaded") {
+    return model;
+  }
+
+  const repository = repositories.repositories.find(
+    (candidate) => candidate.fullName === route.repo.toLowerCase(),
+  );
+  if (repository === undefined || repositories.pullRequests.has(repository.fullName)) {
+    return model;
+  }
+
+  ctx.runCmd({ kind: "Repositories", cmd: { kind: "LoadPullRequests", repository } });
+  return model;
 };
 
 let model: Model | null = null;

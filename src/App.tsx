@@ -252,7 +252,9 @@ const PullRequestPage = ({ repo, id }: { repo: string; id: string }) => {
     );
   }
 
-  const repository = repositories.repositories.find((candidate) => candidate.fullName === repo);
+  const repository = repositories.repositories.find(
+    (candidate) => candidate.fullName === repo.toLowerCase(),
+  );
   if (repository === undefined) {
     return (
       <section className="page-card">
@@ -282,15 +284,7 @@ const PullRequestPage = ({ repo, id }: { repo: string; id: string }) => {
         <h1>
           {repo} #{id}
         </h1>
-        <p>Pull requests have not been loaded for this repository.</p>
-        <button
-          onClick={() =>
-            send({ kind: "Repositories", msg: { kind: "PullRequestsLoadRequested", repository } })
-          }
-          type="button"
-        >
-          Load pull requests
-        </button>
+        <p>Loading pull requests...</p>
       </section>
     );
   }
