@@ -6,6 +6,7 @@ mod github_app;
 mod github_oauth;
 mod http;
 mod openapi;
+mod pull_requests;
 mod repositories;
 mod session;
 mod settings;

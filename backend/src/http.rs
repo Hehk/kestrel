@@ -8,7 +8,7 @@ use utoipa_swagger_ui::SwaggerUi;
 
 use crate::{
     auth, config::Config, crypto::TokenCipher, db, github_app, github_oauth, openapi::ApiDoc,
-    repositories, settings,
+    pull_requests, repositories, settings,
 };
 
 #[derive(Clone)]
@@ -81,6 +81,14 @@ pub fn app(config: &Config, state: AppState) -> Router {
     let api = api.route(
         "/repositories",
         get(repositories::list_repositories).post(repositories::create_repository),
+    );
+    let api = api.route(
+        "/repositories/{owner}/{name}/pull-requests",
+        get(pull_requests::list_pull_requests),
+    );
+    let api = api.route(
+        "/repositories/{owner}/{name}/pull-requests/sync",
+        axum::routing::post(pull_requests::sync_pull_requests),
     );
 
     let router = Router::new()

@@ -144,6 +144,18 @@ pub(crate) async fn create_installation_token(
     })
 }
 
+pub(crate) async fn installation_ids_for_user(
+    db: &SqlitePool,
+    user_id: &str,
+) -> Result<Vec<String>, GitHubAppError> {
+    Ok(sqlx::query_scalar(
+        "SELECT installation_id FROM github_app_installation_users WHERE user_id = ? ORDER BY created_at ASC",
+    )
+    .bind(user_id)
+    .fetch_all(db)
+    .await?)
+}
+
 async fn require_user_id(state: &AppState, headers: &HeaderMap) -> Result<String, StatusCode> {
     auth::current_user_id(state, headers)
         .await
