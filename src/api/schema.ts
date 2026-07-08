@@ -236,6 +236,8 @@ export interface components {
       htmlUrl: string;
       name: string;
       owner: string;
+      pullRequestsSyncError?: string | null;
+      pullRequestsSyncedAt?: string | null;
     };
     /** @enum {string} */
     RepositoryErrorCode: "duplicate_repository" | "invalid_repository" | "repository_save_failed";

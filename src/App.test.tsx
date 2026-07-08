@@ -27,6 +27,8 @@ type Repository = {
   htmlUrl: string;
   name: string;
   owner: string;
+  pullRequestsSyncError?: string | null;
+  pullRequestsSyncedAt?: string | null;
 };
 type PullRequest = {
   authorLogin: string | null;
@@ -45,7 +47,7 @@ type PullRequest = {
 type SaveRepository = (repository: string) => Response | Promise<Response>;
 type SyncPullRequests = (fullName: string) => Response | Promise<Response>;
 
-const repository = (fullName: string): Repository => {
+const repository = (fullName: string, metadata: Partial<Repository> = {}): Repository => {
   const [owner = "", name = ""] = fullName.split("/");
   return {
     createdAt: "2026-01-01T00:00:00Z",
@@ -53,6 +55,7 @@ const repository = (fullName: string): Repository => {
     htmlUrl: `https://github.com/${fullName}`,
     name,
     owner,
+    ...metadata,
   };
 };
 
@@ -290,6 +293,22 @@ describe("App", () => {
     const link = await screen.findByRole("link", { name: "kestrel/app" });
     expect(link).toHaveAttribute("href", "https://github.com/kestrel/app");
     expect(screen.queryByText("No repositories tracked yet.")).not.toBeInTheDocument();
+  });
+
+  it("renders persisted pull request sync metadata", async () => {
+    mockAuth(signedInResponse, "system", undefined, [
+      repository("kestrel/app", {
+        pullRequestsSyncError: "authorization_required",
+        pullRequestsSyncedAt: "2026-01-02T00:00:00Z",
+      }),
+    ]);
+
+    renderApp();
+
+    expect(await screen.findByRole("link", { name: "kestrel/app" })).toBeInTheDocument();
+    expect(
+      screen.getByText("Last PR sync failed: GitHub App authorization required."),
+    ).toBeInTheDocument();
   });
 
   it("loads stored pull requests for tracked repositories", async () => {

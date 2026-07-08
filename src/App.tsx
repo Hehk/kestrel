@@ -97,9 +97,37 @@ const RepositoryRow = ({
           {pullRequests?.status === "syncing" ? "Syncing..." : "Sync PRs"}
         </button>
       </div>
+      <RepositorySyncStatus repository={repository} />
       <PullRequestsSummary pullRequests={pullRequests} repository={repository} />
     </li>
   );
+};
+
+const RepositorySyncStatus = ({ repository }: { repository: Repositories.Repository }) => {
+  if (repository.pullRequestsSyncError) {
+    return (
+      <p className="repo-pr-status">
+        Last PR sync failed: {repositorySyncErrorText(repository.pullRequestsSyncError)}
+      </p>
+    );
+  }
+
+  if (repository.pullRequestsSyncedAt) {
+    return <p className="repo-pr-status">Last PR sync: {repository.pullRequestsSyncedAt}</p>;
+  }
+
+  return null;
+};
+
+const repositorySyncErrorText = (error: string) => {
+  switch (error) {
+    case "authorization_required":
+      return "GitHub App authorization required.";
+    case "sync_failed":
+      return "GitHub sync failed.";
+    default:
+      return "Unknown sync error.";
+  }
 };
 
 const PullRequestsSummary = ({

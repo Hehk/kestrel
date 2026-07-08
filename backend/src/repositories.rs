@@ -16,6 +16,8 @@ pub struct RepositoryDto {
     pub full_name: String,
     pub html_url: String,
     pub created_at: String,
+    pub pull_requests_synced_at: Option<String>,
+    pub pull_requests_sync_error: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -134,8 +136,8 @@ async fn load_repositories(
     state: &AppState,
     user_id: &str,
 ) -> Result<Vec<RepositoryDto>, RepositoryError> {
-    let rows = sqlx::query_as::<_, (String, String, String)>(
-        "SELECT owner, name, created_at FROM tracked_repositories WHERE user_id = ? AND provider = ? ORDER BY created_at ASC, owner ASC, name ASC",
+    let rows = sqlx::query_as::<_, (String, String, String, Option<String>, Option<String>)>(
+        "SELECT owner, name, created_at, pull_requests_synced_at, pull_requests_sync_error FROM tracked_repositories WHERE user_id = ? AND provider = ? ORDER BY created_at ASC, owner ASC, name ASC",
     )
     .bind(user_id)
     .bind(GITHUB_PROVIDER)
@@ -144,7 +146,17 @@ async fn load_repositories(
 
     Ok(rows
         .into_iter()
-        .map(|(owner, name, created_at)| repository_dto(owner, name, created_at))
+        .map(
+            |(owner, name, created_at, pull_requests_synced_at, pull_requests_sync_error)| {
+                repository_dto(
+                    owner,
+                    name,
+                    created_at,
+                    pull_requests_synced_at,
+                    pull_requests_sync_error,
+                )
+            },
+        )
         .collect())
 }
 
@@ -172,10 +184,18 @@ async fn insert_repository(
         repository.owner.clone(),
         repository.name.clone(),
         created_at,
+        None,
+        None,
     )))
 }
 
-fn repository_dto(owner: String, name: String, created_at: String) -> RepositoryDto {
+fn repository_dto(
+    owner: String,
+    name: String,
+    created_at: String,
+    pull_requests_synced_at: Option<String>,
+    pull_requests_sync_error: Option<String>,
+) -> RepositoryDto {
     let full_name = format!("{owner}/{name}");
     RepositoryDto {
         owner,
@@ -183,6 +203,8 @@ fn repository_dto(owner: String, name: String, created_at: String) -> Repository
         html_url: format!("https://github.com/{full_name}"),
         full_name,
         created_at,
+        pull_requests_synced_at,
+        pull_requests_sync_error,
     }
 }
 
@@ -539,6 +561,14 @@ mod tests {
             "https://github.com/kestrel/app"
         );
         assert!(json["repository"]["createdAt"].is_string());
+        assert_eq!(
+            json["repository"]["pullRequestsSyncedAt"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            json["repository"]["pullRequestsSyncError"],
+            serde_json::Value::Null
+        );
 
         let stored: (String, String) = sqlx::query_as(
             "SELECT owner, name FROM tracked_repositories WHERE user_id = ? AND provider = ?",
@@ -657,6 +687,52 @@ mod tests {
         assert_eq!(
             response_json(response).await,
             serde_json::json!({ "repositories": [] }),
+        );
+    }
+
+    #[tokio::test]
+    async fn list_repositories_returns_pull_request_sync_metadata() {
+        let config = test_config();
+        let db = test_db().await;
+        sqlx::query(
+            "INSERT INTO tracked_repositories (user_id, provider, owner, name, created_at, pull_requests_synced_at, pull_requests_sync_error) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("user_1")
+        .bind("github")
+        .bind("kestrel")
+        .bind("app")
+        .bind("2026-01-01T00:00:00Z")
+        .bind("2026-01-02T00:00:00Z")
+        .bind("authorization_required")
+        .execute(&db)
+        .await
+        .expect("repository should insert");
+        let cookie = session_cookie(&db, &config, "user_1").await;
+        let response = app(&config, AppState::new(db, config.clone()))
+            .oneshot(
+                Request::builder()
+                    .uri("/api/repositories")
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(response).await,
+            serde_json::json!({
+                "repositories": [{
+                    "createdAt": "2026-01-01T00:00:00Z",
+                    "fullName": "kestrel/app",
+                    "htmlUrl": "https://github.com/kestrel/app",
+                    "name": "app",
+                    "owner": "kestrel",
+                    "pullRequestsSyncedAt": "2026-01-02T00:00:00Z",
+                    "pullRequestsSyncError": "authorization_required"
+                }]
+            }),
         );
     }
 }
