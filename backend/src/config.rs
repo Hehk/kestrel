@@ -9,6 +9,7 @@ pub struct Config {
     pub bind_addr: SocketAddr,
     pub database_url: String,
     pub environment: Environment,
+    pub github_api_url: String,
     pub github_app: Option<GitHubAppConfig>,
     pub github_oauth: Option<GitHubOAuthConfig>,
     pub session: SessionConfig,
@@ -61,6 +62,8 @@ impl Config {
             Err(_) if environment.is_development() => "http://127.0.0.1:3000".to_string(),
             Err(_) => return Err(ConfigError::MissingApiUrl),
         };
+        let github_api_url =
+            env::var("GITHUB_API_URL").unwrap_or_else(|_| "https://api.github.com".to_string());
         let session = SessionConfig::from_env(environment)?;
         let github_app = GitHubAppConfig::from_env(environment)?;
         let github_oauth = GitHubOAuthConfig::from_env(environment)?;
@@ -71,6 +74,7 @@ impl Config {
             bind_addr,
             database_url,
             environment,
+            github_api_url,
             github_app,
             github_oauth,
             session,
@@ -351,6 +355,7 @@ mod tests {
     }
 
     fn clear_github_app_env() {
+        env::remove_var("GITHUB_API_URL");
         env::remove_var("GITHUB_APP_ID");
         env::remove_var("GITHUB_APP_PRIVATE_KEY");
         env::remove_var("GITHUB_APP_SLUG");
@@ -373,6 +378,7 @@ mod tests {
         assert_eq!(config.api_url, "http://127.0.0.1:3000");
         assert_eq!(config.app_url, "http://127.0.0.1:5173");
         assert_eq!(config.database_url, "sqlite://data/kestrel.dev.sqlite3");
+        assert_eq!(config.github_api_url, "https://api.github.com");
         assert!(config.github_app.is_none());
         assert!(config.github_oauth.is_none());
         assert_eq!(config.session.cookie_name, "kestrel_session");
@@ -382,6 +388,25 @@ mod tests {
             format!("{:?}", config.token_encryption_key),
             "TokenEncryptionKey(<redacted>)"
         );
+    }
+
+    #[test]
+    fn reads_github_api_url_override() {
+        let _lock = ENV_LOCK.lock().expect("env lock should not be poisoned");
+        env::remove_var("APP_ENV");
+        env::remove_var("DATABASE_URL");
+        env::remove_var("BIND_ADDR");
+        env::remove_var("SESSION_COOKIE_NAME");
+        env::remove_var("SESSION_TTL_DAYS");
+        env::remove_var("TOKEN_ENCRYPTION_KEY");
+        clear_oauth_env();
+        clear_github_app_env();
+        env::set_var("GITHUB_API_URL", "http://127.0.0.1:9000");
+
+        let config = Config::from_env().expect("development config should load");
+
+        assert_eq!(config.github_api_url, "http://127.0.0.1:9000");
+        env::remove_var("GITHUB_API_URL");
     }
 
     #[test]

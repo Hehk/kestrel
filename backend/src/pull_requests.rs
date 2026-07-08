@@ -11,7 +11,6 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::{auth, github_app, http::AppState, repositories};
 
-const GITHUB_API_URL: &str = "https://api.github.com";
 const GITHUB_PROVIDER: &str = "github";
 const PAGE_SIZE: u8 = 100;
 const USER_AGENT: &str = "kestrel";
@@ -325,8 +324,10 @@ async fn fetch_github_pull_requests(
     let response = state
         .http_client
         .get(format!(
-            "{GITHUB_API_URL}/repos/{}/{}/pulls",
-            repository.owner, repository.name
+            "{}/repos/{}/{}/pulls",
+            state.config.github_api_url.trim_end_matches('/'),
+            repository.owner,
+            repository.name
         ))
         .bearer_auth(token)
         .header("Accept", "application/vnd.github+json")
@@ -572,16 +573,21 @@ struct GitHubUser {
 mod tests {
     use axum::{
         body::{to_bytes, Body},
+        extract::Query,
         http::{header, Request, StatusCode},
+        routing::get,
+        Json, Router,
     };
     use base64::{engine::general_purpose::STANDARD, Engine};
     use serde_json::Value;
     use sqlx::SqlitePool;
+    use std::collections::HashMap;
+    use tokio::net::TcpListener;
     use tower::ServiceExt;
 
     use super::{
-        load_pull_requests, load_tracked_repository, update_sync_error, update_sync_state,
-        upsert_pull_requests, GitHubPullRequest, GitHubUser,
+        fetch_github_pull_requests, load_pull_requests, load_tracked_repository, update_sync_error,
+        update_sync_state, upsert_pull_requests, GitHubPullRequest, GitHubUser, TrackedRepository,
     };
     use crate::{
         config::{Config, Environment, SessionConfig, TokenEncryptionKey},
@@ -599,6 +605,7 @@ mod tests {
                 .expect("test bind address should parse"),
             database_url: "sqlite::memory:".to_string(),
             environment: Environment::Development,
+            github_api_url: "https://api.github.com".to_string(),
             github_app: None,
             github_oauth: None,
             session: SessionConfig {
@@ -609,6 +616,45 @@ mod tests {
             token_encryption_key: TokenEncryptionKey::from_base64(&STANDARD.encode([10_u8; 32]))
                 .expect("test key should parse"),
         }
+    }
+
+    async fn mock_github_api() -> (String, tokio::task::JoinHandle<()>) {
+        async fn pulls(Query(query): Query<HashMap<String, String>>) -> Json<Value> {
+            assert_eq!(query.get("state"), Some(&"all".to_string()));
+            assert_eq!(query.get("sort"), Some(&"created".to_string()));
+            assert_eq!(query.get("direction"), Some(&"desc".to_string()));
+            assert_eq!(query.get("per_page"), Some(&"100".to_string()));
+            assert_eq!(query.get("page"), Some(&"1".to_string()));
+
+            Json(serde_json::json!([{
+                "closed_at": null,
+                "created_at": "2026-01-01T00:00:00Z",
+                "draft": false,
+                "html_url": "https://github.com/kestrel/app/pull/42",
+                "id": 1001,
+                "merged_at": null,
+                "number": 42,
+                "state": "open",
+                "title": "Add syncing",
+                "updated_at": "2026-01-02T00:00:00Z",
+                "user": { "login": "octocat" }
+            }]))
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("mock GitHub listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("mock GitHub address should load");
+        let app = Router::new().route("/repos/kestrel/app/pulls", get(pulls));
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("mock GitHub server should run");
+        });
+
+        (format!("http://{address}"), handle)
     }
 
     async fn test_db() -> SqlitePool {
@@ -859,6 +905,37 @@ mod tests {
             .await
             .expect("sync error should load"),
             "authorization_required",
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_pull_requests_uses_configured_github_api_url() {
+        let (github_api_url, server) = mock_github_api().await;
+        let mut config = test_config();
+        config.github_api_url = github_api_url;
+        let db = test_db().await;
+        let state = AppState::new(db, config);
+        let repository = TrackedRepository {
+            name: "app".to_string(),
+            owner: "kestrel".to_string(),
+            sync_page: 1,
+            user_id: "user_1".to_string(),
+        };
+
+        let pull_requests = fetch_github_pull_requests(&state, "installation_token", &repository)
+            .await
+            .expect("pull requests should fetch from mock GitHub API");
+
+        server.abort();
+        assert_eq!(pull_requests.len(), 1);
+        assert_eq!(pull_requests[0].number, 42);
+        assert_eq!(pull_requests[0].title, "Add syncing");
+        assert_eq!(
+            pull_requests[0]
+                .user
+                .as_ref()
+                .map(|user| user.login.as_str()),
+            Some("octocat"),
         );
     }
 

@@ -15,7 +15,6 @@ use utoipa::IntoParams;
 
 use crate::{auth, http::AppState};
 
-const GITHUB_API_URL: &str = "https://api.github.com";
 const GITHUB_APP_URL: &str = "https://github.com/apps";
 const USER_AGENT: &str = "kestrel";
 
@@ -125,7 +124,10 @@ pub(crate) async fn create_installation_token(
         .as_ref()
         .ok_or(GitHubAppError::Config("GitHub App is not configured"))?;
     let app_jwt = create_app_jwt(github_app, OffsetDateTime::now_utc())?;
-    let url = format!("{GITHUB_API_URL}/app/installations/{installation_id}/access_tokens");
+    let url = format!(
+        "{}/app/installations/{installation_id}/access_tokens",
+        state.config.github_api_url.trim_end_matches('/')
+    );
     let response = state
         .http_client
         .post(url)
@@ -453,6 +455,7 @@ vAyYm+x4Q92C4SBC+QZ4IfI=
                 .expect("test bind address should parse"),
             database_url: "sqlite::memory:".to_string(),
             environment: Environment::Development,
+            github_api_url: "https://api.github.com".to_string(),
             github_app,
             github_oauth: None,
             session: SessionConfig {

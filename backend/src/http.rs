@@ -133,6 +133,7 @@ mod tests {
                 .expect("test bind address should parse"),
             database_url: "sqlite::memory:".to_string(),
             environment,
+            github_api_url: "https://api.github.com".to_string(),
             github_app: None,
             github_oauth: Some(GitHubOAuthConfig {
                 client_id: "client_id".to_string(),
