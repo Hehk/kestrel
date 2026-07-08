@@ -84,7 +84,7 @@ export const update = (ctx: UpdateContext, msg: Msg, model: Model): Model => {
         return model;
       }
 
-      return queuePullRequestRouteLoad(ctx, model.set("route", route));
+      return queuePullRequestRouteWork(ctx, model.set("route", route), { syncMissing: true });
     }
     case "Settings": {
       const user = model.get("user");
@@ -108,7 +108,9 @@ export const update = (ctx: UpdateContext, msg: Msg, model: Model): Model => {
         model.get("repositories"),
       );
 
-      return queuePullRequestRouteLoad(ctx, model.set("repositories", repositories));
+      return queuePullRequestRouteWork(ctx, model.set("repositories", repositories), {
+        syncMissing: msg.msg.kind === "PullRequestsLoaded",
+      });
     }
     case "UserRefreshed": {
       if (model.get("user").id === msg.user.id) {
@@ -120,7 +122,11 @@ export const update = (ctx: UpdateContext, msg: Msg, model: Model): Model => {
   }
 };
 
-const queuePullRequestRouteLoad = (ctx: UpdateContext, model: Model): Model => {
+const queuePullRequestRouteWork = (
+  ctx: UpdateContext,
+  model: Model,
+  options: { syncMissing: boolean },
+): Model => {
   const route = model.get("route");
   if (route.name !== "PullRequest") {
     return model;
@@ -134,11 +140,29 @@ const queuePullRequestRouteLoad = (ctx: UpdateContext, model: Model): Model => {
   const repository = repositories.repositories.find(
     (candidate) => candidate.fullName === route.repo.toLowerCase(),
   );
-  if (repository === undefined || repositories.pullRequests.has(repository.fullName)) {
+  if (repository === undefined) {
     return model;
   }
 
-  ctx.runCmd({ kind: "Repositories", cmd: { kind: "LoadPullRequests", repository } });
+  const pullRequests = repositories.pullRequests.get(repository.fullName);
+  if (pullRequests === undefined) {
+    ctx.runCmd({ kind: "Repositories", cmd: { kind: "LoadPullRequests", repository } });
+    return model;
+  }
+
+  const number = Number(route.id);
+  if (
+    !options.syncMissing ||
+    pullRequests.status !== "loaded" ||
+    pullRequests.complete ||
+    !Number.isInteger(number) ||
+    number <= 0 ||
+    pullRequests.pullRequests.some((pullRequest) => pullRequest.number === number)
+  ) {
+    return model;
+  }
+
+  ctx.runCmd({ kind: "Repositories", cmd: { kind: "SyncPullRequests", repository } });
   return model;
 };
 

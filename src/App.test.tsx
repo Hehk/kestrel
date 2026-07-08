@@ -338,6 +338,29 @@ describe("App", () => {
     expect(await screen.findByRole("heading", { name: "Add syncing" })).toBeInTheDocument();
   });
 
+  it("syncs missing pull requests automatically from the pull request route", async () => {
+    const syncedRepositories: string[] = [];
+    window.history.replaceState({}, "", "/pull/kestrel%2Fapp/42");
+    mockAuth(
+      signedInResponse,
+      "system",
+      undefined,
+      [repository("kestrel/app")],
+      undefined,
+      { "kestrel/app": [] },
+      (fullName) => {
+        syncedRepositories.push(fullName);
+        const pullRequests = [pullRequest(42, "Add syncing")];
+        return jsonResponse({ complete: true, nextPage: null, pullRequests, syncedCount: 1 });
+      },
+    );
+
+    renderApp();
+
+    expect(await screen.findByRole("heading", { name: "Add syncing" })).toBeInTheDocument();
+    expect(syncedRepositories).toEqual(["kestrel/app"]);
+  });
+
   it("syncs pull requests for tracked repositories", async () => {
     const user = userEvent.setup();
     const syncedRepositories: string[] = [];
