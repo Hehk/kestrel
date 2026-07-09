@@ -21,6 +21,13 @@ pub(crate) struct RepositoryPath {
     name: String,
 }
 
+#[derive(Deserialize, IntoParams)]
+pub(crate) struct PullRequestPath {
+    owner: String,
+    name: String,
+    number: i64,
+}
+
 #[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PullRequestDto {
@@ -55,6 +62,28 @@ pub struct SyncPullRequestsResponse {
 
 #[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+pub struct PullRequestDetailDto {
+    pub check_runs: serde_json::Value,
+    pub commits: serde_json::Value,
+    pub diff: Option<String>,
+    pub files: serde_json::Value,
+    pub issue_comments: serde_json::Value,
+    pub pull_request: serde_json::Value,
+    pub review_comments: serde_json::Value,
+    pub reviews: serde_json::Value,
+    pub statuses: serde_json::Value,
+    pub synced_at: String,
+    pub timeline: serde_json::Value,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestDetailResponse {
+    pub pull_request_detail: PullRequestDetailDto,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct PullRequestErrorResponse {
     pub error: PullRequestErrorCode,
 }
@@ -63,7 +92,9 @@ pub struct PullRequestErrorResponse {
 #[serde(rename_all = "snake_case")]
 pub enum PullRequestErrorCode {
     AuthorizationRequired,
+    InvalidPullRequest,
     InvalidRepository,
+    PullRequestNotFound,
     RepositoryNotTracked,
     SyncFailed,
 }
@@ -72,7 +103,9 @@ impl PullRequestErrorCode {
     fn as_str(&self) -> &'static str {
         match self {
             Self::AuthorizationRequired => "authorization_required",
+            Self::InvalidPullRequest => "invalid_pull_request",
             Self::InvalidRepository => "invalid_repository",
+            Self::PullRequestNotFound => "pull_request_not_found",
             Self::RepositoryNotTracked => "repository_not_tracked",
             Self::SyncFailed => "sync_failed",
         }
@@ -225,6 +258,140 @@ pub(crate) async fn sync_pull_requests(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/repositories/{owner}/{name}/pull-requests/{number}",
+    params(PullRequestPath),
+    responses(
+        (status = 200, description = "Stored pull request detail snapshot", body = PullRequestDetailResponse),
+        (status = 400, description = "Invalid repository or pull request", body = PullRequestErrorResponse),
+        (status = 401, description = "Authentication required"),
+        (status = 404, description = "Repository or pull request detail is not stored", body = PullRequestErrorResponse)
+    )
+)]
+pub(crate) async fn get_pull_request_detail(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<PullRequestPath>,
+) -> Result<Json<PullRequestDetailResponse>, (StatusCode, Json<PullRequestErrorResponse>)> {
+    let user_id = require_user_id(&state, &headers)
+        .await
+        .map_err(|status| api_error(status, PullRequestErrorCode::SyncFailed))?;
+    let (repository, number) = parse_pull_request_path(path)?;
+    let tracked = load_tracked_repository(&state.db, &user_id, &repository)
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "failed to load tracked repository");
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                PullRequestErrorCode::SyncFailed,
+            )
+        })?
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::NOT_FOUND,
+                PullRequestErrorCode::RepositoryNotTracked,
+            )
+        })?;
+    let pull_request_detail = load_pull_request_detail(&state.db, &tracked, number)
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "failed to load stored pull request detail");
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                PullRequestErrorCode::SyncFailed,
+            )
+        })?
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::NOT_FOUND,
+                PullRequestErrorCode::PullRequestNotFound,
+            )
+        })?;
+
+    Ok(Json(PullRequestDetailResponse {
+        pull_request_detail,
+    }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/repositories/{owner}/{name}/pull-requests/{number}/sync",
+    params(PullRequestPath),
+    responses(
+        (status = 200, description = "Pull request detail synced", body = PullRequestDetailResponse),
+        (status = 400, description = "Invalid repository or pull request", body = PullRequestErrorResponse),
+        (status = 401, description = "Authentication required"),
+        (status = 403, description = "GitHub App authorization required", body = PullRequestErrorResponse),
+        (status = 404, description = "Repository is not tracked", body = PullRequestErrorResponse)
+    )
+)]
+pub(crate) async fn sync_pull_request_detail(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<PullRequestPath>,
+) -> Result<Json<PullRequestDetailResponse>, (StatusCode, Json<PullRequestErrorResponse>)> {
+    let user_id = require_user_id(&state, &headers)
+        .await
+        .map_err(|status| api_error(status, PullRequestErrorCode::SyncFailed))?;
+    let (repository, number) = parse_pull_request_path(path)?;
+    let tracked = load_tracked_repository(&state.db, &user_id, &repository)
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "failed to load tracked repository");
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                PullRequestErrorCode::SyncFailed,
+            )
+        })?
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::NOT_FOUND,
+                PullRequestErrorCode::RepositoryNotTracked,
+            )
+        })?;
+
+    let github_detail =
+        match fetch_pull_request_detail_with_installation(&state, &user_id, &tracked, number).await
+        {
+            Ok(detail) => detail,
+            Err(error) => {
+                let (status, code) = match error {
+                    PullRequestSyncError::AuthorizationRequired => (
+                        StatusCode::FORBIDDEN,
+                        PullRequestErrorCode::AuthorizationRequired,
+                    ),
+                    PullRequestSyncError::Other(error) => {
+                        tracing::error!(%error, "failed to sync pull request detail");
+                        (StatusCode::BAD_GATEWAY, PullRequestErrorCode::SyncFailed)
+                    }
+                };
+                return Err(api_error(status, code));
+            }
+        };
+    let synced_at = format_timestamp(OffsetDateTime::now_utc()).map_err(|error| {
+        tracing::error!(%error, "failed to format pull request detail sync timestamp");
+        api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            PullRequestErrorCode::SyncFailed,
+        )
+    })?;
+    let pull_request_detail =
+        upsert_pull_request_detail(&state.db, &tracked, number, &github_detail, &synced_at)
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, "failed to store pull request detail");
+                api_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    PullRequestErrorCode::SyncFailed,
+                )
+            })?;
+
+    Ok(Json(PullRequestDetailResponse {
+        pull_request_detail,
+    }))
+}
+
 async fn require_user_id(state: &AppState, headers: &HeaderMap) -> Result<String, StatusCode> {
     auth::current_user_id(state, headers)
         .await
@@ -244,6 +411,26 @@ fn parse_repository_path(
             PullRequestErrorCode::InvalidRepository,
         )
     })
+}
+
+fn parse_pull_request_path(
+    path: PullRequestPath,
+) -> Result<(repositories::ParsedRepository, i64), (StatusCode, Json<PullRequestErrorResponse>)> {
+    let repository = repositories::parse_repository_input(&format!("{}/{}", path.owner, path.name))
+        .map_err(|_| {
+            api_error(
+                StatusCode::BAD_REQUEST,
+                PullRequestErrorCode::InvalidRepository,
+            )
+        })?;
+    if path.number < 1 {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            PullRequestErrorCode::InvalidPullRequest,
+        ));
+    }
+
+    Ok((repository, path.number))
 }
 
 async fn load_tracked_repository(
@@ -286,6 +473,25 @@ async fn load_pull_requests(
     Ok(rows.into_iter().map(PullRequestRow::into_dto).collect())
 }
 
+async fn load_pull_request_detail(
+    db: &SqlitePool,
+    repository: &TrackedRepository,
+    number: i64,
+) -> Result<Option<PullRequestDetailDto>, PullRequestDataError> {
+    let row = sqlx::query_as::<_, PullRequestDetailRow>(
+        "SELECT pull_request_json, files_json, commits_json, reviews_json, review_comments_json, issue_comments_json, timeline_json, check_runs_json, statuses_json, diff, synced_at FROM tracked_repository_pull_request_details WHERE user_id = ? AND provider = ? AND owner = ? AND name = ? AND number = ?",
+    )
+    .bind(&repository.user_id)
+    .bind(GITHUB_PROVIDER)
+    .bind(&repository.owner)
+    .bind(&repository.name)
+    .bind(number)
+    .fetch_optional(db)
+    .await?;
+
+    row.map(PullRequestDetailRow::into_dto).transpose()
+}
+
 async fn fetch_pull_requests_with_installation(
     state: &AppState,
     user_id: &str,
@@ -305,6 +511,37 @@ async fn fetch_pull_requests_with_installation(
             .map_err(|error| PullRequestSyncError::Other(error.into()))?;
         match fetch_github_pull_requests(state, &token.token, repository).await {
             Ok(pull_requests) => return Ok(pull_requests),
+            Err(PullRequestDataError::GitHubAccessDenied) => continue,
+            Err(error) => last_error = Some(error),
+        }
+    }
+
+    match last_error {
+        Some(error) => Err(PullRequestSyncError::Other(error)),
+        None => Err(PullRequestSyncError::AuthorizationRequired),
+    }
+}
+
+async fn fetch_pull_request_detail_with_installation(
+    state: &AppState,
+    user_id: &str,
+    repository: &TrackedRepository,
+    number: i64,
+) -> Result<GitHubPullRequestDetail, PullRequestSyncError> {
+    let installation_ids = github_app::installation_ids_for_user(&state.db, user_id)
+        .await
+        .map_err(|error| PullRequestSyncError::Other(error.into()))?;
+    if installation_ids.is_empty() {
+        return Err(PullRequestSyncError::AuthorizationRequired);
+    }
+
+    let mut last_error: Option<PullRequestDataError> = None;
+    for installation_id in installation_ids {
+        let token = github_app::create_installation_token(state, &installation_id)
+            .await
+            .map_err(|error| PullRequestSyncError::Other(error.into()))?;
+        match fetch_github_pull_request_detail(state, &token.token, repository, number).await {
+            Ok(detail) => return Ok(detail),
             Err(PullRequestDataError::GitHubAccessDenied) => continue,
             Err(error) => last_error = Some(error),
         }
@@ -351,6 +588,137 @@ async fn fetch_github_pull_requests(
         .error_for_status()?
         .json::<Vec<GitHubPullRequest>>()
         .await?)
+}
+
+async fn fetch_github_pull_request_detail(
+    state: &AppState,
+    token: &str,
+    repository: &TrackedRepository,
+    number: i64,
+) -> Result<GitHubPullRequestDetail, PullRequestDataError> {
+    let base_url = state.config.github_api_url.trim_end_matches('/');
+    let pull_request_url = format!(
+        "{base_url}/repos/{}/{}/pulls/{number}",
+        repository.owner, repository.name
+    );
+    let pull_request = fetch_github_json(state, token, &pull_request_url).await?;
+    let head_sha = pull_request
+        .get("head")
+        .and_then(|head| head.get("sha"))
+        .and_then(serde_json::Value::as_str)
+        .ok_or(PullRequestDataError::InvalidGitHubResponse(
+            "pull request response did not include head.sha",
+        ))?;
+
+    let files = fetch_github_json(state, token, &format!("{pull_request_url}/files")).await?;
+    let commits = fetch_github_json(state, token, &format!("{pull_request_url}/commits")).await?;
+    let reviews = fetch_github_json(state, token, &format!("{pull_request_url}/reviews")).await?;
+    let review_comments =
+        fetch_github_json(state, token, &format!("{pull_request_url}/comments")).await?;
+    let issue_comments = fetch_github_json(
+        state,
+        token,
+        &format!(
+            "{base_url}/repos/{}/{}/issues/{number}/comments",
+            repository.owner, repository.name
+        ),
+    )
+    .await?;
+    let timeline = fetch_github_json(
+        state,
+        token,
+        &format!(
+            "{base_url}/repos/{}/{}/issues/{number}/timeline",
+            repository.owner, repository.name
+        ),
+    )
+    .await?;
+    let check_runs = fetch_github_json(
+        state,
+        token,
+        &format!(
+            "{base_url}/repos/{}/{}/commits/{head_sha}/check-runs",
+            repository.owner, repository.name
+        ),
+    )
+    .await?;
+    let statuses = fetch_github_json(
+        state,
+        token,
+        &format!(
+            "{base_url}/repos/{}/{}/commits/{head_sha}/status",
+            repository.owner, repository.name
+        ),
+    )
+    .await?;
+    let diff = fetch_github_text(
+        state,
+        token,
+        &pull_request_url,
+        "application/vnd.github.v3.diff",
+    )
+    .await?;
+
+    Ok(GitHubPullRequestDetail {
+        check_runs,
+        commits,
+        diff: Some(diff),
+        files,
+        issue_comments,
+        pull_request,
+        review_comments,
+        reviews,
+        statuses,
+        timeline,
+    })
+}
+
+async fn fetch_github_json(
+    state: &AppState,
+    token: &str,
+    url: &str,
+) -> Result<serde_json::Value, PullRequestDataError> {
+    let response = state
+        .http_client
+        .get(url)
+        .bearer_auth(token)
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", USER_AGENT)
+        .send()
+        .await?;
+    if response.status() == ReqwestStatusCode::FORBIDDEN
+        || response.status() == ReqwestStatusCode::NOT_FOUND
+    {
+        return Err(PullRequestDataError::GitHubAccessDenied);
+    }
+
+    Ok(response
+        .error_for_status()?
+        .json::<serde_json::Value>()
+        .await?)
+}
+
+async fn fetch_github_text(
+    state: &AppState,
+    token: &str,
+    url: &str,
+    accept: &str,
+) -> Result<String, PullRequestDataError> {
+    let response = state
+        .http_client
+        .get(url)
+        .bearer_auth(token)
+        .header("Accept", accept)
+        .header("User-Agent", USER_AGENT)
+        .send()
+        .await?;
+    if response.status() == ReqwestStatusCode::FORBIDDEN
+        || response.status() == ReqwestStatusCode::NOT_FOUND
+    {
+        return Err(PullRequestDataError::GitHubAccessDenied);
+    }
+
+    Ok(response.error_for_status()?.text().await?)
 }
 
 async fn upsert_pull_requests(
@@ -400,6 +768,60 @@ async fn upsert_pull_requests(
     }
 
     Ok(saved)
+}
+
+async fn upsert_pull_request_detail(
+    db: &SqlitePool,
+    repository: &TrackedRepository,
+    number: i64,
+    detail: &GitHubPullRequestDetail,
+    synced_at: &str,
+) -> Result<PullRequestDetailDto, PullRequestDataError> {
+    let pull_request_json = serde_json::to_string(&detail.pull_request)?;
+    let files_json = serde_json::to_string(&detail.files)?;
+    let commits_json = serde_json::to_string(&detail.commits)?;
+    let reviews_json = serde_json::to_string(&detail.reviews)?;
+    let review_comments_json = serde_json::to_string(&detail.review_comments)?;
+    let issue_comments_json = serde_json::to_string(&detail.issue_comments)?;
+    let timeline_json = serde_json::to_string(&detail.timeline)?;
+    let check_runs_json = serde_json::to_string(&detail.check_runs)?;
+    let statuses_json = serde_json::to_string(&detail.statuses)?;
+
+    sqlx::query(
+        "INSERT INTO tracked_repository_pull_request_details (user_id, provider, owner, name, number, pull_request_json, files_json, commits_json, reviews_json, review_comments_json, issue_comments_json, timeline_json, check_runs_json, statuses_json, diff, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, provider, owner, name, number) DO UPDATE SET pull_request_json = excluded.pull_request_json, files_json = excluded.files_json, commits_json = excluded.commits_json, reviews_json = excluded.reviews_json, review_comments_json = excluded.review_comments_json, issue_comments_json = excluded.issue_comments_json, timeline_json = excluded.timeline_json, check_runs_json = excluded.check_runs_json, statuses_json = excluded.statuses_json, diff = excluded.diff, synced_at = excluded.synced_at",
+    )
+    .bind(&repository.user_id)
+    .bind(GITHUB_PROVIDER)
+    .bind(&repository.owner)
+    .bind(&repository.name)
+    .bind(number)
+    .bind(&pull_request_json)
+    .bind(&files_json)
+    .bind(&commits_json)
+    .bind(&reviews_json)
+    .bind(&review_comments_json)
+    .bind(&issue_comments_json)
+    .bind(&timeline_json)
+    .bind(&check_runs_json)
+    .bind(&statuses_json)
+    .bind(&detail.diff)
+    .bind(synced_at)
+    .execute(db)
+    .await?;
+
+    Ok(PullRequestDetailDto {
+        check_runs: detail.check_runs.clone(),
+        commits: detail.commits.clone(),
+        diff: detail.diff.clone(),
+        files: detail.files.clone(),
+        issue_comments: detail.issue_comments.clone(),
+        pull_request: detail.pull_request.clone(),
+        review_comments: detail.review_comments.clone(),
+        reviews: detail.reviews.clone(),
+        statuses: detail.statuses.clone(),
+        synced_at: synced_at.to_string(),
+        timeline: detail.timeline.clone(),
+    })
 }
 
 async fn update_sync_state(
@@ -463,7 +885,9 @@ enum PullRequestSyncError {
 enum PullRequestDataError {
     GitHubAccessDenied,
     GitHubApp(github_app::GitHubAppError),
+    InvalidGitHubResponse(&'static str),
     Reqwest(reqwest::Error),
+    Serde(serde_json::Error),
     Sql(sqlx::Error),
     TimeFormat(time::error::Format),
 }
@@ -477,6 +901,12 @@ impl From<github_app::GitHubAppError> for PullRequestDataError {
 impl From<reqwest::Error> for PullRequestDataError {
     fn from(error: reqwest::Error) -> Self {
         Self::Reqwest(error)
+    }
+}
+
+impl From<serde_json::Error> for PullRequestDataError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::Serde(error)
     }
 }
 
@@ -497,7 +927,11 @@ impl std::fmt::Display for PullRequestDataError {
         match self {
             Self::GitHubAccessDenied => write!(f, "GitHub App cannot access repository"),
             Self::GitHubApp(error) => write!(f, "GitHub App operation failed: {error}"),
+            Self::InvalidGitHubResponse(message) => {
+                write!(f, "GitHub response was missing expected data: {message}")
+            }
             Self::Reqwest(error) => write!(f, "GitHub pull request HTTP request failed: {error}"),
+            Self::Serde(error) => write!(f, "pull request JSON operation failed: {error}"),
             Self::Sql(error) => write!(f, "pull request database operation failed: {error}"),
             Self::TimeFormat(error) => write!(f, "pull request time format failed: {error}"),
         }
@@ -528,6 +962,52 @@ struct PullRequestRow {
     synced_at: String,
     title: String,
     updated_at: String,
+}
+
+struct GitHubPullRequestDetail {
+    check_runs: serde_json::Value,
+    commits: serde_json::Value,
+    diff: Option<String>,
+    files: serde_json::Value,
+    issue_comments: serde_json::Value,
+    pull_request: serde_json::Value,
+    review_comments: serde_json::Value,
+    reviews: serde_json::Value,
+    statuses: serde_json::Value,
+    timeline: serde_json::Value,
+}
+
+#[derive(sqlx::FromRow)]
+struct PullRequestDetailRow {
+    check_runs_json: String,
+    commits_json: String,
+    diff: Option<String>,
+    files_json: String,
+    issue_comments_json: String,
+    pull_request_json: String,
+    review_comments_json: String,
+    reviews_json: String,
+    statuses_json: String,
+    synced_at: String,
+    timeline_json: String,
+}
+
+impl PullRequestDetailRow {
+    fn into_dto(self) -> Result<PullRequestDetailDto, PullRequestDataError> {
+        Ok(PullRequestDetailDto {
+            check_runs: serde_json::from_str(&self.check_runs_json)?,
+            commits: serde_json::from_str(&self.commits_json)?,
+            diff: self.diff,
+            files: serde_json::from_str(&self.files_json)?,
+            issue_comments: serde_json::from_str(&self.issue_comments_json)?,
+            pull_request: serde_json::from_str(&self.pull_request_json)?,
+            review_comments: serde_json::from_str(&self.review_comments_json)?,
+            reviews: serde_json::from_str(&self.reviews_json)?,
+            statuses: serde_json::from_str(&self.statuses_json)?,
+            synced_at: self.synced_at,
+            timeline: serde_json::from_str(&self.timeline_json)?,
+        })
+    }
 }
 
 impl PullRequestRow {
@@ -574,7 +1054,8 @@ mod tests {
     use axum::{
         body::{to_bytes, Body},
         extract::Query,
-        http::{header, Request, StatusCode},
+        http::{header, HeaderMap, Request, StatusCode},
+        response::IntoResponse,
         routing::get,
         Json, Router,
     };
@@ -586,8 +1067,10 @@ mod tests {
     use tower::ServiceExt;
 
     use super::{
-        fetch_github_pull_requests, load_pull_requests, load_tracked_repository, update_sync_error,
-        update_sync_state, upsert_pull_requests, GitHubPullRequest, GitHubUser, TrackedRepository,
+        fetch_github_pull_request_detail, fetch_github_pull_requests, load_pull_request_detail,
+        load_pull_requests, load_tracked_repository, update_sync_error, update_sync_state,
+        upsert_pull_request_detail, upsert_pull_requests, GitHubPullRequest,
+        GitHubPullRequestDetail, GitHubUser, TrackedRepository,
     };
     use crate::{
         config::{Config, Environment, SessionConfig, TokenEncryptionKey},
@@ -648,6 +1131,91 @@ mod tests {
             .local_addr()
             .expect("mock GitHub address should load");
         let app = Router::new().route("/repos/kestrel/app/pulls", get(pulls));
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("mock GitHub server should run");
+        });
+
+        (format!("http://{address}"), handle)
+    }
+
+    async fn mock_github_detail_api() -> (String, tokio::task::JoinHandle<()>) {
+        async fn pull(headers: HeaderMap) -> axum::response::Response {
+            if headers
+                .get(header::ACCEPT)
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|value| value.contains("application/vnd.github.v3.diff"))
+            {
+                return "diff --git a/app.rs b/app.rs".into_response();
+            }
+
+            Json(serde_json::json!({
+                "head": { "sha": "head-sha" },
+                "html_url": "https://github.com/kestrel/app/pull/42",
+                "number": 42,
+                "title": "Add syncing"
+            }))
+            .into_response()
+        }
+
+        async fn files() -> Json<Value> {
+            Json(serde_json::json!([{ "filename": "app.rs", "status": "modified" }]))
+        }
+
+        async fn commits() -> Json<Value> {
+            Json(serde_json::json!([{ "sha": "head-sha" }]))
+        }
+
+        async fn reviews() -> Json<Value> {
+            Json(serde_json::json!([{ "state": "APPROVED", "user": { "login": "reviewer" } }]))
+        }
+
+        async fn review_comments() -> Json<Value> {
+            Json(serde_json::json!([{ "body": "nit", "path": "app.rs" }]))
+        }
+
+        async fn issue_comments() -> Json<Value> {
+            Json(serde_json::json!([{ "body": "looks good" }]))
+        }
+
+        async fn timeline() -> Json<Value> {
+            Json(serde_json::json!([{ "event": "committed" }]))
+        }
+
+        async fn check_runs() -> Json<Value> {
+            Json(serde_json::json!({
+                "total_count": 1,
+                "check_runs": [{ "name": "test", "conclusion": "success" }]
+            }))
+        }
+
+        async fn statuses() -> Json<Value> {
+            Json(serde_json::json!({
+                "state": "success",
+                "statuses": [{ "context": "ci", "state": "success" }]
+            }))
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("mock GitHub listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("mock GitHub address should load");
+        let app = Router::new()
+            .route("/repos/kestrel/app/pulls/42", get(pull))
+            .route("/repos/kestrel/app/pulls/42/files", get(files))
+            .route("/repos/kestrel/app/pulls/42/commits", get(commits))
+            .route("/repos/kestrel/app/pulls/42/reviews", get(reviews))
+            .route("/repos/kestrel/app/pulls/42/comments", get(review_comments))
+            .route("/repos/kestrel/app/issues/42/comments", get(issue_comments))
+            .route("/repos/kestrel/app/issues/42/timeline", get(timeline))
+            .route(
+                "/repos/kestrel/app/commits/head-sha/check-runs",
+                get(check_runs),
+            )
+            .route("/repos/kestrel/app/commits/head-sha/status", get(statuses));
         let handle = tokio::spawn(async move {
             axum::serve(listener, app)
                 .await
@@ -940,6 +1508,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fetch_pull_request_detail_uses_configured_github_api_url() {
+        let (github_api_url, server) = mock_github_detail_api().await;
+        let mut config = test_config();
+        config.github_api_url = github_api_url;
+        let db = test_db().await;
+        let state = AppState::new(db, config);
+        let repository = TrackedRepository {
+            name: "app".to_string(),
+            owner: "kestrel".to_string(),
+            sync_page: 1,
+            user_id: "user_1".to_string(),
+        };
+
+        let detail =
+            fetch_github_pull_request_detail(&state, "installation_token", &repository, 42)
+                .await
+                .expect("pull request detail should fetch from mock GitHub API");
+
+        server.abort();
+        assert_eq!(detail.pull_request["number"], 42);
+        assert_eq!(detail.files[0]["filename"], "app.rs");
+        assert_eq!(detail.commits[0]["sha"], "head-sha");
+        assert_eq!(detail.reviews[0]["state"], "APPROVED");
+        assert_eq!(detail.review_comments[0]["body"], "nit");
+        assert_eq!(detail.issue_comments[0]["body"], "looks good");
+        assert_eq!(detail.timeline[0]["event"], "committed");
+        assert_eq!(detail.check_runs["total_count"], 1);
+        assert_eq!(detail.statuses["state"], "success");
+        assert_eq!(detail.diff.as_deref(), Some("diff --git a/app.rs b/app.rs"));
+    }
+
+    #[tokio::test]
     async fn one_page_sync_storage_upserts_pull_requests_and_advances_cursor() {
         let db = test_db().await;
         insert_tracked_repository(&db).await;
@@ -1013,5 +1613,50 @@ mod tests {
             .expect("sync error should load"),
             None,
         );
+    }
+
+    #[tokio::test]
+    async fn pull_request_detail_storage_upserts_snapshot() {
+        let db = test_db().await;
+        insert_tracked_repository(&db).await;
+        let repository = load_tracked_repository(
+            &db,
+            "user_1",
+            &repositories::ParsedRepository {
+                owner: "kestrel".to_string(),
+                name: "app".to_string(),
+            },
+        )
+        .await
+        .expect("tracked repository should load")
+        .expect("tracked repository should exist");
+        let detail = GitHubPullRequestDetail {
+            check_runs: serde_json::json!({ "total_count": 1 }),
+            commits: serde_json::json!([{ "sha": "head-sha" }]),
+            diff: Some("diff --git a/app.rs b/app.rs".to_string()),
+            files: serde_json::json!([{ "filename": "app.rs" }]),
+            issue_comments: serde_json::json!([{ "body": "ship it" }]),
+            pull_request: serde_json::json!({ "number": 42, "title": "Add syncing" }),
+            review_comments: serde_json::json!([{ "body": "nit" }]),
+            reviews: serde_json::json!([{ "state": "APPROVED" }]),
+            statuses: serde_json::json!({ "state": "success" }),
+            timeline: serde_json::json!([{ "event": "committed" }]),
+        };
+
+        let saved =
+            upsert_pull_request_detail(&db, &repository, 42, &detail, "2026-01-03T00:00:00Z")
+                .await
+                .expect("pull request detail should upsert");
+        let loaded = load_pull_request_detail(&db, &repository, 42)
+            .await
+            .expect("pull request detail should load")
+            .expect("pull request detail should exist");
+
+        assert_eq!(saved.pull_request["title"], "Add syncing");
+        assert_eq!(loaded.pull_request["number"], 42);
+        assert_eq!(loaded.files[0]["filename"], "app.rs");
+        assert_eq!(loaded.issue_comments[0]["body"], "ship it");
+        assert_eq!(loaded.diff.as_deref(), Some("diff --git a/app.rs b/app.rs"));
+        assert_eq!(loaded.synced_at, "2026-01-03T00:00:00Z");
     }
 }

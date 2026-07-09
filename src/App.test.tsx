@@ -44,8 +44,22 @@ type PullRequest = {
   title: string;
   updatedAt: string;
 };
+type PullRequestDetail = {
+  checkRuns: unknown;
+  commits: unknown;
+  diff: string | null;
+  files: unknown;
+  issueComments: unknown;
+  pullRequest: unknown;
+  reviewComments: unknown;
+  reviews: unknown;
+  statuses: unknown;
+  syncedAt: string;
+  timeline: unknown;
+};
 type SaveRepository = (repository: string) => Response | Promise<Response>;
 type SyncPullRequests = (fullName: string) => Response | Promise<Response>;
+type SyncPullRequestDetail = (fullName: string, number: number) => Response | Promise<Response>;
 
 const repository = (fullName: string, metadata: Partial<Repository> = {}): Repository => {
   const [owner = "", name = ""] = fullName.split("/");
@@ -76,6 +90,22 @@ const pullRequest = (number: number, title = `PR ${number}`): PullRequest => {
   };
 };
 
+const pullRequestDetail = (number: number): PullRequestDetail => {
+  return {
+    checkRuns: { check_runs: [{ conclusion: "success", name: "test" }], total_count: 1 },
+    commits: [{ commit: { message: "Add syncing" }, sha: "abcdef123456" }],
+    diff: "diff --git a/app.rs b/app.rs",
+    files: [{ filename: "app.rs", status: "modified" }],
+    issueComments: [{ body: "looks good", user: { login: "octocat" } }],
+    pullRequest: { number, title: "Add syncing" },
+    reviewComments: [{ body: "nit", user: { login: "reviewer" } }],
+    reviews: [{ state: "APPROVED", user: { login: "reviewer" } }],
+    statuses: { state: "success", statuses: [{ context: "ci", state: "success" }] },
+    syncedAt: "2026-01-04T00:00:00Z",
+    timeline: [{ actor: { login: "octocat" }, event: "committed" }],
+  };
+};
+
 const mockAuth = (
   body: unknown = signedInResponse,
   initialTheme = "system",
@@ -84,10 +114,13 @@ const mockAuth = (
   saveRepository?: SaveRepository,
   initialPullRequests: Record<string, PullRequest[]> = {},
   syncPullRequests?: SyncPullRequests,
+  initialPullRequestDetails: Record<string, PullRequestDetail> = {},
+  syncPullRequestDetail?: SyncPullRequestDetail,
 ) => {
   let theme = initialTheme;
   let repositories = initialRepositories;
   let pullRequestsByRepository = initialPullRequests;
+  let pullRequestDetailsByKey = initialPullRequestDetails;
 
   vi.stubGlobal(
     "fetch",
@@ -130,6 +163,34 @@ const mockAuth = (
         const nextRepository = repositoryFromInput(request.repository);
         repositories = [...repositories, nextRepository];
         return jsonResponse({ repository: nextRepository }, 201);
+      }
+
+      const pullRequestDetailMatch = url.match(
+        /\/api\/repositories\/([^/]+)\/([^/]+)\/pull-requests\/(\d+)(?:\/sync)?$/,
+      );
+      if (pullRequestDetailMatch) {
+        const owner = decodeURIComponent(pullRequestDetailMatch[1] ?? "");
+        const name = decodeURIComponent(pullRequestDetailMatch[2] ?? "");
+        const number = Number(pullRequestDetailMatch[3]);
+        const fullName = `${owner}/${name}`;
+        const key = `${fullName}#${number}`;
+
+        if (method === "GET") {
+          const detail = pullRequestDetailsByKey[key];
+          return detail === undefined
+            ? jsonResponse({ error: "pull_request_not_found" }, 404)
+            : jsonResponse({ pullRequestDetail: detail });
+        }
+
+        if (method === "POST") {
+          if (syncPullRequestDetail !== undefined) {
+            return syncPullRequestDetail(fullName, number);
+          }
+
+          const detail = pullRequestDetail(number);
+          pullRequestDetailsByKey = { ...pullRequestDetailsByKey, [key]: detail };
+          return jsonResponse({ pullRequestDetail: detail });
+        }
       }
 
       const pullRequestsMatch = url.match(
@@ -344,6 +405,31 @@ describe("App", () => {
       "href",
       "https://github.com/kestrel/app/pull/42",
     );
+  });
+
+  it("syncs and renders pull request detail sections", async () => {
+    const user = userEvent.setup();
+    mockAuth(signedInResponse, "system", undefined, [repository("kestrel/app")], undefined, {
+      "kestrel/app": [pullRequest(42, "Add syncing")],
+    });
+
+    renderApp();
+
+    await user.click(await screen.findByRole("button", { name: "Load PRs for kestrel/app" }));
+    await user.click(await screen.findByRole("link", { name: "#42 Add syncing" }));
+    await screen.findByText("Pull request details are not stored yet.");
+    await user.click(screen.getByRole("button", { name: "Sync details" }));
+
+    expect(await screen.findByText("Details synced: 2026-01-04T00:00:00Z")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Files changed/ })).toBeInTheDocument();
+    expect(screen.getByText("app.rs")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Commits/ })).toBeInTheDocument();
+    expect(screen.getAllByText("Add syncing").length).toBeGreaterThan(1);
+    expect(screen.getByRole("heading", { name: /Reviews/ })).toBeInTheDocument();
+    expect(screen.getAllByText("reviewer").length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: /Checks and statuses/ })).toBeInTheDocument();
+    expect(screen.getByText("test")).toBeInTheDocument();
+    expect(screen.getByText("diff --git a/app.rs b/app.rs")).toBeInTheDocument();
   });
 
   it("loads pull requests automatically from the pull request route", async () => {

@@ -60,6 +60,7 @@ const loadedState = (repositories: Repositories.Repository[] = []): LoadedState 
   return {
     addError: null,
     addStatus: "idle",
+    pullRequestDetails: Repositories.initialState().pullRequestDetails,
     pullRequests: Repositories.initialState().pullRequests,
     repositories: List(repositories),
     status: "loaded",

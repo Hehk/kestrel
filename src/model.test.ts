@@ -85,7 +85,7 @@ describe("model", () => {
     expect(commands).toEqual([]);
   });
 
-  it("does not sync when stored pull requests include the routed pull request", () => {
+  it("loads stored pull request detail when stored pull requests include the routed pull request", () => {
     const commands: Model.Cmd[] = [];
     Model.setRunCmdForTest((cmd) => commands.push(cmd));
     const repo = repository("kestrel/app");
@@ -98,6 +98,38 @@ describe("model", () => {
       msg: { kind: "PullRequestsLoaded", pullRequests: [pullRequest(42)], repository: repo },
     });
 
-    expect(commands).toEqual([]);
+    expect(commands).toEqual([
+      {
+        kind: "Repositories",
+        cmd: { kind: "LoadPullRequestDetail", number: 42, repository: repo },
+      },
+    ]);
+  });
+
+  it("loads stored pull request detail after sync returns the routed pull request", () => {
+    const commands: Model.Cmd[] = [];
+    Model.setRunCmdForTest((cmd) => commands.push(cmd));
+    const repo = repository("kestrel/app");
+    Model.start(user, { name: "PullRequest", repo: "kestrel/app", id: "42" });
+    Model.send({ kind: "Repositories", msg: { kind: "Loaded", repositories: [repo] } });
+    commands.length = 0;
+
+    Model.send({
+      kind: "Repositories",
+      msg: {
+        complete: false,
+        kind: "PullRequestsSynced",
+        nextPage: 2,
+        pullRequests: [pullRequest(42)],
+        repository: repo,
+      },
+    });
+
+    expect(commands).toEqual([
+      {
+        kind: "Repositories",
+        cmd: { kind: "LoadPullRequestDetail", number: 42, repository: repo },
+      },
+    ]);
   });
 });

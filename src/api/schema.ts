@@ -164,6 +164,38 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/repositories/{owner}/{name}/pull-requests/{number}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["get_pull_request_detail"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/repositories/{owner}/{name}/pull-requests/{number}/sync": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["sync_pull_request_detail"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/settings": {
     parameters: {
       query?: never;
@@ -205,6 +237,22 @@ export interface components {
     MeResponse: {
       user?: null | components["schemas"]["UserDto"];
     };
+    PullRequestDetailDto: {
+      checkRuns: unknown;
+      commits: unknown;
+      diff?: string | null;
+      files: unknown;
+      issueComments: unknown;
+      pullRequest: unknown;
+      reviewComments: unknown;
+      reviews: unknown;
+      statuses: unknown;
+      syncedAt: string;
+      timeline: unknown;
+    };
+    PullRequestDetailResponse: {
+      pullRequestDetail: components["schemas"]["PullRequestDetailDto"];
+    };
     PullRequestDto: {
       authorLogin?: string | null;
       closedAt?: string | null;
@@ -224,7 +272,9 @@ export interface components {
     /** @enum {string} */
     PullRequestErrorCode:
       | "authorization_required"
+      | "invalid_pull_request"
       | "invalid_repository"
+      | "pull_request_not_found"
       | "repository_not_tracked"
       | "sync_failed";
     PullRequestErrorResponse: {
@@ -594,6 +644,113 @@ export interface operations {
         };
       };
       /** @description Invalid repository */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PullRequestErrorResponse"];
+        };
+      };
+      /** @description Authentication required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description GitHub App authorization required */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PullRequestErrorResponse"];
+        };
+      };
+      /** @description Repository is not tracked */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PullRequestErrorResponse"];
+        };
+      };
+    };
+  };
+  get_pull_request_detail: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        owner: string;
+        name: string;
+        number: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Stored pull request detail snapshot */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PullRequestDetailResponse"];
+        };
+      };
+      /** @description Invalid repository or pull request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PullRequestErrorResponse"];
+        };
+      };
+      /** @description Authentication required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Repository or pull request detail is not stored */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PullRequestErrorResponse"];
+        };
+      };
+    };
+  };
+  sync_pull_request_detail: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        owner: string;
+        name: string;
+        number: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Pull request detail synced */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PullRequestDetailResponse"];
+        };
+      };
+      /** @description Invalid repository or pull request */
       400: {
         headers: {
           [name: string]: unknown;

@@ -4,8 +4,13 @@ import { api } from "./api/client";
 
 export type Repository = components["schemas"]["RepositoryDto"];
 export type PullRequest = components["schemas"]["PullRequestDto"];
+export type PullRequestDetail = components["schemas"]["PullRequestDetailDto"];
 export type AddError = "duplicate" | "invalid" | "saveFailed";
-export type PullRequestsError = "authorizationRequired" | "repositoryNotTracked" | "syncFailed";
+export type PullRequestsError =
+  | "authorizationRequired"
+  | "pullRequestNotFound"
+  | "repositoryNotTracked"
+  | "syncFailed";
 
 export type PullRequestsState =
   | {
@@ -31,10 +36,29 @@ export type PullRequestsState =
     };
 export type PullRequestsByRepository = Map<string, PullRequestsState>;
 
+export type PullRequestDetailState =
+  | {
+      detail: PullRequestDetail | null;
+      error: null;
+      status: "loading" | "syncing";
+    }
+  | {
+      detail: PullRequestDetail;
+      error: null;
+      status: "loaded";
+    }
+  | {
+      detail: PullRequestDetail | null;
+      error: PullRequestsError;
+      status: "error";
+    };
+export type PullRequestDetailsByKey = Map<string, PullRequestDetailState>;
+
 export type State =
   | {
       status: "loading";
       repositories: List<Repository>;
+      pullRequestDetails: PullRequestDetailsByKey;
       pullRequests: PullRequestsByRepository;
     }
   | {
@@ -42,11 +66,13 @@ export type State =
       repositories: List<Repository>;
       addStatus: "idle" | "saving" | "error";
       addError: AddError | null;
+      pullRequestDetails: PullRequestDetailsByKey;
       pullRequests: PullRequestsByRepository;
     }
   | {
       status: "error";
       repositories: List<Repository>;
+      pullRequestDetails: PullRequestDetailsByKey;
       pullRequests: PullRequestsByRepository;
     };
 
@@ -64,6 +90,16 @@ export type Cmd =
     }
   | {
       kind: "SyncPullRequests";
+      repository: Repository;
+    }
+  | {
+      kind: "LoadPullRequestDetail";
+      number: number;
+      repository: Repository;
+    }
+  | {
+      kind: "SyncPullRequestDetail";
+      number: number;
       repository: Repository;
     };
 
@@ -85,14 +121,45 @@ export type Msg =
       pullRequests: PullRequest[];
       repository: Repository;
     }
-  | { kind: "PullRequestsSyncFailed"; error: PullRequestsError; repository: Repository };
+  | { kind: "PullRequestsSyncFailed"; error: PullRequestsError; repository: Repository }
+  | { kind: "PullRequestDetailLoadRequested"; number: number; repository: Repository }
+  | {
+      detail: PullRequestDetail;
+      kind: "PullRequestDetailLoaded";
+      number: number;
+      repository: Repository;
+    }
+  | {
+      error: PullRequestsError;
+      kind: "PullRequestDetailLoadFailed";
+      number: number;
+      repository: Repository;
+    }
+  | { kind: "PullRequestDetailSyncRequested"; number: number; repository: Repository }
+  | {
+      detail: PullRequestDetail;
+      kind: "PullRequestDetailSynced";
+      number: number;
+      repository: Repository;
+    }
+  | {
+      error: PullRequestsError;
+      kind: "PullRequestDetailSyncFailed";
+      number: number;
+      repository: Repository;
+    };
 
 type UpdateContext = {
   runCmd: (cmd: Cmd) => void;
 };
 
 export const initialState = (): State => {
-  return { status: "loading", repositories: List(), pullRequests: Map() };
+  return {
+    status: "loading",
+    repositories: List(),
+    pullRequestDetails: Map(),
+    pullRequests: Map(),
+  };
 };
 
 export const update = (ctx: UpdateContext, msg: Msg, state: State): State => {
@@ -109,13 +176,19 @@ export const update = (ctx: UpdateContext, msg: Msg, state: State): State => {
         repositories: List(msg.repositories),
         addStatus: "idle",
         addError: null,
+        pullRequestDetails: state.pullRequestDetails,
         pullRequests: state.pullRequests,
       };
     }
     case "LoadFailed": {
       return state.status === "loaded"
         ? state
-        : { status: "error", repositories: state.repositories, pullRequests: state.pullRequests };
+        : {
+            status: "error",
+            repositories: state.repositories,
+            pullRequestDetails: state.pullRequestDetails,
+            pullRequests: state.pullRequests,
+          };
     }
     case "AddRequested": {
       if (state.status !== "loaded" || state.addStatus === "saving") {
@@ -211,6 +284,50 @@ export const update = (ctx: UpdateContext, msg: Msg, state: State): State => {
         status: "error",
       });
     }
+    case "PullRequestDetailLoadRequested": {
+      ctx.runCmd({ kind: "LoadPullRequestDetail", number: msg.number, repository: msg.repository });
+      return setPullRequestDetailState(state, msg.repository, msg.number, {
+        detail: currentPullRequestDetail(state, msg.repository, msg.number)?.detail ?? null,
+        error: null,
+        status: "loading",
+      });
+    }
+    case "PullRequestDetailLoaded": {
+      return setPullRequestDetailState(state, msg.repository, msg.number, {
+        detail: msg.detail,
+        error: null,
+        status: "loaded",
+      });
+    }
+    case "PullRequestDetailLoadFailed": {
+      return setPullRequestDetailState(state, msg.repository, msg.number, {
+        detail: currentPullRequestDetail(state, msg.repository, msg.number)?.detail ?? null,
+        error: msg.error,
+        status: "error",
+      });
+    }
+    case "PullRequestDetailSyncRequested": {
+      ctx.runCmd({ kind: "SyncPullRequestDetail", number: msg.number, repository: msg.repository });
+      return setPullRequestDetailState(state, msg.repository, msg.number, {
+        detail: currentPullRequestDetail(state, msg.repository, msg.number)?.detail ?? null,
+        error: null,
+        status: "syncing",
+      });
+    }
+    case "PullRequestDetailSynced": {
+      return setPullRequestDetailState(state, msg.repository, msg.number, {
+        detail: msg.detail,
+        error: null,
+        status: "loaded",
+      });
+    }
+    case "PullRequestDetailSyncFailed": {
+      return setPullRequestDetailState(state, msg.repository, msg.number, {
+        detail: currentPullRequestDetail(state, msg.repository, msg.number)?.detail ?? null,
+        error: msg.error,
+        status: "error",
+      });
+    }
   }
 };
 
@@ -230,6 +347,14 @@ export const runCmd = (cmd: Cmd, send: (msg: Msg) => void) => {
     }
     case "SyncPullRequests": {
       void syncPullRequests(cmd.repository, send);
+      return;
+    }
+    case "LoadPullRequestDetail": {
+      void loadPullRequestDetail(cmd.repository, cmd.number, send);
+      return;
+    }
+    case "SyncPullRequestDetail": {
+      void syncPullRequestDetail(cmd.repository, cmd.number, send);
       return;
     }
   }
@@ -285,6 +410,51 @@ const syncPullRequests = async (repository: Repository, send: (msg: Msg) => void
   });
 };
 
+const loadPullRequestDetail = async (
+  repository: Repository,
+  number: number,
+  send: (msg: Msg) => void,
+) => {
+  const { data, error } = await api.GET("/api/repositories/{owner}/{name}/pull-requests/{number}", {
+    params: { path: { name: repository.name, number, owner: repository.owner } },
+  });
+  if (error || data === undefined) {
+    send({
+      error: pullRequestsError(error),
+      kind: "PullRequestDetailLoadFailed",
+      number,
+      repository,
+    });
+    return;
+  }
+
+  send({ detail: data.pullRequestDetail, kind: "PullRequestDetailLoaded", number, repository });
+};
+
+const syncPullRequestDetail = async (
+  repository: Repository,
+  number: number,
+  send: (msg: Msg) => void,
+) => {
+  const { data, error } = await api.POST(
+    "/api/repositories/{owner}/{name}/pull-requests/{number}/sync",
+    {
+      params: { path: { name: repository.name, number, owner: repository.owner } },
+    },
+  );
+  if (error || data === undefined) {
+    send({
+      error: pullRequestsError(error),
+      kind: "PullRequestDetailSyncFailed",
+      number,
+      repository,
+    });
+    return;
+  }
+
+  send({ detail: data.pullRequestDetail, kind: "PullRequestDetailSynced", number, repository });
+};
+
 const addError = (error: { error?: unknown } | undefined): AddError => {
   if (error?.error === "duplicate_repository") {
     return "duplicate";
@@ -303,8 +473,38 @@ const pullRequestsError = (error: { error?: unknown } | undefined): PullRequests
   if (error?.error === "repository_not_tracked") {
     return "repositoryNotTracked";
   }
+  if (error?.error === "pull_request_not_found") {
+    return "pullRequestNotFound";
+  }
 
   return "syncFailed";
+};
+
+export const pullRequestDetailKey = (repository: Repository, number: number): string => {
+  return `${repository.fullName}#${number}`;
+};
+
+const currentPullRequestDetail = (
+  state: State,
+  repository: Repository,
+  number: number,
+): PullRequestDetailState | undefined => {
+  return state.pullRequestDetails.get(pullRequestDetailKey(repository, number));
+};
+
+const setPullRequestDetailState = (
+  state: State,
+  repository: Repository,
+  number: number,
+  detailState: PullRequestDetailState,
+): State => {
+  return {
+    ...state,
+    pullRequestDetails: state.pullRequestDetails.set(
+      pullRequestDetailKey(repository, number),
+      detailState,
+    ),
+  };
 };
 
 const currentPullRequests = (state: State, repository: Repository): List<PullRequest> => {

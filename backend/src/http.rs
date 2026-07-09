@@ -90,6 +90,14 @@ pub fn app(config: &Config, state: AppState) -> Router {
         "/repositories/{owner}/{name}/pull-requests/sync",
         axum::routing::post(pull_requests::sync_pull_requests),
     );
+    let api = api.route(
+        "/repositories/{owner}/{name}/pull-requests/{number}",
+        get(pull_requests::get_pull_request_detail),
+    );
+    let api = api.route(
+        "/repositories/{owner}/{name}/pull-requests/{number}/sync",
+        axum::routing::post(pull_requests::sync_pull_request_detail),
+    );
 
     let router = Router::new()
         .nest("/api", api)

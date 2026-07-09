@@ -151,18 +151,27 @@ const queuePullRequestRouteWork = (
   }
 
   const number = Number(route.id);
-  if (
-    !options.syncMissing ||
-    pullRequests.status !== "loaded" ||
-    pullRequests.complete ||
-    !Number.isInteger(number) ||
-    number <= 0 ||
-    pullRequests.pullRequests.some((pullRequest) => pullRequest.number === number)
-  ) {
+  if (!Number.isInteger(number) || number <= 0 || pullRequests.status !== "loaded") {
     return model;
   }
 
-  ctx.runCmd({ kind: "Repositories", cmd: { kind: "SyncPullRequests", repository } });
+  const hasPullRequest = pullRequests.pullRequests.some(
+    (pullRequest) => pullRequest.number === number,
+  );
+  if (!hasPullRequest) {
+    if (!options.syncMissing || pullRequests.complete) {
+      return model;
+    }
+
+    ctx.runCmd({ kind: "Repositories", cmd: { kind: "SyncPullRequests", repository } });
+    return model;
+  }
+
+  if (repositories.pullRequestDetails.has(Repositories.pullRequestDetailKey(repository, number))) {
+    return model;
+  }
+
+  ctx.runCmd({ kind: "Repositories", cmd: { kind: "LoadPullRequestDetail", number, repository } });
   return model;
 };
 
