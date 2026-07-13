@@ -1,37 +1,31 @@
 import { api } from "./api/client";
 import * as Cache from "./cache";
+import * as Mvu from "./mvu";
 
 export type Theme = "dark" | "light" | "system";
 export const DEFAULT_THEME: Theme = "system";
 
-// This code is already showing some of the weirdness of keeping data in sync with the
-// backend. I am going to iterate on a few different patterns as this comes up later on
-// or even in the settings. Hopefully after a few iterations I have a good interface and then
-// a real nice sync pattern can be implemented.
-
-export type State =
-  | {
-      status: "loading";
-    }
-  | {
-      status: "loaded";
-      theme: Theme;
-      confirmedTheme: Theme;
-      themeSaveRequestId: number;
-      themeSyncStatus: "idle" | "saving" | "error";
-    }
-  | {
-      status: "error";
-    };
+export type State = {
+  userId: string;
+  theme: Theme;
+  syncingTheme: Theme | null;
+  themeSyncError: boolean;
+};
 
 export type Cmd =
   | {
-      kind: "Load";
+      kind: "LoadRemote";
+      expectedTheme: Theme;
+      userId: string;
     }
   | {
-      kind: "SaveTheme";
-      requestId: number;
+      kind: "SaveSettings";
+      settings: Cache.CachedSettings;
+    }
+  | {
+      kind: "SyncTheme";
       theme: Theme;
+      userId: string;
     }
   | {
       kind: "ApplyTheme";
@@ -39,115 +33,165 @@ export type Cmd =
     };
 
 export type Msg =
-  // This one is never actually used...
-  | { kind: "LoadRequested" }
-  | { kind: "Loaded"; theme: Theme }
-  | { kind: "LoadFailed" }
+  | { kind: "RemoteLoaded"; expectedTheme: Theme; theme: Theme; userId: string }
   | { kind: "ThemeChanged"; theme: Theme }
-  | { kind: "ThemeSaved"; requestId: number; theme: Theme }
-  | { kind: "ThemeSaveFailed"; requestId: number };
+  | { kind: "ThemeSynced"; theme: Theme; userId: string }
+  | { kind: "ThemeSyncFailed"; theme: Theme; userId: string }
+  | { kind: "ThemeSyncRetryRequested" };
 
-type UpdateContext = {
-  runCmd: (cmd: Cmd) => void;
-  userId: string;
-};
-
-const loadedState = (theme: Theme): State => {
+export const initialState = (userId: string, cached: Cache.CachedSettings | null = null): State => {
   return {
-    status: "loaded",
-    theme,
-    confirmedTheme: theme,
-    themeSaveRequestId: 0,
-    themeSyncStatus: "idle",
+    userId,
+    theme: cached?.theme ?? DEFAULT_THEME,
+    syncingTheme: null,
+    themeSyncError: false,
   };
 };
 
 export const fromCache = (userId: string): State => {
-  const theme = Cache.readCachedSettings(userId);
-  if (theme === null) {
-    return { status: "loading" };
-  }
-
-  return loadedState(theme);
+  return initialState(userId, Cache.readCachedSettings(userId));
 };
 
-export const update = (ctx: UpdateContext, msg: Msg, state: State): State => {
+export const toCachedSettings = (state: State): Cache.CachedSettings => {
+  return {
+    version: 1,
+    userId: state.userId,
+    theme: state.theme,
+  };
+};
+
+const localUpdate = (msg: Msg, state: State): Mvu.Transition<State, Cmd> => {
   switch (msg.kind) {
-    case "LoadRequested": {
-      ctx.runCmd({ kind: "Load" });
-      return state.status === "loaded" ? state : { status: "loading" };
-    }
-    case "Loaded": {
-      if (state.status === "loaded" && state.themeSyncStatus === "saving") {
-        return { ...state, confirmedTheme: msg.theme };
+    case "RemoteLoaded": {
+      if (state.userId !== msg.userId) {
+        return [state, Mvu.Cmd.none()];
       }
 
-      Cache.writeCachedSettings(ctx.userId, msg.theme);
-      // TODO: There should be a kind of subscription to the theme slice that checks if the
-      // theme changed then it adds the command to the queue. This way we don't need to do this
-      // check constantly
-      ctx.runCmd({ kind: "ApplyTheme", theme: msg.theme });
-      return loadedState(msg.theme);
-    }
-    case "LoadFailed": {
-      return state.status === "loaded" ? state : { status: "error" };
+      const localThemeChangedSinceRequest = state.theme !== msg.expectedTheme;
+      if (localThemeChangedSinceRequest || state.syncingTheme !== null) {
+        return [state, Mvu.Cmd.none()];
+      }
+
+      return [
+        {
+          ...state,
+          theme: msg.theme,
+          themeSyncError: false,
+        },
+        Mvu.Cmd.none(),
+      ];
     }
     case "ThemeChanged": {
-      if (state.status !== "loaded" || state.theme === msg.theme) {
-        return state;
+      if (state.theme === msg.theme) {
+        return [state, Mvu.Cmd.none()];
       }
 
-      const requestId = state.themeSaveRequestId + 1;
-      Cache.writeCachedSettings(ctx.userId, msg.theme);
-      ctx.runCmd({ kind: "ApplyTheme", theme: msg.theme });
-      ctx.runCmd({ kind: "SaveTheme", requestId, theme: msg.theme });
-      return {
-        ...state,
-        theme: msg.theme,
-        themeSaveRequestId: requestId,
-        themeSyncStatus: "saving",
-      };
+      return [
+        {
+          ...state,
+          theme: msg.theme,
+          syncingTheme: state.syncingTheme ?? msg.theme,
+          themeSyncError: false,
+        },
+        Mvu.Cmd.none(),
+      ];
     }
-    case "ThemeSaved": {
-      // This solution has issues. If say you have two requests, a then b, if b fails
-      // then neither will be committed to the frontend
-      if (state.status !== "loaded" || state.themeSaveRequestId !== msg.requestId) {
-        return state;
+    case "ThemeSynced": {
+      if (state.userId !== msg.userId || state.syncingTheme !== msg.theme) {
+        return [state, Mvu.Cmd.none()];
       }
 
-      Cache.writeCachedSettings(ctx.userId, msg.theme);
-      ctx.runCmd({ kind: "ApplyTheme", theme: msg.theme });
-      return {
-        ...state,
-        theme: msg.theme,
-        confirmedTheme: msg.theme,
-        themeSyncStatus: "idle",
-      };
+      return [
+        {
+          ...state,
+          syncingTheme: state.theme === msg.theme ? null : state.theme,
+          themeSyncError: false,
+        },
+        Mvu.Cmd.none(),
+      ];
     }
-    case "ThemeSaveFailed": {
-      if (state.status !== "loaded" || state.themeSaveRequestId !== msg.requestId) {
-        return state;
+    case "ThemeSyncFailed": {
+      if (state.userId !== msg.userId || state.syncingTheme !== msg.theme) {
+        return [state, Mvu.Cmd.none()];
       }
 
-      Cache.writeCachedSettings(ctx.userId, state.confirmedTheme);
-      ctx.runCmd({ kind: "ApplyTheme", theme: state.confirmedTheme });
-      return {
-        ...state,
-        theme: state.confirmedTheme,
-        themeSyncStatus: "error",
-      };
+      const failedThemeIsCurrent = state.theme === msg.theme;
+      return [
+        {
+          ...state,
+          syncingTheme: failedThemeIsCurrent ? null : state.theme,
+          themeSyncError: failedThemeIsCurrent,
+        },
+        Mvu.Cmd.none(),
+      ];
+    }
+    case "ThemeSyncRetryRequested": {
+      if (!state.themeSyncError || state.syncingTheme !== null) {
+        return [state, Mvu.Cmd.none()];
+      }
+
+      return [
+        {
+          ...state,
+          syncingTheme: state.theme,
+          themeSyncError: false,
+        },
+        Mvu.Cmd.none(),
+      ];
     }
   }
+};
+
+const themeReactor: Mvu.Reactor<State, Cmd> = (oldState, newState) => {
+  if (oldState.theme === newState.theme) {
+    return Mvu.Cmd.none();
+  }
+
+  return Mvu.Cmd.batch(
+    Mvu.Cmd.of<Cmd>({ kind: "ApplyTheme", theme: newState.theme }),
+    Mvu.Cmd.of<Cmd>({ kind: "SaveSettings", settings: toCachedSettings(newState) }),
+  );
+};
+
+const syncReactor: Mvu.Reactor<State, Cmd> = (oldState, newState) => {
+  if (oldState.syncingTheme === newState.syncingTheme || newState.syncingTheme === null) {
+    return Mvu.Cmd.none();
+  }
+
+  return Mvu.Cmd.of({
+    kind: "SyncTheme",
+    theme: newState.syncingTheme,
+    userId: newState.userId,
+  });
+};
+
+const reactor = Mvu.combineReactors([themeReactor, syncReactor]);
+
+export const update = (msg: Msg, state: State): Mvu.Transition<State, Cmd> => {
+  const [newState, updateCmd] = localUpdate(msg, state);
+  return [newState, Mvu.Cmd.batch(updateCmd, reactor(state, newState))];
+};
+
+export const initialCommands = (state: State): Mvu.Cmd<Cmd> => {
+  return [
+    { kind: "ApplyTheme", theme: state.theme },
+    { kind: "SaveSettings", settings: toCachedSettings(state) },
+    { kind: "LoadRemote", expectedTheme: state.theme, userId: state.userId },
+  ];
 };
 
 export const runCmd = (cmd: Cmd, send: (msg: Msg) => void) => {
   switch (cmd.kind) {
-    case "Load": {
-      void loadSettings(send);
+    case "LoadRemote": {
+      void loadRemoteSettings(cmd.userId, cmd.expectedTheme, send);
       return;
     }
-    case "SaveTheme": {
-      void saveTheme(cmd.theme, cmd.requestId, send);
+    case "SaveSettings": {
+      Cache.writeCachedSettings(cmd.settings);
+      return;
+    }
+    case "SyncTheme": {
+      void syncTheme(cmd.userId, cmd.theme, send);
       return;
     }
     case "ApplyTheme": {
@@ -157,24 +201,27 @@ export const runCmd = (cmd: Cmd, send: (msg: Msg) => void) => {
   }
 };
 
-const loadSettings = async (send: (msg: Msg) => void) => {
+const loadRemoteSettings = async (
+  userId: string,
+  expectedTheme: Theme,
+  send: (msg: Msg) => void,
+) => {
   const { data, error } = await api.GET("/api/settings");
   if (error || data === undefined) {
-    send({ kind: "LoadFailed" });
     return;
   }
 
-  send({ kind: "Loaded", theme: data.theme });
+  send({ kind: "RemoteLoaded", expectedTheme, theme: data.theme, userId });
 };
 
-const saveTheme = async (theme: Theme, requestId: number, send: (msg: Msg) => void) => {
+const syncTheme = async (userId: string, theme: Theme, send: (msg: Msg) => void) => {
   const { data, error } = await api.PUT("/api/settings", { body: { theme } });
   if (error || data === undefined) {
-    send({ kind: "ThemeSaveFailed", requestId });
+    send({ kind: "ThemeSyncFailed", theme, userId });
     return;
   }
 
-  send({ kind: "ThemeSaved", requestId, theme: data.theme });
+  send({ kind: "ThemeSynced", theme, userId });
 };
 
 export const applyTheme = (theme: Theme) => {

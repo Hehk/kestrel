@@ -9,7 +9,7 @@ type CachedSession = {
   user: User;
 };
 
-type CachedSettings = {
+export type CachedSettings = {
   version: 1;
   userId: string;
   theme: Theme;
@@ -66,23 +66,26 @@ export const clearCachedUser = () => {
   window.localStorage.removeItem(SESSION_KEY);
 };
 
-export const readCachedSettings = (userId: string): Theme | null => {
+export const readCachedSettings = (userId: string): CachedSettings | null => {
   const value = parseJson(window.localStorage.getItem(settingsKey(userId)));
   if (
     !isRecord(value) ||
-    value["version"] !== 1 ||
+    (value["version"] !== 1 && value["version"] !== 2) ||
     value["userId"] !== userId ||
     !isTheme(value["theme"])
   ) {
     return null;
   }
 
-  return value["theme"];
+  return {
+    version: 1,
+    userId,
+    theme: value["theme"],
+  };
 };
 
-export const writeCachedSettings = (userId: string, theme: Theme) => {
-  const value: CachedSettings = { version: 1, userId, theme };
-  window.localStorage.setItem(settingsKey(userId), JSON.stringify(value));
+export const writeCachedSettings = (settings: CachedSettings) => {
+  window.localStorage.setItem(settingsKey(settings.userId), JSON.stringify(settings));
 };
 
 export const clearCachedSettings = (userId: string) => {

@@ -38,6 +38,28 @@ const pullRequest = (number: number): Repositories.PullRequest => {
 describe("model", () => {
   afterEach(() => {
     Model.resetForTest();
+    window.localStorage.clear();
+  });
+
+  it("queues synchronous command messages until the current command batch is handed off", () => {
+    const commands: Model.Cmd[] = [];
+    window.localStorage.clear();
+    Model.setRunCmdForTest((cmd) => {
+      commands.push(cmd);
+      if (cmd.kind === "Settings" && cmd.cmd.kind === "ApplyTheme") {
+        Model.send({ kind: "RouteRequested", route: { name: "Settings" }, replace: false });
+      }
+    });
+
+    Model.start(user, { name: "Home" });
+
+    expect(commands.map((cmd) => (cmd.kind === "Settings" ? cmd.cmd.kind : cmd.kind))).toEqual([
+      "ApplyTheme",
+      "SaveSettings",
+      "LoadRemote",
+      "Repositories",
+      "Navigate",
+    ]);
   });
 
   it("loads stored pull requests after repositories load on a pull request route", () => {

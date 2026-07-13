@@ -722,7 +722,7 @@ describe("App", () => {
     );
   });
 
-  it("rolls back theme when saving fails", async () => {
+  it("keeps the local theme and offers a retry when syncing fails", async () => {
     const user = userEvent.setup();
     const save = deferredResponse();
     mockAuth(signedInResponse, "system", () => save.promise);
@@ -741,13 +741,14 @@ describe("App", () => {
     await save.promise;
 
     expect(
-      await screen.findByText("Theme could not be saved. Reverted to last saved theme."),
+      await screen.findByText(/Theme is saved on this device but has not synced/),
     ).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Theme" })).toHaveTextContent("System");
-    expect(document.documentElement).not.toHaveAttribute("data-theme");
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Theme" })).toHaveTextContent("Dark");
+    expect(document.documentElement).toHaveAttribute("data-theme", "dark");
   });
 
-  it("ignores stale theme save failures", async () => {
+  it("serializes theme sync and continues with the latest value after a stale failure", async () => {
     const user = userEvent.setup();
     const firstSave = deferredResponse();
     const secondSave = deferredResponse();
@@ -770,8 +771,13 @@ describe("App", () => {
 
     await selectTheme(user, "Light");
 
-    await waitFor(() => expect(savedThemes).toEqual(["dark", "light"]));
+    expect(savedThemes).toEqual(["dark"]);
     expect(document.documentElement).toHaveAttribute("data-theme", "light");
+
+    firstSave.resolve(new Response(null, { status: 500 }));
+    await firstSave.promise;
+
+    await waitFor(() => expect(savedThemes).toEqual(["dark", "light"]));
 
     secondSave.resolve(jsonResponse({ theme: "light" }));
     await secondSave.promise;
@@ -779,13 +785,10 @@ describe("App", () => {
       expect(screen.getByRole("combobox", { name: "Theme" })).toHaveTextContent("Light"),
     );
 
-    firstSave.resolve(new Response(null, { status: 500 }));
-    await firstSave.promise;
-
     expect(screen.getByRole("combobox", { name: "Theme" })).toHaveTextContent("Light");
     expect(document.documentElement).toHaveAttribute("data-theme", "light");
     expect(
-      screen.queryByText("Theme could not be saved. Reverted to last saved theme."),
+      screen.queryByText(/Theme is saved on this device but has not synced/),
     ).not.toBeInTheDocument();
   });
 

@@ -1,5 +1,6 @@
 import { Record } from "immutable";
 import { useSyncExternalStore } from "react";
+import * as Mvu from "./mvu";
 import * as Repositories from "./repositoriesSlice";
 import * as Router from "./router";
 import * as Settings from "./settingsSlice";
@@ -33,11 +34,12 @@ export type Cmd =
       cmd: Repositories.Cmd;
     };
 
-type UpdateContext = {
+type RepositoryUpdateContext = {
   runCmd: (cmd: Cmd) => void;
 };
 
 export type Msg =
+  | { kind: "Started" }
   | { kind: "CountIncrement" }
   | { kind: "CountDecrement" }
   | { kind: "RouteRequested"; route: Router.ProtectedRoute; replace: boolean }
@@ -56,74 +58,94 @@ const createModel = (user: User, route: Router.AuthenticatedRoute): Model => {
   })();
 };
 
-export const update = (ctx: UpdateContext, msg: Msg, model: Model): Model => {
+const settingsCmd = (cmd: Settings.Cmd): Cmd => ({ kind: "Settings", cmd });
+const repositoriesCmd = (cmd: Repositories.Cmd): Cmd => ({ kind: "Repositories", cmd });
+
+export const update = (msg: Msg, model: Model): Mvu.Transition<Model, Cmd> => {
   switch (msg.kind) {
+    case "Started": {
+      return [
+        model,
+        Mvu.Cmd.batch(
+          Mvu.Cmd.map(settingsCmd, Settings.initialCommands(model.get("settings"))),
+          Mvu.Cmd.of(repositoriesCmd({ kind: "Load" })),
+        ),
+      ];
+    }
     case "CountIncrement": {
       const oldCount = model.get("count");
-      return model.set("count", oldCount + 1);
+      return [model.set("count", oldCount + 1), Mvu.Cmd.none()];
     }
     case "CountDecrement": {
       const oldCount = model.get("count");
-      return model.set("count", oldCount - 1);
+      return [model.set("count", oldCount - 1), Mvu.Cmd.none()];
     }
     case "RouteRequested": {
       if (Router.equal(model.get("route"), msg.route)) {
-        return model;
+        return [model, Mvu.Cmd.none()];
       }
 
-      ctx.runCmd({ kind: "Navigate", route: msg.route, replace: msg.replace });
-      return model;
+      return [model, Mvu.Cmd.of({ kind: "Navigate", route: msg.route, replace: msg.replace })];
     }
     case "RouteChanged": {
+      const commands: Cmd[] = [];
+      const ctx: RepositoryUpdateContext = { runCmd: (cmd) => commands.push(cmd) };
       const route = Router.toAuthenticatedRoute(msg.route);
       if (msg.route.name === "Login") {
         ctx.runCmd({ kind: "Navigate", route: { name: "Home" }, replace: true });
       }
 
       if (Router.equal(model.get("route"), route)) {
-        return model;
+        return [model, commands];
       }
 
-      return queuePullRequestRouteWork(ctx, model.set("route", route), { syncMissing: true });
+      return [
+        queuePullRequestRouteWork(ctx, model.set("route", route), { syncMissing: true }),
+        commands,
+      ];
     }
     case "Settings": {
-      const user = model.get("user");
-      const settings = Settings.update(
-        {
-          runCmd: (cmd) => ctx.runCmd({ kind: "Settings", cmd }),
-          userId: user.id,
-        },
-        msg.msg,
-        model.get("settings"),
-      );
+      const [settings, commands] = Settings.update(msg.msg, model.get("settings"));
 
-      return model.set("settings", settings);
+      return [model.set("settings", settings), Mvu.Cmd.map(settingsCmd, commands)];
     }
     case "Repositories": {
+      const commands: Cmd[] = [];
+      const ctx: RepositoryUpdateContext = { runCmd: (cmd) => commands.push(cmd) };
       const repositories = Repositories.update(
         {
-          runCmd: (cmd) => ctx.runCmd({ kind: "Repositories", cmd }),
+          runCmd: (cmd) => ctx.runCmd(repositoriesCmd(cmd)),
         },
         msg.msg,
         model.get("repositories"),
       );
 
-      return queuePullRequestRouteWork(ctx, model.set("repositories", repositories), {
-        syncMissing: msg.msg.kind === "PullRequestsLoaded",
-      });
+      return [
+        queuePullRequestRouteWork(ctx, model.set("repositories", repositories), {
+          syncMissing: msg.msg.kind === "PullRequestsLoaded",
+        }),
+        commands,
+      ];
     }
     case "UserRefreshed": {
       if (model.get("user").id === msg.user.id) {
-        return model.set("user", msg.user);
+        return [model.set("user", msg.user), Mvu.Cmd.none()];
       }
 
-      return createModel(msg.user, model.get("route"));
+      const nextModel = createModel(msg.user, model.get("route"));
+      return [
+        nextModel,
+        Mvu.Cmd.batch(
+          Mvu.Cmd.map(settingsCmd, Settings.initialCommands(nextModel.get("settings"))),
+          Mvu.Cmd.of(repositoriesCmd({ kind: "Load" })),
+        ),
+      ];
     }
   }
 };
 
 const queuePullRequestRouteWork = (
-  ctx: UpdateContext,
+  ctx: RepositoryUpdateContext,
   model: Model,
   options: { syncMissing: boolean },
 ): Model => {
@@ -177,6 +199,8 @@ const queuePullRequestRouteWork = (
 
 let model: Model | null = null;
 let subs: Set<() => void> = new Set();
+let messageQueue: Msg[] = [];
+let processingMessages = false;
 
 const defaultRunCmd = (cmd: Cmd) => {
   switch (cmd.kind) {
@@ -204,19 +228,14 @@ export const start = (
 ) => {
   model = createModel(user, route);
   subs.forEach((sub) => sub());
-
-  const settings = model.get("settings");
-  if (settings.status === "loaded") {
-    runCmd({ kind: "Settings", cmd: { kind: "ApplyTheme", theme: settings.theme } });
-  }
-
-  runCmd({ kind: "Settings", cmd: { kind: "Load" } });
-  runCmd({ kind: "Repositories", cmd: { kind: "Load" } });
+  send({ kind: "Started" });
 };
 
 export const stop = () => {
   Settings.applyTheme("system");
   model = null;
+  messageQueue = [];
+  processingMessages = false;
   subs.forEach((sub) => sub());
 };
 
@@ -225,16 +244,27 @@ export const send = (msg: Msg) => {
     throw new Error("Authenticated model was updated before a user was available");
   }
 
-  const cmds: Cmd[] = [];
-  const ctx: UpdateContext = {
-    runCmd: (cmd) => {
-      cmds.push(cmd);
-    },
-  };
+  messageQueue.push(msg);
+  if (processingMessages) {
+    return;
+  }
 
-  model = update(ctx, msg, model);
-  subs.forEach((sub) => sub());
-  cmds.forEach((cmd) => runCmd(cmd));
+  processingMessages = true;
+  try {
+    while (messageQueue.length > 0) {
+      const nextMsg = messageQueue.shift();
+      if (nextMsg === undefined || model === null) {
+        continue;
+      }
+
+      const [nextModel, commands] = update(nextMsg, model);
+      model = nextModel;
+      subs.forEach((sub) => sub());
+      commands.forEach((cmd) => runCmd(cmd));
+    }
+  } finally {
+    processingMessages = false;
+  }
 };
 
 Router.onStateChange((route) => {
@@ -280,5 +310,7 @@ export const setRunCmdForTest = (nextRunCmd: (cmd: Cmd) => void) => {
 export const resetForTest = () => {
   model = null;
   subs = new Set();
+  messageQueue = [];
+  processingMessages = false;
   runCmd = defaultRunCmd;
 };

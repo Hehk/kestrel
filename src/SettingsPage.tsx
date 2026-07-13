@@ -63,20 +63,20 @@ function CaretDownIcon(props: React.ComponentProps<"svg">) {
   );
 }
 
-type LoadedSettings = Extract<Settings.State, { status: "loaded" }>;
-
 const themes: Array<{ label: string; value: Settings.Theme }> = [
   { label: "System", value: "system" },
   { label: "Light", value: "light" },
   { label: "Dark", value: "dark" },
 ];
 
-const ThemeSelect = ({ settings }: { settings: LoadedSettings }) => {
+const ThemeSelect = () => {
+  const theme = useModel((model) => model.get("settings").theme);
+
   return (
     <Select.Root
       items={themes}
       name="theme"
-      value={settings.theme}
+      value={theme}
       onValueChange={(value) => {
         if (value !== null) {
           send({ kind: "Settings", msg: { kind: "ThemeChanged", theme: value } });
@@ -121,25 +121,25 @@ const ThemeSelect = ({ settings }: { settings: LoadedSettings }) => {
 };
 
 export const SettingsPage = () => {
-  const settings = useModel((model) => model.get("settings"));
+  const themeSyncError = useModel((model) => model.get("settings").themeSyncError);
 
   return (
     <section className="page-card">
       <h1>Settings</h1>
-      {settings.status === "loading" ? (
-        <p>Loading settings...</p>
-      ) : settings.status === "error" ? (
-        <p>Settings could not be loaded. Try refreshing the page.</p>
-      ) : (
-        <div className="settings-form">
-          <ThemeSelect settings={settings} />
-          {settings.themeSyncStatus === "error" ? (
-            <p className="settings-error">
-              Theme could not be saved. Reverted to last saved theme.
-            </p>
-          ) : null}
-        </div>
-      )}
+      <div className="settings-form">
+        <ThemeSelect />
+        {themeSyncError ? (
+          <p className="settings-error">
+            Theme is saved on this device but has not synced.{" "}
+            <button
+              onClick={() => send({ kind: "Settings", msg: { kind: "ThemeSyncRetryRequested" } })}
+              type="button"
+            >
+              Retry
+            </button>
+          </p>
+        ) : null}
+      </div>
     </section>
   );
 };
