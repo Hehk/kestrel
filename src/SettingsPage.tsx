@@ -124,22 +124,25 @@ export const SettingsPage = () => {
   const themeSyncError = useModel((model) => model.get("settings").themeSyncError);
 
   return (
-    <section className="page-card">
-      <h1>Settings</h1>
-      <div className="settings-form">
-        <ThemeSelect />
-        {themeSyncError ? (
-          <p className="settings-error">
-            Theme is saved on this device but has not synced.{" "}
-            <button
-              onClick={() => send({ kind: "Settings", msg: { kind: "ThemeSyncRetryRequested" } })}
-              type="button"
-            >
-              Retry
-            </button>
-          </p>
-        ) : null}
-      </div>
-    </section>
+    <>
+      <DefaultHeader />
+      <section className="page-card">
+        <h1>Settings</h1>
+        <div className="settings-form">
+          <ThemeSelect />
+          {themeSyncError ? (
+            <p className="settings-error">
+              Theme is saved on this device but has not synced.{" "}
+              <button
+                onClick={() => send({ kind: "Settings", msg: { kind: "ThemeSyncRetryRequested" } })}
+                type="button"
+              >
+                Retry
+              </button>
+            </p>
+          ) : null}
+        </div>
+      </section>
+    </>
   );
 };

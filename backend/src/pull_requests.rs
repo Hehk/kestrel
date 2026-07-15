@@ -4,7 +4,7 @@ use axum::{
     Json,
 };
 use reqwest::StatusCode as ReqwestStatusCode;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sqlx::SqlitePool;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use utoipa::{IntoParams, ToSchema};
@@ -60,20 +60,68 @@ pub struct SyncPullRequestsResponse {
     pub synced_count: usize,
 }
 
+#[derive(Clone, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestCheckRunDto {
+    pub name: String,
+    pub state: String,
+}
+
+#[derive(Clone, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestCommentDto {
+    pub author_login: Option<String>,
+    pub body: Option<String>,
+}
+
+#[derive(Clone, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestCommitDto {
+    pub message: String,
+    pub sha: String,
+}
+
+#[derive(Clone, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestFileDto {
+    pub filename: String,
+    pub status: String,
+}
+
+#[derive(Clone, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestReviewDto {
+    pub author_login: Option<String>,
+    pub state: String,
+}
+
+#[derive(Clone, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestStatusDto {
+    pub context: String,
+    pub state: String,
+}
+
+#[derive(Clone, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestTimelineEventDto {
+    pub actor_login: Option<String>,
+    pub event: String,
+}
+
 #[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PullRequestDetailDto {
-    pub check_runs: serde_json::Value,
-    pub commits: serde_json::Value,
+    pub check_runs: Vec<PullRequestCheckRunDto>,
+    pub commits: Vec<PullRequestCommitDto>,
     pub diff: Option<String>,
-    pub files: serde_json::Value,
-    pub issue_comments: serde_json::Value,
-    pub pull_request: serde_json::Value,
-    pub review_comments: serde_json::Value,
-    pub reviews: serde_json::Value,
-    pub statuses: serde_json::Value,
+    pub files: Vec<PullRequestFileDto>,
+    pub issue_comments: Vec<PullRequestCommentDto>,
+    pub review_comments: Vec<PullRequestCommentDto>,
+    pub reviews: Vec<PullRequestReviewDto>,
+    pub statuses: Vec<PullRequestStatusDto>,
     pub synced_at: String,
-    pub timeline: serde_json::Value,
+    pub timeline: Vec<PullRequestTimelineEventDto>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -479,7 +527,7 @@ async fn load_pull_request_detail(
     number: i64,
 ) -> Result<Option<PullRequestDetailDto>, PullRequestDataError> {
     let row = sqlx::query_as::<_, PullRequestDetailRow>(
-        "SELECT pull_request_json, files_json, commits_json, reviews_json, review_comments_json, issue_comments_json, timeline_json, check_runs_json, statuses_json, diff, synced_at FROM tracked_repository_pull_request_details WHERE user_id = ? AND provider = ? AND owner = ? AND name = ? AND number = ?",
+        "SELECT files_json, commits_json, reviews_json, review_comments_json, issue_comments_json, timeline_json, check_runs_json, statuses_json, diff, synced_at FROM tracked_repository_pull_request_details WHERE user_id = ? AND provider = ? AND owner = ? AND name = ? AND number = ?",
     )
     .bind(&repository.user_id)
     .bind(GITHUB_PROVIDER)
@@ -527,7 +575,7 @@ async fn fetch_pull_request_detail_with_installation(
     user_id: &str,
     repository: &TrackedRepository,
     number: i64,
-) -> Result<GitHubPullRequestDetail, PullRequestSyncError> {
+) -> Result<PullRequestDetailSnapshot, PullRequestSyncError> {
     let installation_ids = github_app::installation_ids_for_user(&state.db, user_id)
         .await
         .map_err(|error| PullRequestSyncError::Other(error.into()))?;
@@ -595,27 +643,23 @@ async fn fetch_github_pull_request_detail(
     token: &str,
     repository: &TrackedRepository,
     number: i64,
-) -> Result<GitHubPullRequestDetail, PullRequestDataError> {
+) -> Result<PullRequestDetailSnapshot, PullRequestDataError> {
     let base_url = state.config.github_api_url.trim_end_matches('/');
     let pull_request_url = format!(
         "{base_url}/repos/{}/{}/pulls/{number}",
         repository.owner, repository.name
     );
-    let pull_request = fetch_github_json(state, token, &pull_request_url).await?;
-    let head_sha = pull_request
-        .get("head")
-        .and_then(|head| head.get("sha"))
-        .and_then(serde_json::Value::as_str)
-        .ok_or(PullRequestDataError::InvalidGitHubResponse(
-            "pull request response did not include head.sha",
-        ))?;
-
-    let files = fetch_github_json(state, token, &format!("{pull_request_url}/files")).await?;
-    let commits = fetch_github_json(state, token, &format!("{pull_request_url}/commits")).await?;
-    let reviews = fetch_github_json(state, token, &format!("{pull_request_url}/reviews")).await?;
-    let review_comments =
+    let pull_request: GitHubPullRequestDetail =
+        fetch_github_json(state, token, &pull_request_url).await?;
+    let files: Vec<GitHubPullRequestFile> =
+        fetch_github_json(state, token, &format!("{pull_request_url}/files")).await?;
+    let commits: Vec<GitHubPullRequestCommit> =
+        fetch_github_json(state, token, &format!("{pull_request_url}/commits")).await?;
+    let reviews: Vec<GitHubPullRequestReview> =
+        fetch_github_json(state, token, &format!("{pull_request_url}/reviews")).await?;
+    let review_comments: Vec<GitHubPullRequestComment> =
         fetch_github_json(state, token, &format!("{pull_request_url}/comments")).await?;
-    let issue_comments = fetch_github_json(
+    let issue_comments: Vec<GitHubPullRequestComment> = fetch_github_json(
         state,
         token,
         &format!(
@@ -624,7 +668,7 @@ async fn fetch_github_pull_request_detail(
         ),
     )
     .await?;
-    let timeline = fetch_github_json(
+    let timeline: Vec<GitHubPullRequestTimelineEvent> = fetch_github_json(
         state,
         token,
         &format!(
@@ -633,21 +677,25 @@ async fn fetch_github_pull_request_detail(
         ),
     )
     .await?;
-    let check_runs = fetch_github_json(
+    let check_runs: GitHubCheckRuns = fetch_github_json(
         state,
         token,
         &format!(
             "{base_url}/repos/{}/{}/commits/{head_sha}/check-runs",
-            repository.owner, repository.name
+            repository.owner,
+            repository.name,
+            head_sha = pull_request.head.sha,
         ),
     )
     .await?;
-    let statuses = fetch_github_json(
+    let statuses: GitHubStatuses = fetch_github_json(
         state,
         token,
         &format!(
             "{base_url}/repos/{}/{}/commits/{head_sha}/status",
-            repository.owner, repository.name
+            repository.owner,
+            repository.name,
+            head_sha = pull_request.head.sha,
         ),
     )
     .await?;
@@ -659,25 +707,47 @@ async fn fetch_github_pull_request_detail(
     )
     .await?;
 
-    Ok(GitHubPullRequestDetail {
-        check_runs,
-        commits,
+    Ok(PullRequestDetailSnapshot {
+        check_runs: check_runs
+            .check_runs
+            .into_iter()
+            .map(PullRequestCheckRunDto::from)
+            .collect(),
+        commits: commits
+            .into_iter()
+            .map(PullRequestCommitDto::from)
+            .collect(),
         diff: Some(diff),
-        files,
-        issue_comments,
-        pull_request,
-        review_comments,
-        reviews,
-        statuses,
-        timeline,
+        files: files.into_iter().map(PullRequestFileDto::from).collect(),
+        issue_comments: issue_comments
+            .into_iter()
+            .map(PullRequestCommentDto::from)
+            .collect(),
+        review_comments: review_comments
+            .into_iter()
+            .map(PullRequestCommentDto::from)
+            .collect(),
+        reviews: reviews
+            .into_iter()
+            .map(PullRequestReviewDto::from)
+            .collect(),
+        statuses: statuses
+            .statuses
+            .into_iter()
+            .map(PullRequestStatusDto::from)
+            .collect(),
+        timeline: timeline
+            .into_iter()
+            .map(PullRequestTimelineEventDto::from)
+            .collect(),
     })
 }
 
-async fn fetch_github_json(
+async fn fetch_github_json<T: DeserializeOwned>(
     state: &AppState,
     token: &str,
     url: &str,
-) -> Result<serde_json::Value, PullRequestDataError> {
+) -> Result<T, PullRequestDataError> {
     let response = state
         .http_client
         .get(url)
@@ -692,10 +762,7 @@ async fn fetch_github_json(
         return Err(PullRequestDataError::GitHubAccessDenied);
     }
 
-    Ok(response
-        .error_for_status()?
-        .json::<serde_json::Value>()
-        .await?)
+    Ok(response.error_for_status()?.json::<T>().await?)
 }
 
 async fn fetch_github_text(
@@ -774,10 +841,9 @@ async fn upsert_pull_request_detail(
     db: &SqlitePool,
     repository: &TrackedRepository,
     number: i64,
-    detail: &GitHubPullRequestDetail,
+    detail: &PullRequestDetailSnapshot,
     synced_at: &str,
 ) -> Result<PullRequestDetailDto, PullRequestDataError> {
-    let pull_request_json = serde_json::to_string(&detail.pull_request)?;
     let files_json = serde_json::to_string(&detail.files)?;
     let commits_json = serde_json::to_string(&detail.commits)?;
     let reviews_json = serde_json::to_string(&detail.reviews)?;
@@ -788,14 +854,13 @@ async fn upsert_pull_request_detail(
     let statuses_json = serde_json::to_string(&detail.statuses)?;
 
     sqlx::query(
-        "INSERT INTO tracked_repository_pull_request_details (user_id, provider, owner, name, number, pull_request_json, files_json, commits_json, reviews_json, review_comments_json, issue_comments_json, timeline_json, check_runs_json, statuses_json, diff, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, provider, owner, name, number) DO UPDATE SET pull_request_json = excluded.pull_request_json, files_json = excluded.files_json, commits_json = excluded.commits_json, reviews_json = excluded.reviews_json, review_comments_json = excluded.review_comments_json, issue_comments_json = excluded.issue_comments_json, timeline_json = excluded.timeline_json, check_runs_json = excluded.check_runs_json, statuses_json = excluded.statuses_json, diff = excluded.diff, synced_at = excluded.synced_at",
+        "INSERT INTO tracked_repository_pull_request_details (user_id, provider, owner, name, number, files_json, commits_json, reviews_json, review_comments_json, issue_comments_json, timeline_json, check_runs_json, statuses_json, diff, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, provider, owner, name, number) DO UPDATE SET files_json = excluded.files_json, commits_json = excluded.commits_json, reviews_json = excluded.reviews_json, review_comments_json = excluded.review_comments_json, issue_comments_json = excluded.issue_comments_json, timeline_json = excluded.timeline_json, check_runs_json = excluded.check_runs_json, statuses_json = excluded.statuses_json, diff = excluded.diff, synced_at = excluded.synced_at",
     )
     .bind(&repository.user_id)
     .bind(GITHUB_PROVIDER)
     .bind(&repository.owner)
     .bind(&repository.name)
     .bind(number)
-    .bind(&pull_request_json)
     .bind(&files_json)
     .bind(&commits_json)
     .bind(&reviews_json)
@@ -815,7 +880,6 @@ async fn upsert_pull_request_detail(
         diff: detail.diff.clone(),
         files: detail.files.clone(),
         issue_comments: detail.issue_comments.clone(),
-        pull_request: detail.pull_request.clone(),
         review_comments: detail.review_comments.clone(),
         reviews: detail.reviews.clone(),
         statuses: detail.statuses.clone(),
@@ -885,7 +949,6 @@ enum PullRequestSyncError {
 enum PullRequestDataError {
     GitHubAccessDenied,
     GitHubApp(github_app::GitHubAppError),
-    InvalidGitHubResponse(&'static str),
     Reqwest(reqwest::Error),
     Serde(serde_json::Error),
     Sql(sqlx::Error),
@@ -927,9 +990,6 @@ impl std::fmt::Display for PullRequestDataError {
         match self {
             Self::GitHubAccessDenied => write!(f, "GitHub App cannot access repository"),
             Self::GitHubApp(error) => write!(f, "GitHub App operation failed: {error}"),
-            Self::InvalidGitHubResponse(message) => {
-                write!(f, "GitHub response was missing expected data: {message}")
-            }
             Self::Reqwest(error) => write!(f, "GitHub pull request HTTP request failed: {error}"),
             Self::Serde(error) => write!(f, "pull request JSON operation failed: {error}"),
             Self::Sql(error) => write!(f, "pull request database operation failed: {error}"),
@@ -964,17 +1024,16 @@ struct PullRequestRow {
     updated_at: String,
 }
 
-struct GitHubPullRequestDetail {
-    check_runs: serde_json::Value,
-    commits: serde_json::Value,
+struct PullRequestDetailSnapshot {
+    check_runs: Vec<PullRequestCheckRunDto>,
+    commits: Vec<PullRequestCommitDto>,
     diff: Option<String>,
-    files: serde_json::Value,
-    issue_comments: serde_json::Value,
-    pull_request: serde_json::Value,
-    review_comments: serde_json::Value,
-    reviews: serde_json::Value,
-    statuses: serde_json::Value,
-    timeline: serde_json::Value,
+    files: Vec<PullRequestFileDto>,
+    issue_comments: Vec<PullRequestCommentDto>,
+    review_comments: Vec<PullRequestCommentDto>,
+    reviews: Vec<PullRequestReviewDto>,
+    statuses: Vec<PullRequestStatusDto>,
+    timeline: Vec<PullRequestTimelineEventDto>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -984,7 +1043,6 @@ struct PullRequestDetailRow {
     diff: Option<String>,
     files_json: String,
     issue_comments_json: String,
-    pull_request_json: String,
     review_comments_json: String,
     reviews_json: String,
     statuses_json: String,
@@ -1000,7 +1058,6 @@ impl PullRequestDetailRow {
             diff: self.diff,
             files: serde_json::from_str(&self.files_json)?,
             issue_comments: serde_json::from_str(&self.issue_comments_json)?,
-            pull_request: serde_json::from_str(&self.pull_request_json)?,
             review_comments: serde_json::from_str(&self.review_comments_json)?,
             reviews: serde_json::from_str(&self.reviews_json)?,
             statuses: serde_json::from_str(&self.statuses_json)?,
@@ -1049,6 +1106,137 @@ struct GitHubUser {
     login: String,
 }
 
+#[derive(Deserialize)]
+struct GitHubPullRequestDetail {
+    head: GitHubPullRequestHead,
+}
+
+#[derive(Deserialize)]
+struct GitHubPullRequestHead {
+    sha: String,
+}
+
+#[derive(Deserialize)]
+struct GitHubPullRequestFile {
+    filename: String,
+    status: String,
+}
+
+impl From<GitHubPullRequestFile> for PullRequestFileDto {
+    fn from(file: GitHubPullRequestFile) -> Self {
+        Self {
+            filename: file.filename,
+            status: file.status,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct GitHubPullRequestCommit {
+    commit: GitHubPullRequestCommitData,
+    sha: String,
+}
+
+#[derive(Deserialize)]
+struct GitHubPullRequestCommitData {
+    message: String,
+}
+
+impl From<GitHubPullRequestCommit> for PullRequestCommitDto {
+    fn from(commit: GitHubPullRequestCommit) -> Self {
+        Self {
+            message: commit.commit.message,
+            sha: commit.sha,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct GitHubPullRequestReview {
+    state: String,
+    user: Option<GitHubUser>,
+}
+
+impl From<GitHubPullRequestReview> for PullRequestReviewDto {
+    fn from(review: GitHubPullRequestReview) -> Self {
+        Self {
+            author_login: review.user.map(|user| user.login),
+            state: review.state,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct GitHubPullRequestComment {
+    body: Option<String>,
+    user: Option<GitHubUser>,
+}
+
+impl From<GitHubPullRequestComment> for PullRequestCommentDto {
+    fn from(comment: GitHubPullRequestComment) -> Self {
+        Self {
+            author_login: comment.user.map(|user| user.login),
+            body: comment.body,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct GitHubPullRequestTimelineEvent {
+    actor: Option<GitHubUser>,
+    event: String,
+}
+
+impl From<GitHubPullRequestTimelineEvent> for PullRequestTimelineEventDto {
+    fn from(event: GitHubPullRequestTimelineEvent) -> Self {
+        Self {
+            actor_login: event.actor.map(|actor| actor.login),
+            event: event.event,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct GitHubCheckRuns {
+    check_runs: Vec<GitHubCheckRun>,
+}
+
+#[derive(Deserialize)]
+struct GitHubCheckRun {
+    conclusion: Option<String>,
+    name: String,
+    status: String,
+}
+
+impl From<GitHubCheckRun> for PullRequestCheckRunDto {
+    fn from(check_run: GitHubCheckRun) -> Self {
+        Self {
+            name: check_run.name,
+            state: check_run.conclusion.unwrap_or(check_run.status),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct GitHubStatuses {
+    statuses: Vec<GitHubStatus>,
+}
+
+#[derive(Deserialize)]
+struct GitHubStatus {
+    context: String,
+    state: String,
+}
+
+impl From<GitHubStatus> for PullRequestStatusDto {
+    fn from(status: GitHubStatus) -> Self {
+        Self {
+            context: status.context,
+            state: status.state,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use axum::{
@@ -1069,8 +1257,10 @@ mod tests {
     use super::{
         fetch_github_pull_request_detail, fetch_github_pull_requests, load_pull_request_detail,
         load_pull_requests, load_tracked_repository, update_sync_error, update_sync_state,
-        upsert_pull_request_detail, upsert_pull_requests, GitHubPullRequest,
-        GitHubPullRequestDetail, GitHubUser, TrackedRepository,
+        upsert_pull_request_detail, upsert_pull_requests, GitHubPullRequest, GitHubUser,
+        PullRequestCheckRunDto, PullRequestCommentDto, PullRequestCommitDto,
+        PullRequestDetailSnapshot, PullRequestFileDto, PullRequestReviewDto, PullRequestStatusDto,
+        PullRequestTimelineEventDto, TrackedRepository,
     };
     use crate::{
         config::{Config, Environment, SessionConfig, TokenEncryptionKey},
@@ -1164,7 +1354,10 @@ mod tests {
         }
 
         async fn commits() -> Json<Value> {
-            Json(serde_json::json!([{ "sha": "head-sha" }]))
+            Json(serde_json::json!([{
+                "commit": { "message": "Add syncing" },
+                "sha": "head-sha"
+            }]))
         }
 
         async fn reviews() -> Json<Value> {
@@ -1172,21 +1365,35 @@ mod tests {
         }
 
         async fn review_comments() -> Json<Value> {
-            Json(serde_json::json!([{ "body": "nit", "path": "app.rs" }]))
+            Json(serde_json::json!([{
+                "body": "nit",
+                "path": "app.rs",
+                "user": { "login": "reviewer" }
+            }]))
         }
 
         async fn issue_comments() -> Json<Value> {
-            Json(serde_json::json!([{ "body": "looks good" }]))
+            Json(serde_json::json!([{
+                "body": "looks good",
+                "user": { "login": "octocat" }
+            }]))
         }
 
         async fn timeline() -> Json<Value> {
-            Json(serde_json::json!([{ "event": "committed" }]))
+            Json(serde_json::json!([{
+                "actor": { "login": "octocat" },
+                "event": "committed"
+            }]))
         }
 
         async fn check_runs() -> Json<Value> {
             Json(serde_json::json!({
                 "total_count": 1,
-                "check_runs": [{ "name": "test", "conclusion": "success" }]
+                "check_runs": [{
+                    "name": "test",
+                    "conclusion": "success",
+                    "status": "completed"
+                }]
             }))
         }
 
@@ -1527,15 +1734,15 @@ mod tests {
                 .expect("pull request detail should fetch from mock GitHub API");
 
         server.abort();
-        assert_eq!(detail.pull_request["number"], 42);
-        assert_eq!(detail.files[0]["filename"], "app.rs");
-        assert_eq!(detail.commits[0]["sha"], "head-sha");
-        assert_eq!(detail.reviews[0]["state"], "APPROVED");
-        assert_eq!(detail.review_comments[0]["body"], "nit");
-        assert_eq!(detail.issue_comments[0]["body"], "looks good");
-        assert_eq!(detail.timeline[0]["event"], "committed");
-        assert_eq!(detail.check_runs["total_count"], 1);
-        assert_eq!(detail.statuses["state"], "success");
+        assert_eq!(detail.files[0].filename, "app.rs");
+        assert_eq!(detail.commits[0].sha, "head-sha");
+        assert_eq!(detail.commits[0].message, "Add syncing");
+        assert_eq!(detail.reviews[0].state, "APPROVED");
+        assert_eq!(detail.review_comments[0].body.as_deref(), Some("nit"));
+        assert_eq!(detail.issue_comments[0].body.as_deref(), Some("looks good"));
+        assert_eq!(detail.timeline[0].event, "committed");
+        assert_eq!(detail.check_runs[0].state, "success");
+        assert_eq!(detail.statuses[0].state, "success");
         assert_eq!(detail.diff.as_deref(), Some("diff --git a/app.rs b/app.rs"));
     }
 
@@ -1630,17 +1837,40 @@ mod tests {
         .await
         .expect("tracked repository should load")
         .expect("tracked repository should exist");
-        let detail = GitHubPullRequestDetail {
-            check_runs: serde_json::json!({ "total_count": 1 }),
-            commits: serde_json::json!([{ "sha": "head-sha" }]),
+        let detail = PullRequestDetailSnapshot {
+            check_runs: vec![PullRequestCheckRunDto {
+                name: "test".to_string(),
+                state: "success".to_string(),
+            }],
+            commits: vec![PullRequestCommitDto {
+                message: "Add syncing".to_string(),
+                sha: "head-sha".to_string(),
+            }],
             diff: Some("diff --git a/app.rs b/app.rs".to_string()),
-            files: serde_json::json!([{ "filename": "app.rs" }]),
-            issue_comments: serde_json::json!([{ "body": "ship it" }]),
-            pull_request: serde_json::json!({ "number": 42, "title": "Add syncing" }),
-            review_comments: serde_json::json!([{ "body": "nit" }]),
-            reviews: serde_json::json!([{ "state": "APPROVED" }]),
-            statuses: serde_json::json!({ "state": "success" }),
-            timeline: serde_json::json!([{ "event": "committed" }]),
+            files: vec![PullRequestFileDto {
+                filename: "app.rs".to_string(),
+                status: "modified".to_string(),
+            }],
+            issue_comments: vec![PullRequestCommentDto {
+                author_login: Some("octocat".to_string()),
+                body: Some("ship it".to_string()),
+            }],
+            review_comments: vec![PullRequestCommentDto {
+                author_login: Some("reviewer".to_string()),
+                body: Some("nit".to_string()),
+            }],
+            reviews: vec![PullRequestReviewDto {
+                author_login: Some("reviewer".to_string()),
+                state: "APPROVED".to_string(),
+            }],
+            statuses: vec![PullRequestStatusDto {
+                context: "ci".to_string(),
+                state: "success".to_string(),
+            }],
+            timeline: vec![PullRequestTimelineEventDto {
+                actor_login: Some("octocat".to_string()),
+                event: "committed".to_string(),
+            }],
         };
 
         let saved =
@@ -1652,10 +1882,9 @@ mod tests {
             .expect("pull request detail should load")
             .expect("pull request detail should exist");
 
-        assert_eq!(saved.pull_request["title"], "Add syncing");
-        assert_eq!(loaded.pull_request["number"], 42);
-        assert_eq!(loaded.files[0]["filename"], "app.rs");
-        assert_eq!(loaded.issue_comments[0]["body"], "ship it");
+        assert_eq!(saved.commits[0].message, "Add syncing");
+        assert_eq!(loaded.files[0].filename, "app.rs");
+        assert_eq!(loaded.issue_comments[0].body.as_deref(), Some("ship it"));
         assert_eq!(loaded.diff.as_deref(), Some("diff --git a/app.rs b/app.rs"));
         assert_eq!(loaded.synced_at, "2026-01-03T00:00:00Z");
     }

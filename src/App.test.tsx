@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { resetForTest } from "./model";
+import type { PullRequestDetail } from "./repositoriesSlice";
 import * as Session from "./session";
 
 const signedInResponse = {
@@ -44,19 +45,6 @@ type PullRequest = {
   title: string;
   updatedAt: string;
 };
-type PullRequestDetail = {
-  checkRuns: unknown;
-  commits: unknown;
-  diff: string | null;
-  files: unknown;
-  issueComments: unknown;
-  pullRequest: unknown;
-  reviewComments: unknown;
-  reviews: unknown;
-  statuses: unknown;
-  syncedAt: string;
-  timeline: unknown;
-};
 type SaveRepository = (repository: string) => Response | Promise<Response>;
 type SyncPullRequests = (fullName: string) => Response | Promise<Response>;
 type SyncPullRequestDetail = (fullName: string, number: number) => Response | Promise<Response>;
@@ -90,19 +78,18 @@ const pullRequest = (number: number, title = `PR ${number}`): PullRequest => {
   };
 };
 
-const pullRequestDetail = (number: number): PullRequestDetail => {
+const pullRequestDetail = (): PullRequestDetail => {
   return {
-    checkRuns: { check_runs: [{ conclusion: "success", name: "test" }], total_count: 1 },
-    commits: [{ commit: { message: "Add syncing" }, sha: "abcdef123456" }],
+    checkRuns: [{ name: "test", state: "success" }],
+    commits: [{ message: "Add syncing", sha: "abcdef123456" }],
     diff: "diff --git a/app.rs b/app.rs",
     files: [{ filename: "app.rs", status: "modified" }],
-    issueComments: [{ body: "looks good", user: { login: "octocat" } }],
-    pullRequest: { number, title: "Add syncing" },
-    reviewComments: [{ body: "nit", user: { login: "reviewer" } }],
-    reviews: [{ state: "APPROVED", user: { login: "reviewer" } }],
-    statuses: { state: "success", statuses: [{ context: "ci", state: "success" }] },
+    issueComments: [{ authorLogin: "octocat", body: "looks good" }],
+    reviewComments: [{ authorLogin: "reviewer", body: "nit" }],
+    reviews: [{ authorLogin: "reviewer", state: "APPROVED" }],
+    statuses: [{ context: "ci", state: "success" }],
     syncedAt: "2026-01-04T00:00:00Z",
-    timeline: [{ actor: { login: "octocat" }, event: "committed" }],
+    timeline: [{ actorLogin: "octocat", event: "committed" }],
   };
 };
 
@@ -187,7 +174,7 @@ const mockAuth = (
             return syncPullRequestDetail(fullName, number);
           }
 
-          const detail = pullRequestDetail(number);
+          const detail = pullRequestDetail();
           pullRequestDetailsByKey = { ...pullRequestDetailsByKey, [key]: detail };
           return jsonResponse({ pullRequestDetail: detail });
         }

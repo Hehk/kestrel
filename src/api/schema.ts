@@ -237,18 +237,29 @@ export interface components {
     MeResponse: {
       user?: null | components["schemas"]["UserDto"];
     };
+    PullRequestCheckRunDto: {
+      name: string;
+      state: string;
+    };
+    PullRequestCommentDto: {
+      authorLogin?: string | null;
+      body?: string | null;
+    };
+    PullRequestCommitDto: {
+      message: string;
+      sha: string;
+    };
     PullRequestDetailDto: {
-      checkRuns: unknown;
-      commits: unknown;
+      checkRuns: components["schemas"]["PullRequestCheckRunDto"][];
+      commits: components["schemas"]["PullRequestCommitDto"][];
       diff?: string | null;
-      files: unknown;
-      issueComments: unknown;
-      pullRequest: unknown;
-      reviewComments: unknown;
-      reviews: unknown;
-      statuses: unknown;
+      files: components["schemas"]["PullRequestFileDto"][];
+      issueComments: components["schemas"]["PullRequestCommentDto"][];
+      reviewComments: components["schemas"]["PullRequestCommentDto"][];
+      reviews: components["schemas"]["PullRequestReviewDto"][];
+      statuses: components["schemas"]["PullRequestStatusDto"][];
       syncedAt: string;
-      timeline: unknown;
+      timeline: components["schemas"]["PullRequestTimelineEventDto"][];
     };
     PullRequestDetailResponse: {
       pullRequestDetail: components["schemas"]["PullRequestDetailDto"];
@@ -279,6 +290,22 @@ export interface components {
       | "sync_failed";
     PullRequestErrorResponse: {
       error: components["schemas"]["PullRequestErrorCode"];
+    };
+    PullRequestFileDto: {
+      filename: string;
+      status: string;
+    };
+    PullRequestReviewDto: {
+      authorLogin?: string | null;
+      state: string;
+    };
+    PullRequestStatusDto: {
+      context: string;
+      state: string;
+    };
+    PullRequestTimelineEventDto: {
+      actorLogin?: string | null;
+      event: string;
     };
     RepositoryDto: {
       createdAt: string;
