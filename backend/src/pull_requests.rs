@@ -759,10 +759,7 @@ async fn fetch_github_review_decision(
 ) -> Result<Option<String>, PullRequestDataError> {
     let response = state
         .http_client
-        .post(format!(
-            "{}/graphql",
-            state.config.github_api_url.trim_end_matches('/')
-        ))
+        .post(github_graphql_url(&state.config.github_api_url))
         .bearer_auth(token)
         .header("Accept", "application/vnd.github+json")
         .header("User-Agent", USER_AGENT)
@@ -807,6 +804,14 @@ async fn fetch_github_review_decision(
                 "GitHub GraphQL response did not include the pull request".to_string(),
             )
         })
+}
+
+fn github_graphql_url(api_url: &str) -> String {
+    let api_url = api_url.trim_end_matches('/');
+    match api_url.strip_suffix("/api/v3") {
+        Some(host) => format!("{host}/api/graphql"),
+        None => format!("{api_url}/graphql"),
+    }
 }
 
 async fn fetch_github_json<T: DeserializeOwned>(
@@ -1412,6 +1417,18 @@ mod tests {
             token_encryption_key: TokenEncryptionKey::from_base64(&STANDARD.encode([10_u8; 32]))
                 .expect("test key should parse"),
         }
+    }
+
+    #[test]
+    fn derives_graphql_url_from_public_and_enterprise_api_urls() {
+        assert_eq!(
+            super::github_graphql_url("https://api.github.com"),
+            "https://api.github.com/graphql"
+        );
+        assert_eq!(
+            super::github_graphql_url("https://github.example/api/v3/"),
+            "https://github.example/api/graphql"
+        );
     }
 
     async fn mock_github_api() -> (String, tokio::task::JoinHandle<()>) {

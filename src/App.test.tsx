@@ -499,6 +499,33 @@ describe("App", () => {
     );
   });
 
+  it("keeps retained sidebar details visible when a refresh fails", async () => {
+    const user = userEvent.setup();
+    window.history.replaceState({}, "", "/pull/kestrel%2Fapp/42");
+    mockAuth(
+      signedInResponse,
+      "system",
+      undefined,
+      [repository("kestrel/app")],
+      undefined,
+      { "kestrel/app": [pullRequest(42, "Add syncing")] },
+      undefined,
+      { "kestrel/app#42": pullRequestDetail() },
+      () => jsonResponse({ error: "sync_failed" }, 500),
+    );
+
+    renderApp();
+    await user.click(await screen.findByRole("button", { name: "Sync details" }));
+    expect(
+      await screen.findByText("Pull request details could not be loaded."),
+    ).toBeInTheDocument();
+
+    const metadata = screen.getByRole("complementary", { name: "Pull request metadata" });
+    expect(within(metadata).getByText("app.rs")).toBeInTheDocument();
+    const status = screen.getByRole("complementary", { name: "Pull request status" });
+    expect(within(status).getByText("Approved")).toBeInTheDocument();
+  });
+
   it("renders check and status icons by state", async () => {
     window.history.replaceState({}, "", "/pull/kestrel%2Fapp/42");
     mockAuth(

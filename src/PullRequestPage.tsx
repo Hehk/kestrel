@@ -165,7 +165,7 @@ const getDetails = (details: Repositories.PullRequestDetailState | undefined) =>
   if (details === undefined) {
     return undefined;
   }
-  if (details.status === "loaded") {
+  if (details.detail !== null) {
     return details.detail;
   }
   return undefined;
