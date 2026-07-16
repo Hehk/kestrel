@@ -179,8 +179,6 @@ const PullRequestsSummary = ({
   }
 };
 
-
-
 const AddRepositoryForm = () => {
   const errorId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -247,7 +245,6 @@ const addErrorText = (error: Repositories.AddError | null) => {
       return undefined;
   }
 };
-
 
 const NotFoundPage = ({ path }: { path: string }) => {
   return (
