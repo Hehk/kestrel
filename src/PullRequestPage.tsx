@@ -1,16 +1,18 @@
+import { Popover } from "@base-ui/react/popover";
 import type { ReactNode } from "react";
 import { useModel, send } from "./model";
 import * as Repositories from "./repositoriesSlice";
 import { apiUrl } from "./api/client";
+import { CheckIcon, HourglassIcon, MinusIcon, XIcon } from "./icons/Icons";
 import PullRequestsError from "./PullRequestError";
 
+// TODO: Figure out a better way to handle all the error cases
 const PullRequestPage = ({ repo, id }: { repo: string; id: string }) => {
   const repositories = useModel((model) => model.get("repositories"));
 
   if (repositories.status === "loading") {
     return (
-      <section className="page-card">
-        <p className="eyebrow">Pull Request</p>
+      <section className="default-page page-card">
         <h1>{repo}</h1>
         <p>Loading repository...</p>
       </section>
@@ -19,8 +21,7 @@ const PullRequestPage = ({ repo, id }: { repo: string; id: string }) => {
 
   if (repositories.status === "error") {
     return (
-      <section className="page-card">
-        <p className="eyebrow">Pull Request</p>
+      <section className="default-page page-card">
         <h1>{repo}</h1>
         <p>Repositories could not be loaded.</p>
       </section>
@@ -32,8 +33,7 @@ const PullRequestPage = ({ repo, id }: { repo: string; id: string }) => {
   );
   if (repository === undefined) {
     return (
-      <section className="page-card">
-        <p className="eyebrow">Pull Request</p>
+      <section className="default-page page-card">
         <h1>{repo}</h1>
         <p>Repository is not tracked.</p>
       </section>
@@ -43,8 +43,7 @@ const PullRequestPage = ({ repo, id }: { repo: string; id: string }) => {
   const number = Number(id);
   if (!Number.isInteger(number) || number <= 0) {
     return (
-      <section className="page-card">
-        <p className="eyebrow">Pull Request</p>
+      <section className="default-page page-card">
         <h1>{repo}</h1>
         <p>Pull request number is invalid.</p>
       </section>
@@ -54,8 +53,7 @@ const PullRequestPage = ({ repo, id }: { repo: string; id: string }) => {
   const pullRequests = repositories.pullRequests.get(repository.fullName);
   if (pullRequests === undefined) {
     return (
-      <section className="page-card">
-        <p className="eyebrow">Pull Request</p>
+      <section className="default-page page-card">
         <h1>
           {repo} #{id}
         </h1>
@@ -66,8 +64,7 @@ const PullRequestPage = ({ repo, id }: { repo: string; id: string }) => {
 
   if (pullRequests.status === "loading" || pullRequests.status === "syncing") {
     return (
-      <section className="page-card">
-        <p className="eyebrow">Pull Request</p>
+      <section className="default-page page-card">
         <h1>
           {repo} #{id}
         </h1>
@@ -78,8 +75,7 @@ const PullRequestPage = ({ repo, id }: { repo: string; id: string }) => {
 
   if (pullRequests.status === "error") {
     return (
-      <section className="page-card">
-        <p className="eyebrow">Pull Request</p>
+      <section className="default-page page-card">
         <h1>
           {repo} #{id}
         </h1>
@@ -91,8 +87,7 @@ const PullRequestPage = ({ repo, id }: { repo: string; id: string }) => {
   const pullRequest = pullRequests.pullRequests.find((candidate) => candidate.number === number);
   if (pullRequest === undefined) {
     return (
-      <section className="page-card">
-        <p className="eyebrow">Pull Request</p>
+      <section className="default-page page-card">
         <h1>
           {repo} #{id}
         </h1>
@@ -114,67 +109,61 @@ const PullRequestPage = ({ repo, id }: { repo: string; id: string }) => {
   );
 
   return (
-    <section className="page-card">
-      <p className="eyebrow">Pull Request</p>
-      <h1>{pullRequest.title}</h1>
-      <dl className="pr-details">
-        <div>
-          <dt>Repository</dt>
-          <dd>{repository.fullName}</dd>
+    <div className="PullRequestPage">
+      <aside aria-label="Pull request details" className="PullRequestPage-leftSidebar">
+        <PullRequestChecks details={getDetails(pullRequestDetail)} />
+        <PullRequestMetadata pullRequest={pullRequest} repository={repository} />
+      </aside>
+      <section className="PullRequestPage-content">
+        <h1 className="PullRequestPage-title">{pullRequest.title}</h1>
+        <p>
+          <a href={pullRequest.htmlUrl}>Open on GitHub</a>
+        </p>
+        <div className="pr-detail-actions">
+          <button
+            disabled={
+              pullRequestDetail?.status === "loading" || pullRequestDetail?.status === "syncing"
+            }
+            onClick={() =>
+              send({
+                kind: "Repositories",
+                msg: { kind: "PullRequestDetailLoadRequested", number, repository },
+              })
+            }
+            type="button"
+          >
+            Load stored details
+          </button>
+          <button
+            disabled={
+              pullRequestDetail?.status === "loading" || pullRequestDetail?.status === "syncing"
+            }
+            onClick={() =>
+              send({
+                kind: "Repositories",
+                msg: { kind: "PullRequestDetailSyncRequested", number, repository },
+              })
+            }
+            type="button"
+          >
+            {pullRequestDetail?.status === "syncing" ? "Syncing details..." : "Sync details"}
+          </button>
         </div>
-        <div>
-          <dt>Number</dt>
-          <dd>#{pullRequest.number}</dd>
-        </div>
-        <div>
-          <dt>State</dt>
-          <dd>{pullRequest.state}</dd>
-        </div>
-        <div>
-          <dt>Author</dt>
-          <dd>{pullRequest.authorLogin ?? "Unknown"}</dd>
-        </div>
-        <div>
-          <dt>Updated</dt>
-          <dd>{pullRequest.updatedAt}</dd>
-        </div>
-      </dl>
-      <p>
-        <a href={pullRequest.htmlUrl}>Open on GitHub</a>
-      </p>
-      <div className="pr-detail-actions">
-        <button
-          disabled={
-            pullRequestDetail?.status === "loading" || pullRequestDetail?.status === "syncing"
-          }
-          onClick={() =>
-            send({
-              kind: "Repositories",
-              msg: { kind: "PullRequestDetailLoadRequested", number, repository },
-            })
-          }
-          type="button"
-        >
-          Load stored details
-        </button>
-        <button
-          disabled={
-            pullRequestDetail?.status === "loading" || pullRequestDetail?.status === "syncing"
-          }
-          onClick={() =>
-            send({
-              kind: "Repositories",
-              msg: { kind: "PullRequestDetailSyncRequested", number, repository },
-            })
-          }
-          type="button"
-        >
-          {pullRequestDetail?.status === "syncing" ? "Syncing details..." : "Sync details"}
-        </button>
-      </div>
-      <PullRequestDetailPanel detailState={pullRequestDetail} />
-    </section>
+        <PullRequestDetailPanel detailState={pullRequestDetail} />
+      </section>
+      <aside aria-label="Pull request actions" className="PullRequestPage-rightSidebar" />
+    </div>
   );
+};
+
+const getDetails = (details: Repositories.PullRequestDetailState | undefined) => {
+  if (details === undefined) {
+    return undefined;
+  }
+  if (details.status === "loaded") {
+    return details.detail;
+  }
+  return undefined;
 };
 
 const PullRequestDetailPanel = ({
@@ -213,7 +202,6 @@ const PullRequestDetailPanel = ({
       <PullRequestComments title="Review comments" comments={detail.reviewComments} />
       <PullRequestComments title="Conversation comments" comments={detail.issueComments} />
       <PullRequestTimeline timeline={detail.timeline} />
-      <PullRequestChecks checkRuns={detail.checkRuns} statuses={detail.statuses} />
       <PullRequestDiff diff={detail.diff} />
     </div>
   );
@@ -330,30 +318,192 @@ const PullRequestTimeline = ({
   );
 };
 
-const PullRequestChecks = ({
-  checkRuns,
-  statuses,
+const PullRequestChecks = ({ details }: { details: ReturnType<typeof getDetails> }) => {
+  if (details === undefined) {
+    return null;
+  }
+  const checkRuns = details.checkRuns;
+  const statuses = details.statuses;
+  const count = checkRuns.length + statuses.length;
+
+  return (
+    <section className="pr-sidebar-section">
+      <header className="pr-sidebar-header">
+        <h2 className="pr-sidebar-title">Checks</h2>
+        <span className="pr-sidebar-count">{count}</span>
+      </header>
+      {count === 0 ? (
+        <p className="pr-sidebar-empty">None stored.</p>
+      ) : (
+        <ul className="pr-sidebar-list">
+          {checkRuns.map((check, index) => (
+            <li className="pr-sidebar-item" key={`check-${index}`}>
+              <PullRequestStatusIcon
+                label={check.name}
+                state={check.state}
+                summary={check.summary}
+                title={check.title}
+                url={check.url}
+              />
+            </li>
+          ))}
+          {statuses.map((status, index) => (
+            <li className="pr-sidebar-item" key={`status-${index}`}>
+              <PullRequestStatusIcon
+                description={status.description}
+                label={status.context}
+                state={status.state}
+                url={status.url}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+};
+
+const PullRequestMetadata = ({
+  pullRequest,
+  repository,
 }: {
-  checkRuns: Repositories.PullRequestDetail["checkRuns"];
-  statuses: Repositories.PullRequestDetail["statuses"];
+  pullRequest: Repositories.PullRequest;
+  repository: Repositories.Repository;
 }) => {
   return (
-    <PullRequestSection count={checkRuns.length + statuses.length} title="Checks and statuses">
-      <ul className="pr-detail-list">
-        {checkRuns.map((check, index) => (
-          <li key={`check-${index}`}>
-            <span>{check.name}</span>
-            <span className="repo-pr-meta">{check.state}</span>
-          </li>
-        ))}
-        {statuses.map((status, index) => (
-          <li key={`status-${index}`}>
-            <span>{status.context}</span>
-            <span className="repo-pr-meta">{status.state}</span>
-          </li>
-        ))}
-      </ul>
-    </PullRequestSection>
+    <section className="pr-sidebar-section pr-sidebar-metadata">
+      <header className="pr-sidebar-header">
+        <h2 className="pr-sidebar-title">Details</h2>
+      </header>
+      <dl className="pr-sidebar-metadata-list">
+        <div className="pr-sidebar-metadata-item">
+          <dt>Repository</dt>
+          <dd>{repository.fullName}</dd>
+        </div>
+        <div className="pr-sidebar-metadata-item">
+          <dt>Number</dt>
+          <dd>#{pullRequest.number}</dd>
+        </div>
+        <div className="pr-sidebar-metadata-item">
+          <dt>State</dt>
+          <dd>{pullRequest.state}</dd>
+        </div>
+        <div className="pr-sidebar-metadata-item">
+          <dt>Author</dt>
+          <dd>{pullRequest.authorLogin ?? "Unknown"}</dd>
+        </div>
+        <div className="pr-sidebar-metadata-item">
+          <dt>Updated</dt>
+          <dd>
+            <time className="pr-sidebar-time" dateTime={pullRequest.updatedAt}>
+              {formatLocalDateTime(pullRequest.updatedAt)}
+            </time>
+          </dd>
+        </div>
+      </dl>
+    </section>
+  );
+};
+
+const formatLocalDateTime = (value: string) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(date);
+};
+
+type StatusKind = "failure" | "neutral" | "pending" | "success";
+
+const statusKind = (state: string): StatusKind => {
+  switch (state.toLowerCase()) {
+    case "success":
+      return "success";
+    case "pending":
+    case "queued":
+    case "in_progress":
+    case "waiting":
+    case "requested":
+      return "pending";
+    case "failure":
+    case "error":
+    case "cancelled":
+    case "timed_out":
+    case "action_required":
+    case "startup_failure":
+    case "stale":
+      return "failure";
+    case "neutral":
+    case "skipped":
+    default:
+      return "neutral";
+  }
+};
+
+const statusLabel = (state: string) => {
+  const label = state.trim().replaceAll("_", " ").toLowerCase();
+  return label === "" ? "Unknown" : label.charAt(0).toUpperCase() + label.slice(1);
+};
+
+const PullRequestStatusIcon = ({
+  description,
+  label,
+  state,
+  summary,
+  title,
+  url,
+}: {
+  description?: string | null | undefined;
+  label: string;
+  state: string;
+  summary?: string | null | undefined;
+  title?: string | null | undefined;
+  url?: string | null | undefined;
+}) => {
+  const kind = statusKind(state);
+  const accessibleState = statusLabel(state);
+  const detail = description ?? summary;
+
+  return (
+    <Popover.Root>
+      <Popover.Trigger
+        aria-label={`${label}: ${accessibleState}. Show run details`}
+        className="pr-status-trigger"
+        data-status-kind={kind}
+        type="button"
+      >
+        <span className="pr-status-name">{label}</span>
+        <span className="pr-status-icon">
+          {kind === "success" ? <CheckIcon /> : null}
+          {kind === "failure" ? <XIcon /> : null}
+          {kind === "pending" ? <HourglassIcon /> : null}
+          {kind === "neutral" ? <MinusIcon /> : null}
+        </span>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Positioner className="pr-status-positioner" side="right" sideOffset={8}>
+          <Popover.Popup className="pr-status-popover">
+            <Popover.Title className="pr-status-popover-title">{label}</Popover.Title>
+            <p className="pr-status-popover-state">{accessibleState}</p>
+            {title ? <p className="pr-status-popover-detail-title">{title}</p> : null}
+            {detail ? (
+              <Popover.Description className="pr-status-popover-description">
+                {detail}
+              </Popover.Description>
+            ) : null}
+            {url ? (
+              <a className="pr-status-popover-link" href={url} rel="noreferrer" target="_blank">
+                View run
+              </a>
+            ) : null}
+          </Popover.Popup>
+        </Popover.Positioner>
+      </Popover.Portal>
+    </Popover.Root>
   );
 };
 

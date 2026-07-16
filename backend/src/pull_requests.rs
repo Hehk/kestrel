@@ -65,6 +65,9 @@ pub struct SyncPullRequestsResponse {
 pub struct PullRequestCheckRunDto {
     pub name: String,
     pub state: String,
+    pub summary: Option<String>,
+    pub title: Option<String>,
+    pub url: Option<String>,
 }
 
 #[derive(Clone, Deserialize, Serialize, ToSchema)]
@@ -99,7 +102,9 @@ pub struct PullRequestReviewDto {
 #[serde(rename_all = "camelCase")]
 pub struct PullRequestStatusDto {
     pub context: String,
+    pub description: Option<String>,
     pub state: String,
+    pub url: Option<String>,
 }
 
 #[derive(Clone, Deserialize, Serialize, ToSchema)]
@@ -1204,15 +1209,32 @@ struct GitHubCheckRuns {
 #[derive(Deserialize)]
 struct GitHubCheckRun {
     conclusion: Option<String>,
+    details_url: Option<String>,
+    html_url: Option<String>,
     name: String,
+    output: Option<GitHubCheckRunOutput>,
     status: String,
+}
+
+#[derive(Deserialize)]
+struct GitHubCheckRunOutput {
+    summary: Option<String>,
+    title: Option<String>,
 }
 
 impl From<GitHubCheckRun> for PullRequestCheckRunDto {
     fn from(check_run: GitHubCheckRun) -> Self {
+        let (title, summary) = check_run
+            .output
+            .map(|output| (output.title, output.summary))
+            .unwrap_or_default();
+
         Self {
             name: check_run.name,
             state: check_run.conclusion.unwrap_or(check_run.status),
+            summary,
+            title,
+            url: check_run.details_url.or(check_run.html_url),
         }
     }
 }
@@ -1225,14 +1247,18 @@ struct GitHubStatuses {
 #[derive(Deserialize)]
 struct GitHubStatus {
     context: String,
+    description: Option<String>,
     state: String,
+    target_url: Option<String>,
 }
 
 impl From<GitHubStatus> for PullRequestStatusDto {
     fn from(status: GitHubStatus) -> Self {
         Self {
             context: status.context,
+            description: status.description,
             state: status.state,
+            url: status.target_url,
         }
     }
 }
@@ -1388,19 +1414,51 @@ mod tests {
 
         async fn check_runs() -> Json<Value> {
             Json(serde_json::json!({
-                "total_count": 1,
-                "check_runs": [{
-                    "name": "test",
-                    "conclusion": "success",
-                    "status": "completed"
-                }]
+                "total_count": 2,
+                "check_runs": [
+                    {
+                        "name": "test",
+                        "conclusion": "success",
+                        "status": "completed",
+                        "details_url": "https://ci.example.test/runs/42",
+                        "html_url": "https://github.com/kestrel/app/runs/42",
+                        "output": {
+                            "title": "Tests passed",
+                            "summary": "All test suites completed successfully."
+                        }
+                    },
+                    {
+                        "name": "lint",
+                        "conclusion": null,
+                        "status": "in_progress",
+                        "details_url": null,
+                        "html_url": "https://github.com/kestrel/app/runs/43",
+                        "output": {
+                            "title": null,
+                            "summary": "Lint is still running."
+                        }
+                    }
+                ]
             }))
         }
 
         async fn statuses() -> Json<Value> {
             Json(serde_json::json!({
                 "state": "success",
-                "statuses": [{ "context": "ci", "state": "success" }]
+                "statuses": [
+                    {
+                        "context": "ci",
+                        "description": "Build passed",
+                        "state": "success",
+                        "target_url": "https://ci.example.test/builds/42"
+                    },
+                    {
+                        "context": "deploy",
+                        "description": null,
+                        "state": "pending",
+                        "target_url": null
+                    }
+                ]
             }))
         }
 
@@ -1742,7 +1800,32 @@ mod tests {
         assert_eq!(detail.issue_comments[0].body.as_deref(), Some("looks good"));
         assert_eq!(detail.timeline[0].event, "committed");
         assert_eq!(detail.check_runs[0].state, "success");
+        assert_eq!(
+            detail.check_runs[0].url.as_deref(),
+            Some("https://ci.example.test/runs/42")
+        );
+        assert_eq!(detail.check_runs[0].title.as_deref(), Some("Tests passed"));
+        assert_eq!(
+            detail.check_runs[0].summary.as_deref(),
+            Some("All test suites completed successfully.")
+        );
+        assert_eq!(detail.check_runs[1].state, "in_progress");
+        assert_eq!(
+            detail.check_runs[1].url.as_deref(),
+            Some("https://github.com/kestrel/app/runs/43")
+        );
+        assert_eq!(detail.check_runs[1].title, None);
         assert_eq!(detail.statuses[0].state, "success");
+        assert_eq!(
+            detail.statuses[0].description.as_deref(),
+            Some("Build passed")
+        );
+        assert_eq!(
+            detail.statuses[0].url.as_deref(),
+            Some("https://ci.example.test/builds/42")
+        );
+        assert_eq!(detail.statuses[1].description, None);
+        assert_eq!(detail.statuses[1].url, None);
         assert_eq!(detail.diff.as_deref(), Some("diff --git a/app.rs b/app.rs"));
     }
 
@@ -1841,6 +1924,9 @@ mod tests {
             check_runs: vec![PullRequestCheckRunDto {
                 name: "test".to_string(),
                 state: "success".to_string(),
+                summary: Some("All test suites completed successfully.".to_string()),
+                title: Some("Tests passed".to_string()),
+                url: Some("https://ci.example.test/runs/42".to_string()),
             }],
             commits: vec![PullRequestCommitDto {
                 message: "Add syncing".to_string(),
@@ -1865,7 +1951,9 @@ mod tests {
             }],
             statuses: vec![PullRequestStatusDto {
                 context: "ci".to_string(),
+                description: Some("Build passed".to_string()),
                 state: "success".to_string(),
+                url: Some("https://ci.example.test/builds/42".to_string()),
             }],
             timeline: vec![PullRequestTimelineEventDto {
                 actor_login: Some("octocat".to_string()),
@@ -1885,7 +1973,39 @@ mod tests {
         assert_eq!(saved.commits[0].message, "Add syncing");
         assert_eq!(loaded.files[0].filename, "app.rs");
         assert_eq!(loaded.issue_comments[0].body.as_deref(), Some("ship it"));
+        assert_eq!(
+            loaded.check_runs[0].summary.as_deref(),
+            Some("All test suites completed successfully.")
+        );
+        assert_eq!(
+            loaded.check_runs[0].url.as_deref(),
+            Some("https://ci.example.test/runs/42")
+        );
+        assert_eq!(
+            loaded.statuses[0].description.as_deref(),
+            Some("Build passed")
+        );
+        assert_eq!(
+            loaded.statuses[0].url.as_deref(),
+            Some("https://ci.example.test/builds/42")
+        );
         assert_eq!(loaded.diff.as_deref(), Some("diff --git a/app.rs b/app.rs"));
         assert_eq!(loaded.synced_at, "2026-01-03T00:00:00Z");
+    }
+
+    #[test]
+    fn check_and_status_dtos_deserialize_legacy_json_without_metadata() {
+        let check_runs: Vec<PullRequestCheckRunDto> =
+            serde_json::from_str(r#"[{"name":"test","state":"success"}]"#)
+                .expect("legacy check runs should deserialize");
+        let statuses: Vec<PullRequestStatusDto> =
+            serde_json::from_str(r#"[{"context":"ci","state":"success"}]"#)
+                .expect("legacy statuses should deserialize");
+
+        assert_eq!(check_runs[0].summary, None);
+        assert_eq!(check_runs[0].title, None);
+        assert_eq!(check_runs[0].url, None);
+        assert_eq!(statuses[0].description, None);
+        assert_eq!(statuses[0].url, None);
     }
 }

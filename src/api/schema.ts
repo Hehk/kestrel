@@ -240,6 +240,9 @@ export interface components {
     PullRequestCheckRunDto: {
       name: string;
       state: string;
+      summary?: string | null;
+      title?: string | null;
+      url?: string | null;
     };
     PullRequestCommentDto: {
       authorLogin?: string | null;
@@ -301,7 +304,9 @@ export interface components {
     };
     PullRequestStatusDto: {
       context: string;
+      description?: string | null;
       state: string;
+      url?: string | null;
     };
     PullRequestTimelineEventDto: {
       actorLogin?: string | null;
