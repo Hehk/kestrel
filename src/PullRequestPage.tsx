@@ -1,9 +1,18 @@
-import { Popover } from "@base-ui/react/popover";
+import { Tooltip } from "@base-ui/react/tooltip";
 import type { ReactNode } from "react";
 import { useModel, send } from "./model";
 import * as Repositories from "./repositoriesSlice";
 import { apiUrl } from "./api/client";
-import { CheckIcon, HourglassIcon, MinusIcon, XIcon } from "./icons/Icons";
+import { Link } from "./Link";
+import {
+  ArrowLeftIcon,
+  CheckIcon,
+  GitHubIcon,
+  HourglassIcon,
+  MinusIcon,
+  SyncIcon,
+  XIcon,
+} from "./icons/Icons";
 import PullRequestsError from "./PullRequestError";
 
 // TODO: Figure out a better way to handle all the error cases
@@ -12,19 +21,17 @@ const PullRequestPage = ({ repo, id }: { repo: string; id: string }) => {
 
   if (repositories.status === "loading") {
     return (
-      <section className="default-page page-card">
-        <h1>{repo}</h1>
+      <PullRequestMessage title={repo}>
         <p>Loading repository...</p>
-      </section>
+      </PullRequestMessage>
     );
   }
 
   if (repositories.status === "error") {
     return (
-      <section className="default-page page-card">
-        <h1>{repo}</h1>
+      <PullRequestMessage title={repo}>
         <p>Repositories could not be loaded.</p>
-      </section>
+      </PullRequestMessage>
     );
   }
 
@@ -33,64 +40,50 @@ const PullRequestPage = ({ repo, id }: { repo: string; id: string }) => {
   );
   if (repository === undefined) {
     return (
-      <section className="default-page page-card">
-        <h1>{repo}</h1>
+      <PullRequestMessage title={repo}>
         <p>Repository is not tracked.</p>
-      </section>
+      </PullRequestMessage>
     );
   }
 
   const number = Number(id);
   if (!Number.isInteger(number) || number <= 0) {
     return (
-      <section className="default-page page-card">
-        <h1>{repo}</h1>
+      <PullRequestMessage title={repo}>
         <p>Pull request number is invalid.</p>
-      </section>
+      </PullRequestMessage>
     );
   }
 
   const pullRequests = repositories.pullRequests.get(repository.fullName);
   if (pullRequests === undefined) {
     return (
-      <section className="default-page page-card">
-        <h1>
-          {repo} #{id}
-        </h1>
+      <PullRequestMessage title={`${repo} #${id}`}>
         <p>Loading pull requests...</p>
-      </section>
+      </PullRequestMessage>
     );
   }
 
   if (pullRequests.status === "loading" || pullRequests.status === "syncing") {
     return (
-      <section className="default-page page-card">
-        <h1>
-          {repo} #{id}
-        </h1>
+      <PullRequestMessage title={`${repo} #${id}`}>
         <p>{pullRequests.status === "loading" ? "Loading" : "Syncing"} pull requests...</p>
-      </section>
+      </PullRequestMessage>
     );
   }
 
   if (pullRequests.status === "error") {
     return (
-      <section className="default-page page-card">
-        <h1>
-          {repo} #{id}
-        </h1>
+      <PullRequestMessage title={`${repo} #${id}`}>
         <PullRequestsError error={pullRequests.error} />
-      </section>
+      </PullRequestMessage>
     );
   }
 
   const pullRequest = pullRequests.pullRequests.find((candidate) => candidate.number === number);
   if (pullRequest === undefined) {
     return (
-      <section className="default-page page-card">
-        <h1>
-          {repo} #{id}
-        </h1>
+      <PullRequestMessage title={`${repo} #${id}`}>
         <p>Pull request is not stored yet.</p>
         <button
           onClick={() =>
@@ -100,7 +93,7 @@ const PullRequestPage = ({ repo, id }: { repo: string; id: string }) => {
         >
           Sync pull requests
         </button>
-      </section>
+      </PullRequestMessage>
     );
   }
 
@@ -110,56 +103,127 @@ const PullRequestPage = ({ repo, id }: { repo: string; id: string }) => {
   const details = getDetails(pullRequestDetail);
 
   return (
-    <div className="PullRequestPage">
-      <aside aria-label="Pull request status" className="PullRequestPage-leftSidebar">
-        <PullRequestChecks details={details} />
-        <PullRequestReviewStatus details={details} />
-      </aside>
-      <section className="PullRequestPage-content">
-        <h1 className="PullRequestPage-title">{pullRequest.title}</h1>
-        <p>
-          <a href={pullRequest.htmlUrl}>Open on GitHub</a>
-        </p>
-        <div className="pr-detail-actions">
-          <button
-            disabled={
-              pullRequestDetail?.status === "loading" || pullRequestDetail?.status === "syncing"
-            }
-            onClick={() =>
-              send({
-                kind: "Repositories",
-                msg: { kind: "PullRequestDetailLoadRequested", number, repository },
-              })
-            }
-            type="button"
-          >
-            Load stored details
-          </button>
-          <button
-            disabled={
-              pullRequestDetail?.status === "loading" || pullRequestDetail?.status === "syncing"
-            }
-            onClick={() =>
-              send({
-                kind: "Repositories",
-                msg: { kind: "PullRequestDetailSyncRequested", number, repository },
-              })
-            }
-            type="button"
-          >
-            {pullRequestDetail?.status === "syncing" ? "Syncing details..." : "Sync details"}
-          </button>
-        </div>
-        <PullRequestDetailPanel detailState={pullRequestDetail} />
-      </section>
-      <aside aria-label="Pull request metadata" className="PullRequestPage-rightSidebar">
-        <PullRequestMetadata pullRequest={pullRequest} repository={repository} />
-        {details === undefined ? null : <PullRequestFiles files={details.files} />}
-        {details === undefined ? null : <PullRequestCommits commits={details.commits} />}
-      </aside>
-    </div>
+    <Tooltip.Provider>
+      <div className="PullRequestPage">
+        <aside aria-label="Pull request status" className="PullRequestPage-leftSidebar">
+          <PullRequestActions
+            detailState={pullRequestDetail}
+            number={number}
+            pullRequest={pullRequest}
+            repository={repository}
+          />
+          <PullRequestReviewStatus details={details} />
+          <PullRequestChecks details={details} />
+        </aside>
+        <section className="PullRequestPage-content">
+          <h1 className="PullRequestPage-title">{pullRequest.title}</h1>
+          <PullRequestDetailPanel detailState={pullRequestDetail} />
+        </section>
+        <aside aria-label="Pull request metadata" className="PullRequestPage-rightSidebar">
+          <PullRequestMetadata pullRequest={pullRequest} repository={repository} />
+          {details === undefined ? null : <PullRequestFiles files={details.files} />}
+          {details === undefined ? null : <PullRequestCommits commits={details.commits} />}
+        </aside>
+      </div>
+    </Tooltip.Provider>
   );
 };
+
+const PullRequestMessage = ({ children, title }: { children: ReactNode; title: string }) => (
+  <section className="default-page page-card">
+    <Link
+      aria-label="Back to home"
+      className="pr-page-back pr-sidebar-action"
+      title="Back to home"
+      to={{ name: "Home" }}
+    >
+      <ArrowLeftIcon />
+    </Link>
+    <h1>{title}</h1>
+    {children}
+  </section>
+);
+
+const PullRequestActions = ({
+  detailState,
+  number,
+  pullRequest,
+  repository,
+}: {
+  detailState: Repositories.PullRequestDetailState | undefined;
+  number: number;
+  pullRequest: Repositories.PullRequest;
+  repository: Repositories.Repository;
+}) => {
+  const loading = detailState?.status === "loading";
+  const syncing = detailState?.status === "syncing";
+  const syncedAt = detailState?.detail?.syncedAt;
+
+  return (
+    <nav aria-label="Pull request actions" className="pr-sidebar-actions">
+      <Tooltip.Root>
+        <Tooltip.Trigger
+          aria-label="Back to home"
+          closeOnClick={false}
+          render={<Link className="pr-sidebar-action" to={{ name: "Home" }} />}
+        >
+          <ArrowLeftIcon />
+        </Tooltip.Trigger>
+        <PullRequestTooltip>Back to tracked repositories</PullRequestTooltip>
+      </Tooltip.Root>
+      <Tooltip.Root>
+        <Tooltip.Trigger
+          aria-label="Open on GitHub"
+          closeOnClick={false}
+          render={
+            <a className="pr-sidebar-action" href={pullRequest.htmlUrl}>
+              <GitHubIcon />
+            </a>
+          }
+        />
+        <PullRequestTooltip>Open this pull request on GitHub</PullRequestTooltip>
+      </Tooltip.Root>
+      <Tooltip.Root>
+        <Tooltip.Trigger
+          aria-busy={syncing}
+          aria-label="Sync pull request from GitHub"
+          closeOnClick={false}
+          render={
+            <button
+              className="pr-sidebar-action"
+              disabled={loading || syncing}
+              onClick={() =>
+                send({
+                  kind: "Repositories",
+                  msg: { kind: "PullRequestDetailSyncRequested", number, repository },
+                })
+              }
+              type="button"
+            />
+          }
+        >
+          <SyncIcon className={syncing ? "pr-sidebar-sync-icon" : undefined} />
+        </Tooltip.Trigger>
+        <PullRequestTooltip>
+          <span>Sync pull request from GitHub</span>
+          <span className="pr-tooltip-secondary">
+            Last synced: {syncedAt === undefined ? "Never" : formatLocalDateTime(syncedAt)}
+          </span>
+        </PullRequestTooltip>
+      </Tooltip.Root>
+    </nav>
+  );
+};
+
+const PullRequestTooltip = ({ children }: { children: ReactNode }) => (
+  <Tooltip.Portal keepMounted>
+    <Tooltip.Positioner className="pr-tooltip-positioner" sideOffset={8}>
+      <Tooltip.Popup className="pr-tooltip" role="tooltip">
+        {children}
+      </Tooltip.Popup>
+    </Tooltip.Positioner>
+  </Tooltip.Portal>
+);
 
 const getDetails = (details: Repositories.PullRequestDetailState | undefined) => {
   if (details === undefined) {
@@ -200,7 +264,6 @@ const PullRequestDetailPanel = ({
   return (
     <div className="pr-detail-sections">
       {detailState.status === "error" ? <PullRequestDetailError error={detailState.error} /> : null}
-      <p className="repo-pr-status">Details synced: {detail.syncedAt}</p>
       <PullRequestComments title="Review comments" comments={detail.reviewComments} />
       <PullRequestComments title="Conversation comments" comments={detail.issueComments} />
       <PullRequestTimeline timeline={detail.timeline} />
@@ -513,10 +576,11 @@ const PullRequestStatusIcon = ({
   const detail = description ?? summary;
 
   return (
-    <Popover.Root>
-      <Popover.Trigger
-        aria-label={`${label}: ${accessibleState}. Show run details`}
+    <Tooltip.Root>
+      <Tooltip.Trigger
+        aria-label={`${label}: ${accessibleState}`}
         className="pr-status-trigger"
+        closeOnClick={false}
         data-status-kind={kind}
         type="button"
       >
@@ -527,27 +591,23 @@ const PullRequestStatusIcon = ({
           {kind === "pending" ? <HourglassIcon /> : null}
           {kind === "neutral" ? <MinusIcon /> : null}
         </span>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Positioner className="pr-status-positioner" side="right" sideOffset={8}>
-          <Popover.Popup className="pr-status-popover">
-            <Popover.Title className="pr-status-popover-title">{label}</Popover.Title>
-            <p className="pr-status-popover-state">{accessibleState}</p>
-            {title ? <p className="pr-status-popover-detail-title">{title}</p> : null}
-            {detail ? (
-              <Popover.Description className="pr-status-popover-description">
-                {detail}
-              </Popover.Description>
-            ) : null}
+      </Tooltip.Trigger>
+      <Tooltip.Portal keepMounted>
+        <Tooltip.Positioner className="pr-tooltip-positioner" side="right" sideOffset={8}>
+          <Tooltip.Popup className="pr-check-tooltip pr-tooltip" role="tooltip">
+            <p className="pr-tooltip-title">{label}</p>
+            <p className="pr-tooltip-state">{accessibleState}</p>
+            {title ? <p className="pr-tooltip-detail-title">{title}</p> : null}
+            {detail ? <p className="pr-tooltip-description">{detail}</p> : null}
             {url ? (
-              <a className="pr-status-popover-link" href={url} rel="noreferrer" target="_blank">
+              <a className="pr-tooltip-link" href={url} rel="noreferrer" target="_blank">
                 View run
               </a>
             ) : null}
-          </Popover.Popup>
-        </Popover.Positioner>
-      </Popover.Portal>
-    </Popover.Root>
+          </Tooltip.Popup>
+        </Tooltip.Positioner>
+      </Tooltip.Portal>
+    </Tooltip.Root>
   );
 };
 

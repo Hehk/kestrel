@@ -5,7 +5,7 @@ use axum::{
 };
 use reqwest::StatusCode as ReqwestStatusCode;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use sqlx::SqlitePool;
+use sqlx::{Executor, Sqlite, SqlitePool};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use utoipa::{IntoParams, ToSchema};
 
@@ -133,6 +133,13 @@ pub struct PullRequestDetailDto {
 #[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PullRequestDetailResponse {
+    pub pull_request_detail: PullRequestDetailDto,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncPullRequestResponse {
+    pub pull_request: PullRequestDto,
     pub pull_request_detail: PullRequestDetailDto,
 }
 
@@ -373,7 +380,7 @@ pub(crate) async fn get_pull_request_detail(
     path = "/api/repositories/{owner}/{name}/pull-requests/{number}/sync",
     params(PullRequestPath),
     responses(
-        (status = 200, description = "Pull request detail synced", body = PullRequestDetailResponse),
+        (status = 200, description = "Pull request synced", body = SyncPullRequestResponse),
         (status = 400, description = "Invalid repository or pull request", body = PullRequestErrorResponse),
         (status = 401, description = "Authentication required"),
         (status = 403, description = "GitHub App authorization required", body = PullRequestErrorResponse),
@@ -384,7 +391,7 @@ pub(crate) async fn sync_pull_request_detail(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(path): Path<PullRequestPath>,
-) -> Result<Json<PullRequestDetailResponse>, (StatusCode, Json<PullRequestErrorResponse>)> {
+) -> Result<Json<SyncPullRequestResponse>, (StatusCode, Json<PullRequestErrorResponse>)> {
     let user_id = require_user_id(&state, &headers)
         .await
         .map_err(|status| api_error(status, PullRequestErrorCode::SyncFailed))?;
@@ -405,7 +412,7 @@ pub(crate) async fn sync_pull_request_detail(
             )
         })?;
 
-    let github_detail =
+    let github_snapshot =
         match fetch_pull_request_detail_with_installation(&state, &user_id, &tracked, number).await
         {
             Ok(detail) => detail,
@@ -430,18 +437,52 @@ pub(crate) async fn sync_pull_request_detail(
             PullRequestErrorCode::SyncFailed,
         )
     })?;
-    let pull_request_detail =
-        upsert_pull_request_detail(&state.db, &tracked, number, &github_detail, &synced_at)
-            .await
-            .map_err(|error| {
-                tracing::error!(%error, "failed to store pull request detail");
-                api_error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    PullRequestErrorCode::SyncFailed,
-                )
-            })?;
+    let mut transaction = state.db.begin().await.map_err(|error| {
+        tracing::error!(%error, "failed to start pull request sync transaction");
+        api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            PullRequestErrorCode::SyncFailed,
+        )
+    })?;
+    let pull_request = upsert_pull_request(
+        &mut *transaction,
+        &tracked,
+        &github_snapshot.pull_request,
+        &synced_at,
+    )
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "failed to store pull request");
+        api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            PullRequestErrorCode::SyncFailed,
+        )
+    })?;
+    let pull_request_detail = upsert_pull_request_detail(
+        &mut *transaction,
+        &tracked,
+        number,
+        &github_snapshot.detail,
+        &synced_at,
+    )
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "failed to store pull request detail");
+        api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            PullRequestErrorCode::SyncFailed,
+        )
+    })?;
+    transaction.commit().await.map_err(|error| {
+        tracing::error!(%error, "failed to commit pull request sync");
+        api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            PullRequestErrorCode::SyncFailed,
+        )
+    })?;
 
-    Ok(Json(PullRequestDetailResponse {
+    Ok(Json(SyncPullRequestResponse {
+        pull_request,
         pull_request_detail,
     }))
 }
@@ -581,7 +622,7 @@ async fn fetch_pull_request_detail_with_installation(
     user_id: &str,
     repository: &TrackedRepository,
     number: i64,
-) -> Result<PullRequestDetailSnapshot, PullRequestSyncError> {
+) -> Result<PullRequestSyncSnapshot, PullRequestSyncError> {
     let installation_ids = github_app::installation_ids_for_user(&state.db, user_id)
         .await
         .map_err(|error| PullRequestSyncError::Other(error.into()))?;
@@ -649,7 +690,7 @@ async fn fetch_github_pull_request_detail(
     token: &str,
     repository: &TrackedRepository,
     number: i64,
-) -> Result<PullRequestDetailSnapshot, PullRequestDataError> {
+) -> Result<PullRequestSyncSnapshot, PullRequestDataError> {
     let base_url = state.config.github_api_url.trim_end_matches('/');
     let pull_request_url = format!(
         "{base_url}/repos/{}/{}/pulls/{number}",
@@ -714,40 +755,43 @@ async fn fetch_github_pull_request_detail(
     )
     .await?;
 
-    Ok(PullRequestDetailSnapshot {
-        check_runs: check_runs
-            .check_runs
-            .into_iter()
-            .map(PullRequestCheckRunDto::from)
-            .collect(),
-        commits: commits
-            .into_iter()
-            .map(PullRequestCommitDto::from)
-            .collect(),
-        diff: Some(diff),
-        files: files.into_iter().map(PullRequestFileDto::from).collect(),
-        issue_comments: issue_comments
-            .into_iter()
-            .map(PullRequestCommentDto::from)
-            .collect(),
-        review_comments: review_comments
-            .into_iter()
-            .map(PullRequestCommentDto::from)
-            .collect(),
-        review_decision,
-        reviews: reviews
-            .into_iter()
-            .map(PullRequestReviewDto::from)
-            .collect(),
-        statuses: statuses
-            .statuses
-            .into_iter()
-            .map(PullRequestStatusDto::from)
-            .collect(),
-        timeline: timeline
-            .into_iter()
-            .map(PullRequestTimelineEventDto::from)
-            .collect(),
+    Ok(PullRequestSyncSnapshot {
+        detail: PullRequestDetailSnapshot {
+            check_runs: check_runs
+                .check_runs
+                .into_iter()
+                .map(PullRequestCheckRunDto::from)
+                .collect(),
+            commits: commits
+                .into_iter()
+                .map(PullRequestCommitDto::from)
+                .collect(),
+            diff: Some(diff),
+            files: files.into_iter().map(PullRequestFileDto::from).collect(),
+            issue_comments: issue_comments
+                .into_iter()
+                .map(PullRequestCommentDto::from)
+                .collect(),
+            review_comments: review_comments
+                .into_iter()
+                .map(PullRequestCommentDto::from)
+                .collect(),
+            review_decision,
+            reviews: reviews
+                .into_iter()
+                .map(PullRequestReviewDto::from)
+                .collect(),
+            statuses: statuses
+                .statuses
+                .into_iter()
+                .map(PullRequestStatusDto::from)
+                .collect(),
+            timeline: timeline
+                .into_iter()
+                .map(PullRequestTimelineEventDto::from)
+                .collect(),
+        },
+        pull_request: pull_request.pull_request,
     })
 }
 
@@ -867,54 +911,69 @@ async fn upsert_pull_requests(
 ) -> Result<Vec<PullRequestDto>, PullRequestDataError> {
     let mut saved = Vec::with_capacity(pull_requests.len());
     for pull_request in pull_requests {
-        sqlx::query(
-            "INSERT INTO tracked_repository_pull_requests (user_id, provider, owner, name, number, github_id, title, state, draft, author_login, html_url, created_at, updated_at, closed_at, merged_at, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, provider, owner, name, number) DO UPDATE SET github_id = excluded.github_id, title = excluded.title, state = excluded.state, draft = excluded.draft, author_login = excluded.author_login, html_url = excluded.html_url, created_at = excluded.created_at, updated_at = excluded.updated_at, closed_at = excluded.closed_at, merged_at = excluded.merged_at, synced_at = excluded.synced_at",
-        )
-        .bind(&repository.user_id)
-        .bind(GITHUB_PROVIDER)
-        .bind(&repository.owner)
-        .bind(&repository.name)
-        .bind(pull_request.number)
-        .bind(pull_request.id)
-        .bind(&pull_request.title)
-        .bind(&pull_request.state)
-        .bind(pull_request.draft)
-        .bind(pull_request.user.as_ref().map(|user| user.login.as_str()))
-        .bind(&pull_request.html_url)
-        .bind(&pull_request.created_at)
-        .bind(&pull_request.updated_at)
-        .bind(&pull_request.closed_at)
-        .bind(&pull_request.merged_at)
-        .bind(synced_at)
-        .execute(db)
-        .await?;
-
-        saved.push(PullRequestDto {
-            author_login: pull_request.user.as_ref().map(|user| user.login.clone()),
-            closed_at: pull_request.closed_at.clone(),
-            created_at: pull_request.created_at.clone(),
-            draft: pull_request.draft,
-            github_id: pull_request.id,
-            html_url: pull_request.html_url.clone(),
-            merged_at: pull_request.merged_at.clone(),
-            number: pull_request.number,
-            state: pull_request.state.clone(),
-            synced_at: synced_at.to_string(),
-            title: pull_request.title.clone(),
-            updated_at: pull_request.updated_at.clone(),
-        });
+        saved.push(upsert_pull_request(db, repository, pull_request, synced_at).await?);
     }
 
     Ok(saved)
 }
 
-async fn upsert_pull_request_detail(
-    db: &SqlitePool,
+async fn upsert_pull_request<'e, E>(
+    executor: E,
+    repository: &TrackedRepository,
+    pull_request: &GitHubPullRequest,
+    synced_at: &str,
+) -> Result<PullRequestDto, PullRequestDataError>
+where
+    E: Executor<'e, Database = Sqlite>,
+{
+    sqlx::query(
+        "INSERT INTO tracked_repository_pull_requests (user_id, provider, owner, name, number, github_id, title, state, draft, author_login, html_url, created_at, updated_at, closed_at, merged_at, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, provider, owner, name, number) DO UPDATE SET github_id = excluded.github_id, title = excluded.title, state = excluded.state, draft = excluded.draft, author_login = excluded.author_login, html_url = excluded.html_url, created_at = excluded.created_at, updated_at = excluded.updated_at, closed_at = excluded.closed_at, merged_at = excluded.merged_at, synced_at = excluded.synced_at",
+    )
+    .bind(&repository.user_id)
+    .bind(GITHUB_PROVIDER)
+    .bind(&repository.owner)
+    .bind(&repository.name)
+    .bind(pull_request.number)
+    .bind(pull_request.id)
+    .bind(&pull_request.title)
+    .bind(&pull_request.state)
+    .bind(pull_request.draft)
+    .bind(pull_request.user.as_ref().map(|user| user.login.as_str()))
+    .bind(&pull_request.html_url)
+    .bind(&pull_request.created_at)
+    .bind(&pull_request.updated_at)
+    .bind(&pull_request.closed_at)
+    .bind(&pull_request.merged_at)
+    .bind(synced_at)
+    .execute(executor)
+    .await?;
+
+    Ok(PullRequestDto {
+        author_login: pull_request.user.as_ref().map(|user| user.login.clone()),
+        closed_at: pull_request.closed_at.clone(),
+        created_at: pull_request.created_at.clone(),
+        draft: pull_request.draft,
+        github_id: pull_request.id,
+        html_url: pull_request.html_url.clone(),
+        merged_at: pull_request.merged_at.clone(),
+        number: pull_request.number,
+        state: pull_request.state.clone(),
+        synced_at: synced_at.to_string(),
+        title: pull_request.title.clone(),
+        updated_at: pull_request.updated_at.clone(),
+    })
+}
+
+async fn upsert_pull_request_detail<'e, E>(
+    executor: E,
     repository: &TrackedRepository,
     number: i64,
     detail: &PullRequestDetailSnapshot,
     synced_at: &str,
-) -> Result<PullRequestDetailDto, PullRequestDataError> {
+) -> Result<PullRequestDetailDto, PullRequestDataError>
+where
+    E: Executor<'e, Database = Sqlite>,
+{
     let files_json = serde_json::to_string(&detail.files)?;
     let commits_json = serde_json::to_string(&detail.commits)?;
     let reviews_json = serde_json::to_string(&detail.reviews)?;
@@ -943,7 +1002,7 @@ async fn upsert_pull_request_detail(
     .bind(&statuses_json)
     .bind(&detail.diff)
     .bind(synced_at)
-    .execute(db)
+    .execute(executor)
     .await?;
 
     Ok(PullRequestDetailDto {
@@ -1112,6 +1171,11 @@ struct PullRequestDetailSnapshot {
     timeline: Vec<PullRequestTimelineEventDto>,
 }
 
+struct PullRequestSyncSnapshot {
+    detail: PullRequestDetailSnapshot,
+    pull_request: GitHubPullRequest,
+}
+
 #[derive(sqlx::FromRow)]
 struct PullRequestDetailRow {
     check_runs_json: String,
@@ -1216,6 +1280,8 @@ struct GitHubUser {
 #[derive(Deserialize)]
 struct GitHubPullRequestDetail {
     head: GitHubPullRequestHead,
+    #[serde(flatten)]
+    pull_request: GitHubPullRequest,
 }
 
 #[derive(Deserialize)]
@@ -1498,10 +1564,18 @@ mod tests {
             }
 
             Json(serde_json::json!({
+                "closed_at": null,
+                "created_at": "2026-01-01T00:00:00Z",
+                "draft": false,
                 "head": { "sha": "head-sha" },
                 "html_url": "https://github.com/kestrel/app/pull/42",
+                "id": 1042,
+                "merged_at": null,
                 "number": 42,
-                "title": "Add syncing"
+                "state": "open",
+                "title": "Add syncing",
+                "updated_at": "2026-01-02T00:00:00Z",
+                "user": { "login": "octocat" }
             }))
             .into_response()
         }
@@ -1918,12 +1992,15 @@ mod tests {
             user_id: "user_1".to_string(),
         };
 
-        let detail =
+        let snapshot =
             fetch_github_pull_request_detail(&state, "installation_token", &repository, 42)
                 .await
                 .expect("pull request detail should fetch from mock GitHub API");
 
         server.abort();
+        assert_eq!(snapshot.pull_request.title, "Add syncing");
+        assert_eq!(snapshot.pull_request.state, "open");
+        let detail = snapshot.detail;
         assert_eq!(detail.files[0].filename, "app.rs");
         assert_eq!(detail.commits[0].sha, "head-sha");
         assert_eq!(detail.commits[0].message, "Add syncing");

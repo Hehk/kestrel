@@ -140,6 +140,7 @@ export type Msg =
       detail: PullRequestDetail;
       kind: "PullRequestDetailSynced";
       number: number;
+      pullRequest: PullRequest;
       repository: Repository;
     }
   | {
@@ -315,10 +316,19 @@ export const update = (ctx: UpdateContext, msg: Msg, state: State): State => {
       });
     }
     case "PullRequestDetailSynced": {
-      return setPullRequestDetailState(state, msg.repository, msg.number, {
+      const nextState = setPullRequestDetailState(state, msg.repository, msg.number, {
         detail: msg.detail,
         error: null,
         status: "loaded",
+      });
+      const pullRequests = nextState.pullRequests.get(msg.repository.fullName);
+      if (pullRequests === undefined) {
+        return nextState;
+      }
+
+      return setPullRequestsState(nextState, msg.repository, {
+        ...pullRequests,
+        pullRequests: upsertPullRequests(pullRequests.pullRequests, [msg.pullRequest]),
       });
     }
     case "PullRequestDetailSyncFailed": {
@@ -452,7 +462,13 @@ const syncPullRequestDetail = async (
     return;
   }
 
-  send({ detail: data.pullRequestDetail, kind: "PullRequestDetailSynced", number, repository });
+  send({
+    detail: data.pullRequestDetail,
+    kind: "PullRequestDetailSynced",
+    number,
+    pullRequest: data.pullRequest,
+    repository,
+  });
 };
 
 const addError = (error: { error?: unknown } | undefined): AddError => {

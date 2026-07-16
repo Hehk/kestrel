@@ -34,6 +34,20 @@ const pullRequest = (
   };
 };
 
+const pullRequestDetail = (): Repositories.PullRequestDetail => ({
+  checkRuns: [],
+  commits: [],
+  diff: null,
+  files: [],
+  issueComments: [],
+  reviewComments: [],
+  reviewDecision: "APPROVED",
+  reviews: [],
+  statuses: [],
+  syncedAt: "2026-01-04T00:00:00Z",
+  timeline: [],
+});
+
 const update = (state: Repositories.State, msg: Repositories.Msg) => {
   const cmds: Repositories.Cmd[] = [];
   const nextState = Repositories.update(
@@ -198,6 +212,32 @@ describe("repositoriesSlice", () => {
     expect(result.cmds).toEqual([]);
   });
 
+  it("updates the current pull request summary and detail together", () => {
+    const repo = repository("kestrel/app");
+    const oldPullRequest = pullRequest(42);
+    const updatedPullRequest = { ...oldPullRequest, state: "closed", title: "Updated PR" };
+    const state = update(loadedState([repo]), {
+      kind: "PullRequestsLoaded",
+      pullRequests: [oldPullRequest],
+      repository: repo,
+    }).state;
+
+    const result = update(state, {
+      detail: pullRequestDetail(),
+      kind: "PullRequestDetailSynced",
+      number: 42,
+      pullRequest: updatedPullRequest,
+      repository: repo,
+    });
+
+    expect(result.state.pullRequests.get(repo.fullName)?.pullRequests.toArray()).toEqual([
+      updatedPullRequest,
+    ]);
+    expect(
+      result.state.pullRequestDetails.get(Repositories.pullRequestDetailKey(repo, 42)),
+    ).toEqual({ detail: pullRequestDetail(), error: null, status: "loaded" });
+  });
+
   it("loads repositories from the backend", async () => {
     const repositories = [repository("kestrel/app")];
     vi.stubGlobal(
@@ -244,6 +284,35 @@ describe("repositoriesSlice", () => {
     await waitFor(() =>
       expect(messages).toEqual([
         { error: "authorizationRequired", kind: "PullRequestsSyncFailed", repository: repo },
+      ]),
+    );
+  });
+
+  it("returns summary and detail data when syncing one pull request", async () => {
+    const repo = repository("kestrel/app");
+    const syncedPullRequest = pullRequest(42);
+    const detail = pullRequestDetail();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ pullRequest: syncedPullRequest, pullRequestDetail: detail }),
+      ),
+    );
+    const messages: Repositories.Msg[] = [];
+
+    Repositories.runCmd({ kind: "SyncPullRequestDetail", number: 42, repository: repo }, (msg) =>
+      messages.push(msg),
+    );
+
+    await waitFor(() =>
+      expect(messages).toEqual([
+        {
+          detail,
+          kind: "PullRequestDetailSynced",
+          number: 42,
+          pullRequest: syncedPullRequest,
+          repository: repo,
+        },
       ]),
     );
   });

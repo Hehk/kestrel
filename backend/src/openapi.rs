@@ -7,7 +7,8 @@ use crate::{
         ListPullRequestsResponse, PullRequestCheckRunDto, PullRequestCommentDto,
         PullRequestCommitDto, PullRequestDetailDto, PullRequestDetailResponse, PullRequestDto,
         PullRequestErrorCode, PullRequestErrorResponse, PullRequestFileDto, PullRequestReviewDto,
-        PullRequestStatusDto, PullRequestTimelineEventDto, SyncPullRequestsResponse,
+        PullRequestStatusDto, PullRequestTimelineEventDto, SyncPullRequestResponse,
+        SyncPullRequestsResponse,
     },
     repositories::{
         CreateRepositoryRequest, CreateRepositoryResponse, ListRepositoriesResponse, RepositoryDto,
@@ -64,6 +65,7 @@ use crate::{
         RepositoryErrorCode,
         RepositoryErrorResponse,
         SettingsResponse,
+        SyncPullRequestResponse,
         SyncPullRequestsResponse,
         Theme,
         UpdateSettingsRequest,

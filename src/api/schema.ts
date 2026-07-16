@@ -330,6 +330,10 @@ export interface components {
     SettingsResponse: {
       theme: components["schemas"]["Theme"];
     };
+    SyncPullRequestResponse: {
+      pullRequest: components["schemas"]["PullRequestDto"];
+      pullRequestDetail: components["schemas"]["PullRequestDetailDto"];
+    };
     SyncPullRequestsResponse: {
       complete: boolean;
       /** Format: int64 */
@@ -774,13 +778,13 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Pull request detail synced */
+      /** @description Pull request synced */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["PullRequestDetailResponse"];
+          "application/json": components["schemas"]["SyncPullRequestResponse"];
         };
       };
       /** @description Invalid repository or pull request */
