@@ -5,4 +5,4 @@ CREATE TABLE tracked_repositories (
     name TEXT NOT NULL,
     created_at TEXT NOT NULL,
     PRIMARY KEY (user_id, provider, owner, name)
-);
+) STRICT;

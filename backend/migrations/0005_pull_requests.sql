@@ -21,7 +21,7 @@ CREATE TABLE tracked_repository_pull_requests (
     synced_at TEXT NOT NULL,
     PRIMARY KEY (user_id, provider, owner, name, number),
     FOREIGN KEY (user_id, provider, owner, name) REFERENCES tracked_repositories(user_id, provider, owner, name) ON DELETE CASCADE
-);
+) STRICT;
 
 CREATE INDEX tracked_repository_pull_requests_repo_idx ON tracked_repository_pull_requests(user_id, provider, owner, name);
 CREATE INDEX tracked_repository_pull_requests_updated_at_idx ON tracked_repository_pull_requests(updated_at);

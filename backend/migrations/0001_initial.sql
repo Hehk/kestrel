@@ -4,7 +4,7 @@ CREATE TABLE users (
     avatar_url TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
-);
+) STRICT;
 
 CREATE TABLE oauth_accounts (
     id TEXT PRIMARY KEY,
@@ -19,7 +19,7 @@ CREATE TABLE oauth_accounts (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     UNIQUE(provider, provider_user_id)
-);
+) STRICT;
 
 CREATE INDEX oauth_accounts_user_id_idx ON oauth_accounts(user_id);
 
@@ -29,7 +29,7 @@ CREATE TABLE sessions (
     token_hash TEXT NOT NULL UNIQUE,
     expires_at TEXT NOT NULL,
     created_at TEXT NOT NULL
-);
+) STRICT;
 
 CREATE INDEX sessions_user_id_idx ON sessions(user_id);
 CREATE INDEX sessions_expires_at_idx ON sessions(expires_at);
@@ -39,4 +39,4 @@ CREATE TABLE user_settings (
     theme TEXT NOT NULL DEFAULT 'system' CHECK (theme IN ('system', 'light', 'dark')),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
-);
+) STRICT;

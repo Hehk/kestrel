@@ -7,6 +7,8 @@ use sqlx::{
 
 use crate::config::Config;
 
+static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
+
 pub async fn connect(config: &Config) -> Result<SqlitePool, DbError> {
     ensure_sqlite_parent_dir(&config.database_url)?;
 
@@ -20,7 +22,7 @@ pub async fn connect(config: &Config) -> Result<SqlitePool, DbError> {
 }
 
 pub async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::migrate::MigrateError> {
-    sqlx::migrate!("./migrations").run(pool).await
+    MIGRATOR.run(pool).await
 }
 
 pub async fn health_check(pool: &SqlitePool) -> Result<(), sqlx::Error> {
@@ -79,3 +81,73 @@ impl std::fmt::Display for DbError {
 }
 
 impl std::error::Error for DbError {}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use sqlx::{
+        migrate::Migrate,
+        sqlite::{SqliteConnectOptions, SqliteConnection},
+        Connection,
+    };
+
+    use super::MIGRATOR;
+
+    #[tokio::test]
+    async fn all_application_tables_are_strict_after_each_migration() {
+        let options = SqliteConnectOptions::from_str("sqlite::memory:")
+            .expect("in-memory SQLite options should parse")
+            .foreign_keys(true);
+        let mut connection = SqliteConnection::connect_with(&options)
+            .await
+            .expect("in-memory SQLite should connect");
+
+        connection
+            .ensure_migrations_table()
+            .await
+            .expect("SQLx migration metadata table should be created");
+
+        for migration in MIGRATOR
+            .iter()
+            .filter(|migration| migration.migration_type.is_up_migration())
+        {
+            connection
+                .apply(migration)
+                .await
+                .unwrap_or_else(|error| panic!("migration {} failed: {error}", migration.version));
+
+            let non_strict_tables = sqlx::query_scalar::<_, String>(
+                "SELECT name FROM pragma_table_list WHERE schema = 'main' AND type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> '_sqlx_migrations' AND strict = 0 ORDER BY name",
+            )
+            .fetch_all(&mut connection)
+            .await
+            .unwrap_or_else(|error| {
+                panic!(
+                    "failed to inspect schema after migration {}: {error}",
+                    migration.version
+                )
+            });
+
+            assert!(
+                non_strict_tables.is_empty(),
+                "migration {} left non-STRICT application tables: {}",
+                migration.version,
+                non_strict_tables.join(", ")
+            );
+        }
+
+        let integrity_check = sqlx::query_scalar::<_, String>("PRAGMA integrity_check")
+            .fetch_one(&mut connection)
+            .await
+            .expect("SQLite integrity check should run");
+        assert_eq!(integrity_check, "ok");
+
+        let foreign_key_violations =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM pragma_foreign_key_check")
+                .fetch_one(&mut connection)
+                .await
+                .expect("SQLite foreign key check should run");
+        assert_eq!(foreign_key_violations, 0);
+    }
+}
