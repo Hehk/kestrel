@@ -259,6 +259,7 @@ export interface components {
       files: components["schemas"]["PullRequestFileDto"][];
       issueComments: components["schemas"]["PullRequestCommentDto"][];
       reviewComments: components["schemas"]["PullRequestCommentDto"][];
+      reviewDecision?: string | null;
       reviews: components["schemas"]["PullRequestReviewDto"][];
       statuses: components["schemas"]["PullRequestStatusDto"][];
       syncedAt: string;

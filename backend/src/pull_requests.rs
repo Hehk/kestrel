@@ -123,6 +123,7 @@ pub struct PullRequestDetailDto {
     pub files: Vec<PullRequestFileDto>,
     pub issue_comments: Vec<PullRequestCommentDto>,
     pub review_comments: Vec<PullRequestCommentDto>,
+    pub review_decision: Option<String>,
     pub reviews: Vec<PullRequestReviewDto>,
     pub statuses: Vec<PullRequestStatusDto>,
     pub synced_at: String,
@@ -532,7 +533,7 @@ async fn load_pull_request_detail(
     number: i64,
 ) -> Result<Option<PullRequestDetailDto>, PullRequestDataError> {
     let row = sqlx::query_as::<_, PullRequestDetailRow>(
-        "SELECT files_json, commits_json, reviews_json, review_comments_json, issue_comments_json, timeline_json, check_runs_json, statuses_json, diff, synced_at FROM tracked_repository_pull_request_details WHERE user_id = ? AND provider = ? AND owner = ? AND name = ? AND number = ?",
+        "SELECT files_json, commits_json, reviews_json, review_comments_json, review_decision, issue_comments_json, timeline_json, check_runs_json, statuses_json, diff, synced_at FROM tracked_repository_pull_request_details WHERE user_id = ? AND provider = ? AND owner = ? AND name = ? AND number = ?",
     )
     .bind(&repository.user_id)
     .bind(GITHUB_PROVIDER)
@@ -656,6 +657,7 @@ async fn fetch_github_pull_request_detail(
     );
     let pull_request: GitHubPullRequestDetail =
         fetch_github_json(state, token, &pull_request_url).await?;
+    let review_decision = fetch_github_review_decision(state, token, repository, number).await?;
     let files: Vec<GitHubPullRequestFile> =
         fetch_github_json(state, token, &format!("{pull_request_url}/files")).await?;
     let commits: Vec<GitHubPullRequestCommit> =
@@ -732,6 +734,7 @@ async fn fetch_github_pull_request_detail(
             .into_iter()
             .map(PullRequestCommentDto::from)
             .collect(),
+        review_decision,
         reviews: reviews
             .into_iter()
             .map(PullRequestReviewDto::from)
@@ -746,6 +749,64 @@ async fn fetch_github_pull_request_detail(
             .map(PullRequestTimelineEventDto::from)
             .collect(),
     })
+}
+
+async fn fetch_github_review_decision(
+    state: &AppState,
+    token: &str,
+    repository: &TrackedRepository,
+    number: i64,
+) -> Result<Option<String>, PullRequestDataError> {
+    let response = state
+        .http_client
+        .post(format!(
+            "{}/graphql",
+            state.config.github_api_url.trim_end_matches('/')
+        ))
+        .bearer_auth(token)
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", USER_AGENT)
+        .json(&serde_json::json!({
+            "query": "query PullRequestReviewDecision($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewDecision } } }",
+            "variables": {
+                "owner": repository.owner,
+                "name": repository.name,
+                "number": number,
+            }
+        }))
+        .send()
+        .await?;
+    if response.status() == ReqwestStatusCode::FORBIDDEN
+        || response.status() == ReqwestStatusCode::NOT_FOUND
+    {
+        return Err(PullRequestDataError::GitHubAccessDenied);
+    }
+
+    let response = response
+        .error_for_status()?
+        .json::<GitHubReviewDecisionResponse>()
+        .await?;
+    if !response.errors.is_empty() {
+        return Err(PullRequestDataError::GitHubGraphQl(
+            response
+                .errors
+                .into_iter()
+                .map(|error| error.message)
+                .collect::<Vec<_>>()
+                .join("; "),
+        ));
+    }
+
+    response
+        .data
+        .and_then(|data| data.repository)
+        .and_then(|repository| repository.pull_request)
+        .map(|pull_request| pull_request.review_decision)
+        .ok_or_else(|| {
+            PullRequestDataError::GitHubGraphQl(
+                "GitHub GraphQL response did not include the pull request".to_string(),
+            )
+        })
 }
 
 async fn fetch_github_json<T: DeserializeOwned>(
@@ -859,7 +920,7 @@ async fn upsert_pull_request_detail(
     let statuses_json = serde_json::to_string(&detail.statuses)?;
 
     sqlx::query(
-        "INSERT INTO tracked_repository_pull_request_details (user_id, provider, owner, name, number, files_json, commits_json, reviews_json, review_comments_json, issue_comments_json, timeline_json, check_runs_json, statuses_json, diff, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, provider, owner, name, number) DO UPDATE SET files_json = excluded.files_json, commits_json = excluded.commits_json, reviews_json = excluded.reviews_json, review_comments_json = excluded.review_comments_json, issue_comments_json = excluded.issue_comments_json, timeline_json = excluded.timeline_json, check_runs_json = excluded.check_runs_json, statuses_json = excluded.statuses_json, diff = excluded.diff, synced_at = excluded.synced_at",
+        "INSERT INTO tracked_repository_pull_request_details (user_id, provider, owner, name, number, files_json, commits_json, reviews_json, review_comments_json, review_decision, issue_comments_json, timeline_json, check_runs_json, statuses_json, diff, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, provider, owner, name, number) DO UPDATE SET files_json = excluded.files_json, commits_json = excluded.commits_json, reviews_json = excluded.reviews_json, review_comments_json = excluded.review_comments_json, review_decision = excluded.review_decision, issue_comments_json = excluded.issue_comments_json, timeline_json = excluded.timeline_json, check_runs_json = excluded.check_runs_json, statuses_json = excluded.statuses_json, diff = excluded.diff, synced_at = excluded.synced_at",
     )
     .bind(&repository.user_id)
     .bind(GITHUB_PROVIDER)
@@ -870,6 +931,7 @@ async fn upsert_pull_request_detail(
     .bind(&commits_json)
     .bind(&reviews_json)
     .bind(&review_comments_json)
+    .bind(&detail.review_decision)
     .bind(&issue_comments_json)
     .bind(&timeline_json)
     .bind(&check_runs_json)
@@ -886,6 +948,7 @@ async fn upsert_pull_request_detail(
         files: detail.files.clone(),
         issue_comments: detail.issue_comments.clone(),
         review_comments: detail.review_comments.clone(),
+        review_decision: detail.review_decision.clone(),
         reviews: detail.reviews.clone(),
         statuses: detail.statuses.clone(),
         synced_at: synced_at.to_string(),
@@ -954,6 +1017,7 @@ enum PullRequestSyncError {
 enum PullRequestDataError {
     GitHubAccessDenied,
     GitHubApp(github_app::GitHubAppError),
+    GitHubGraphQl(String),
     Reqwest(reqwest::Error),
     Serde(serde_json::Error),
     Sql(sqlx::Error),
@@ -995,6 +1059,7 @@ impl std::fmt::Display for PullRequestDataError {
         match self {
             Self::GitHubAccessDenied => write!(f, "GitHub App cannot access repository"),
             Self::GitHubApp(error) => write!(f, "GitHub App operation failed: {error}"),
+            Self::GitHubGraphQl(error) => write!(f, "GitHub GraphQL operation failed: {error}"),
             Self::Reqwest(error) => write!(f, "GitHub pull request HTTP request failed: {error}"),
             Self::Serde(error) => write!(f, "pull request JSON operation failed: {error}"),
             Self::Sql(error) => write!(f, "pull request database operation failed: {error}"),
@@ -1036,6 +1101,7 @@ struct PullRequestDetailSnapshot {
     files: Vec<PullRequestFileDto>,
     issue_comments: Vec<PullRequestCommentDto>,
     review_comments: Vec<PullRequestCommentDto>,
+    review_decision: Option<String>,
     reviews: Vec<PullRequestReviewDto>,
     statuses: Vec<PullRequestStatusDto>,
     timeline: Vec<PullRequestTimelineEventDto>,
@@ -1049,6 +1115,7 @@ struct PullRequestDetailRow {
     files_json: String,
     issue_comments_json: String,
     review_comments_json: String,
+    review_decision: Option<String>,
     reviews_json: String,
     statuses_json: String,
     synced_at: String,
@@ -1064,6 +1131,7 @@ impl PullRequestDetailRow {
             files: serde_json::from_str(&self.files_json)?,
             issue_comments: serde_json::from_str(&self.issue_comments_json)?,
             review_comments: serde_json::from_str(&self.review_comments_json)?,
+            review_decision: self.review_decision,
             reviews: serde_json::from_str(&self.reviews_json)?,
             statuses: serde_json::from_str(&self.statuses_json)?,
             synced_at: self.synced_at,
@@ -1089,6 +1157,35 @@ impl PullRequestRow {
             updated_at: self.updated_at,
         }
     }
+}
+
+#[derive(Deserialize)]
+struct GitHubReviewDecisionResponse {
+    data: Option<GitHubReviewDecisionData>,
+    #[serde(default)]
+    errors: Vec<GitHubGraphQlError>,
+}
+
+#[derive(Deserialize)]
+struct GitHubReviewDecisionData {
+    repository: Option<GitHubReviewDecisionRepository>,
+}
+
+#[derive(Deserialize)]
+struct GitHubReviewDecisionRepository {
+    #[serde(rename = "pullRequest")]
+    pull_request: Option<GitHubReviewDecisionPullRequest>,
+}
+
+#[derive(Deserialize)]
+struct GitHubReviewDecisionPullRequest {
+    #[serde(rename = "reviewDecision")]
+    review_decision: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct GitHubGraphQlError {
+    message: String,
 }
 
 #[derive(Deserialize)]
@@ -1270,7 +1367,7 @@ mod tests {
         extract::Query,
         http::{header, HeaderMap, Request, StatusCode},
         response::IntoResponse,
-        routing::get,
+        routing::{get, post},
         Json, Router,
     };
     use base64::{engine::general_purpose::STANDARD, Engine};
@@ -1357,6 +1454,23 @@ mod tests {
     }
 
     async fn mock_github_detail_api() -> (String, tokio::task::JoinHandle<()>) {
+        async fn graphql(Json(body): Json<Value>) -> Json<Value> {
+            assert!(body["query"]
+                .as_str()
+                .is_some_and(|query| query.contains("reviewDecision")));
+            assert_eq!(body["variables"]["owner"], "kestrel");
+            assert_eq!(body["variables"]["name"], "app");
+            assert_eq!(body["variables"]["number"], 42);
+
+            Json(serde_json::json!({
+                "data": {
+                    "repository": {
+                        "pullRequest": { "reviewDecision": "APPROVED" }
+                    }
+                }
+            }))
+        }
+
         async fn pull(headers: HeaderMap) -> axum::response::Response {
             if headers
                 .get(header::ACCEPT)
@@ -1469,6 +1583,7 @@ mod tests {
             .local_addr()
             .expect("mock GitHub address should load");
         let app = Router::new()
+            .route("/graphql", post(graphql))
             .route("/repos/kestrel/app/pulls/42", get(pull))
             .route("/repos/kestrel/app/pulls/42/files", get(files))
             .route("/repos/kestrel/app/pulls/42/commits", get(commits))
@@ -1796,6 +1911,7 @@ mod tests {
         assert_eq!(detail.commits[0].sha, "head-sha");
         assert_eq!(detail.commits[0].message, "Add syncing");
         assert_eq!(detail.reviews[0].state, "APPROVED");
+        assert_eq!(detail.review_decision.as_deref(), Some("APPROVED"));
         assert_eq!(detail.review_comments[0].body.as_deref(), Some("nit"));
         assert_eq!(detail.issue_comments[0].body.as_deref(), Some("looks good"));
         assert_eq!(detail.timeline[0].event, "committed");
@@ -1949,6 +2065,7 @@ mod tests {
                 author_login: Some("reviewer".to_string()),
                 state: "APPROVED".to_string(),
             }],
+            review_decision: Some("CHANGES_REQUESTED".to_string()),
             statuses: vec![PullRequestStatusDto {
                 context: "ci".to_string(),
                 description: Some("Build passed".to_string()),
@@ -1973,6 +2090,8 @@ mod tests {
         assert_eq!(saved.commits[0].message, "Add syncing");
         assert_eq!(loaded.files[0].filename, "app.rs");
         assert_eq!(loaded.issue_comments[0].body.as_deref(), Some("ship it"));
+        assert_eq!(saved.review_decision.as_deref(), Some("CHANGES_REQUESTED"));
+        assert_eq!(loaded.review_decision.as_deref(), Some("CHANGES_REQUESTED"));
         assert_eq!(
             loaded.check_runs[0].summary.as_deref(),
             Some("All test suites completed successfully.")

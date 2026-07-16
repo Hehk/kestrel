@@ -107,12 +107,13 @@ const PullRequestPage = ({ repo, id }: { repo: string; id: string }) => {
   const pullRequestDetail = repositories.pullRequestDetails.get(
     Repositories.pullRequestDetailKey(repository, number),
   );
+  const details = getDetails(pullRequestDetail);
 
   return (
     <div className="PullRequestPage">
-      <aside aria-label="Pull request details" className="PullRequestPage-leftSidebar">
-        <PullRequestChecks details={getDetails(pullRequestDetail)} />
-        <PullRequestMetadata pullRequest={pullRequest} repository={repository} />
+      <aside aria-label="Pull request status" className="PullRequestPage-leftSidebar">
+        <PullRequestChecks details={details} />
+        <PullRequestReviewStatus details={details} />
       </aside>
       <section className="PullRequestPage-content">
         <h1 className="PullRequestPage-title">{pullRequest.title}</h1>
@@ -151,7 +152,11 @@ const PullRequestPage = ({ repo, id }: { repo: string; id: string }) => {
         </div>
         <PullRequestDetailPanel detailState={pullRequestDetail} />
       </section>
-      <aside aria-label="Pull request actions" className="PullRequestPage-rightSidebar" />
+      <aside aria-label="Pull request metadata" className="PullRequestPage-rightSidebar">
+        <PullRequestMetadata pullRequest={pullRequest} repository={repository} />
+        {details === undefined ? null : <PullRequestFiles files={details.files} />}
+        {details === undefined ? null : <PullRequestCommits commits={details.commits} />}
+      </aside>
     </div>
   );
 };
@@ -196,9 +201,6 @@ const PullRequestDetailPanel = ({
     <div className="pr-detail-sections">
       {detailState.status === "error" ? <PullRequestDetailError error={detailState.error} /> : null}
       <p className="repo-pr-status">Details synced: {detail.syncedAt}</p>
-      <PullRequestFiles files={detail.files} />
-      <PullRequestCommits commits={detail.commits} />
-      <PullRequestReviews reviews={detail.reviews} />
       <PullRequestComments title="Review comments" comments={detail.reviewComments} />
       <PullRequestComments title="Conversation comments" comments={detail.issueComments} />
       <PullRequestTimeline timeline={detail.timeline} />
@@ -227,16 +229,24 @@ const PullRequestDetailError = ({ error }: { error: Repositories.PullRequestsErr
 
 const PullRequestFiles = ({ files }: { files: Repositories.PullRequestDetail["files"] }) => {
   return (
-    <PullRequestSection count={files.length} title="Files changed">
-      <ul className="pr-detail-list">
-        {files.map((file, index) => (
-          <li key={index}>
-            <span>{file.filename}</span>
-            <span className="repo-pr-meta">{file.status}</span>
-          </li>
-        ))}
-      </ul>
-    </PullRequestSection>
+    <section className="pr-sidebar-section">
+      <header className="pr-sidebar-header">
+        <h2 className="pr-sidebar-title">Files changed</h2>
+        <span className="pr-sidebar-count">{files.length}</span>
+      </header>
+      {files.length === 0 ? (
+        <p className="pr-sidebar-empty">None stored.</p>
+      ) : (
+        <ul className="pr-sidebar-list">
+          {files.map((file, index) => (
+            <li className="pr-sidebar-data-row" key={index}>
+              <span className="pr-sidebar-data-primary">{file.filename}</span>
+              <span className="pr-sidebar-data-secondary">{file.status}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 };
 
@@ -246,35 +256,24 @@ const PullRequestCommits = ({
   commits: Repositories.PullRequestDetail["commits"];
 }) => {
   return (
-    <PullRequestSection count={commits.length} title="Commits">
-      <ul className="pr-detail-list">
-        {commits.map((commit, index) => (
-          <li key={index}>
-            <span>{commit.message}</span>
-            <span className="repo-pr-meta">{commit.sha.slice(0, 7)}</span>
-          </li>
-        ))}
-      </ul>
-    </PullRequestSection>
-  );
-};
-
-const PullRequestReviews = ({
-  reviews,
-}: {
-  reviews: Repositories.PullRequestDetail["reviews"];
-}) => {
-  return (
-    <PullRequestSection count={reviews.length} title="Reviews">
-      <ul className="pr-detail-list">
-        {reviews.map((review, index) => (
-          <li key={index}>
-            <span>{review.authorLogin ?? "Unknown reviewer"}</span>
-            <span className="repo-pr-meta">{review.state}</span>
-          </li>
-        ))}
-      </ul>
-    </PullRequestSection>
+    <section className="pr-sidebar-section">
+      <header className="pr-sidebar-header">
+        <h2 className="pr-sidebar-title">Commits</h2>
+        <span className="pr-sidebar-count">{commits.length}</span>
+      </header>
+      {commits.length === 0 ? (
+        <p className="pr-sidebar-empty">None stored.</p>
+      ) : (
+        <ul className="pr-sidebar-list">
+          {commits.map((commit, index) => (
+            <li className="pr-sidebar-data-row" key={index}>
+              <span className="pr-sidebar-data-primary">{commit.message}</span>
+              <span className="pr-sidebar-data-secondary">{commit.sha.slice(0, 7)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 };
 
@@ -403,6 +402,51 @@ const PullRequestMetadata = ({
       </dl>
     </section>
   );
+};
+
+const PullRequestReviewStatus = ({ details }: { details: ReturnType<typeof getDetails> }) => {
+  const decision = reviewDecisionPresentation(details);
+
+  return (
+    <section className="pr-sidebar-section pr-sidebar-review">
+      <header className="pr-sidebar-header">
+        <h2 className="pr-sidebar-title">Review status</h2>
+      </header>
+      <p className="pr-review-decision" data-status-kind={decision.kind}>
+        <span className="pr-status-name" data-status-kind={decision.kind}>
+          {decision.label}
+        </span>
+        <span className="pr-status-icon">
+          {decision.kind === "success" ? <CheckIcon /> : null}
+          {decision.kind === "failure" ? <XIcon /> : null}
+          {decision.kind === "pending" ? <HourglassIcon /> : null}
+          {decision.kind === "neutral" ? <MinusIcon /> : null}
+        </span>
+      </p>
+    </section>
+  );
+};
+
+const reviewDecisionPresentation = (
+  details: ReturnType<typeof getDetails>,
+): { kind: StatusKind; label: string } => {
+  if (details === undefined) {
+    return { kind: "neutral", label: "Not loaded" };
+  }
+
+  switch (details.reviewDecision) {
+    case "APPROVED":
+      return { kind: "success", label: "Approved" };
+    case "CHANGES_REQUESTED":
+      return { kind: "failure", label: "Changes requested" };
+    case "REVIEW_REQUIRED":
+      return { kind: "pending", label: "Review required" };
+    case null:
+    case undefined:
+      return { kind: "neutral", label: "No decision" };
+    default:
+      return { kind: "neutral", label: statusLabel(details.reviewDecision) };
+  }
 };
 
 const formatLocalDateTime = (value: string) => {

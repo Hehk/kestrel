@@ -98,6 +98,7 @@ const pullRequestDetail = (): PullRequestDetail => {
     files: [{ filename: "app.rs", status: "modified" }],
     issueComments: [{ authorLogin: "octocat", body: "looks good" }],
     reviewComments: [{ authorLogin: "reviewer", body: "nit" }],
+    reviewDecision: "APPROVED",
     reviews: [{ authorLogin: "reviewer", state: "APPROVED" }],
     statuses: [
       {
@@ -406,7 +407,7 @@ describe("App", () => {
     await user.click(await screen.findByRole("link", { name: "#42 Add syncing" }));
 
     expect(screen.getByRole("heading", { name: "Add syncing" })).toBeInTheDocument();
-    const sidebar = screen.getByRole("complementary", { name: "Pull request details" });
+    const sidebar = screen.getByRole("complementary", { name: "Pull request metadata" });
     expect(within(sidebar).getByRole("heading", { name: "Details" })).toBeInTheDocument();
     expect(within(sidebar).getByText("kestrel/app")).toBeInTheDocument();
     expect(within(sidebar).getByText("#42")).toBeInTheDocument();
@@ -439,15 +440,63 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Sync details" }));
 
     expect(await screen.findByText("Details synced: 2026-01-04T00:00:00Z")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /Files changed/ })).toBeInTheDocument();
-    expect(screen.getByText("app.rs")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /Commits/ })).toBeInTheDocument();
-    expect(screen.getAllByText("Add syncing").length).toBeGreaterThan(1);
-    expect(screen.getByRole("heading", { name: /Reviews/ })).toBeInTheDocument();
-    expect(screen.getAllByText("reviewer").length).toBeGreaterThan(0);
+    const sidebar = screen.getByRole("complementary", { name: "Pull request metadata" });
+    const detailsHeading = within(sidebar).getByRole("heading", { name: "Details" });
+    const filesHeading = within(sidebar).getByRole("heading", { name: "Files changed" });
+    const commitsHeading = within(sidebar).getByRole("heading", { name: "Commits" });
+    expect(detailsHeading.compareDocumentPosition(filesHeading)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(filesHeading.compareDocumentPosition(commitsHeading)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(within(sidebar).getByText("app.rs")).toBeInTheDocument();
+    expect(within(sidebar).getByText("Add syncing")).toBeInTheDocument();
+
+    const content = screen
+      .getByRole("heading", { name: "Add syncing" })
+      .closest<HTMLElement>(".PullRequestPage-content");
+    expect(content).not.toBeNull();
+    expect(
+      within(content as HTMLElement).queryByRole("heading", { name: /Files changed/ }),
+    ).toBeNull();
+    expect(within(content as HTMLElement).queryByRole("heading", { name: /Commits/ })).toBeNull();
+    expect(within(content as HTMLElement).queryByRole("heading", { name: /Reviews/ })).toBeNull();
     expect(screen.getByRole("heading", { name: "Checks" })).toBeInTheDocument();
     expect(screen.getByText("test")).toBeInTheDocument();
     expect(screen.getByText("diff --git a/app.rs b/app.rs")).toBeInTheDocument();
+  });
+
+  it("renders the authoritative review decision at the bottom of the left sidebar", async () => {
+    window.history.replaceState({}, "", "/pull/kestrel%2Fapp/42");
+    mockAuth(
+      signedInResponse,
+      "system",
+      undefined,
+      [repository("kestrel/app")],
+      undefined,
+      { "kestrel/app": [pullRequest(42, "Add syncing")] },
+      undefined,
+      {
+        "kestrel/app#42": {
+          ...pullRequestDetail(),
+          reviewDecision: "CHANGES_REQUESTED",
+        },
+      },
+    );
+
+    renderApp();
+
+    const sidebar = await screen.findByRole("complementary", { name: "Pull request status" });
+    const checksHeading = within(sidebar).getByRole("heading", { name: "Checks" });
+    const reviewHeading = within(sidebar).getByRole("heading", { name: "Review status" });
+    expect(checksHeading.compareDocumentPosition(reviewHeading)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(within(sidebar).getByText("Changes requested")).toHaveAttribute(
+      "data-status-kind",
+      "failure",
+    );
   });
 
   it("renders check and status icons by state", async () => {
