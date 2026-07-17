@@ -117,7 +117,11 @@ const PullRequestPage = ({ repo, id }: { repo: string; id: string }) => {
         </aside>
         <section className="PullRequestPage-content">
           <h1 className="PullRequestPage-title">{pullRequest.title}</h1>
-          <PullRequestDetailPanel detailState={pullRequestDetail} />
+          <PullRequestDetailPanel
+            detailState={pullRequestDetail}
+            number={number}
+            repository={repository}
+          />
         </section>
         <aside aria-label="Pull request metadata" className="PullRequestPage-rightSidebar">
           <PullRequestMetadata pullRequest={pullRequest} repository={repository} />
@@ -156,6 +160,7 @@ const PullRequestActions = ({
   repository: Repositories.Repository;
 }) => {
   const loading = detailState?.status === "loading";
+  const loadingTimeline = detailState?.status === "loadingTimeline";
   const syncing = detailState?.status === "syncing";
   const syncedAt = detailState?.detail?.syncedAt;
 
@@ -191,7 +196,7 @@ const PullRequestActions = ({
           render={
             <button
               className="pr-sidebar-action"
-              disabled={loading || syncing}
+              disabled={loading || loadingTimeline || syncing}
               onClick={() =>
                 send({
                   kind: "Repositories",
@@ -237,8 +242,12 @@ const getDetails = (details: Repositories.PullRequestDetailState | undefined) =>
 
 const PullRequestDetailPanel = ({
   detailState,
+  number,
+  repository,
 }: {
   detailState: Repositories.PullRequestDetailState | undefined;
+  number: number;
+  repository: Repositories.Repository;
 }) => {
   if (detailState === undefined) {
     return <p className="repo-pr-status">Pull request details not loaded.</p>;
@@ -264,10 +273,13 @@ const PullRequestDetailPanel = ({
   return (
     <div className="pr-detail-sections">
       {detailState.status === "error" ? <PullRequestDetailError error={detailState.error} /> : null}
-      <PullRequestComments title="Review comments" comments={detail.reviewComments} />
-      <PullRequestComments title="Conversation comments" comments={detail.issueComments} />
-      <PullRequestTimeline timeline={detail.timeline} />
-      <PullRequestDiff diff={detail.diff} />
+      <PullRequestDescription body={detail.body} />
+      <PullRequestTimeline
+        detailState={detailState}
+        number={number}
+        repository={repository}
+        timeline={detail.timeline}
+      />
     </div>
   );
 };
@@ -340,44 +352,189 @@ const PullRequestCommits = ({
   );
 };
 
-const PullRequestComments = ({
-  comments,
-  title,
-}: {
-  comments: Repositories.PullRequestDetail["issueComments"];
-  title: string;
-}) => {
+const PullRequestDescription = ({ body }: { body?: string | null | undefined }) => {
   return (
-    <PullRequestSection count={comments.length} title={title}>
-      <ul className="pr-detail-list">
-        {comments.map((comment, index) => (
-          <li key={index}>
-            <span>{comment.body ?? "Comment"}</span>
-            <span className="repo-pr-meta">{comment.authorLogin ?? "unknown"}</span>
-          </li>
-        ))}
-      </ul>
-    </PullRequestSection>
+    <section aria-label="Pull request description" className="pr-description">
+      {body?.trim() ? <p>{body}</p> : <p className="repo-pr-status">No description provided.</p>}
+    </section>
   );
 };
 
 const PullRequestTimeline = ({
+  detailState,
+  number,
+  repository,
   timeline,
 }: {
+  detailState: Repositories.PullRequestDetailState;
+  number: number;
+  repository: Repositories.Repository;
   timeline: Repositories.PullRequestDetail["timeline"];
 }) => {
-  return (
-    <PullRequestSection count={timeline.length} title="Timeline">
-      <ul className="pr-detail-list">
-        {timeline.map((event, index) => (
-          <li key={index}>
-            <span>{event.event}</span>
-            <span className="repo-pr-meta">{event.actorLogin ?? "GitHub"}</span>
-          </li>
-        ))}
-      </ul>
-    </PullRequestSection>
+  const loadingOlder = detailState.status === "loadingTimeline";
+  const timelineError = detailState.status === "timelineError";
+  const legacyTimeline = timeline.some(
+    (event) => event.id === undefined && event.occurredAt === undefined,
   );
+
+  return (
+    <section
+      aria-labelledby="pull-request-activity-heading"
+      className="pr-detail-section pr-activity"
+    >
+      <header className="pr-activity-heading">
+        <h2 id="pull-request-activity-heading">Activity</h2>
+        <span className="repo-pr-meta">
+          {legacyTimeline ? "Stored activity; sync to refresh" : "Newest first"}
+        </span>
+      </header>
+      {timeline.length === 0 ? (
+        <p className="repo-pr-status">No activity stored.</p>
+      ) : (
+        <ol className="pr-activity-list">
+          {timeline.map((event, index) => (
+            <PullRequestTimelineItem
+              event={event}
+              key={event.id ?? `${event.event}-${event.occurredAt ?? index}`}
+            />
+          ))}
+        </ol>
+      )}
+      {timelineError ? (
+        <p className="repo-pr-status" role="alert">
+          Older activity could not be loaded. Try again.
+        </p>
+      ) : null}
+      {detailState.detail?.timelineHasOlder ? (
+        <button
+          aria-busy={loadingOlder}
+          className="pr-activity-load-older"
+          disabled={loadingOlder}
+          onClick={() =>
+            send({
+              kind: "Repositories",
+              msg: { kind: "PullRequestTimelineOlderRequested", number, repository },
+            })
+          }
+          type="button"
+        >
+          {loadingOlder ? "Loading older activity..." : "Load older activity"}
+        </button>
+      ) : null}
+    </section>
+  );
+};
+
+type TimelineEvent = Repositories.PullRequestDetail["timeline"][number];
+
+const PullRequestTimelineItem = ({ event }: { event: TimelineEvent }) => {
+  const action = timelineAction(event);
+  const actor = event.actorLogin ?? "GitHub";
+  const reviewComments = event.reviewComments ?? [];
+
+  return (
+    <li className="pr-activity-item">
+      <div className="pr-activity-item-heading">
+        <span>
+          <strong>{actor}</strong>{" "}
+          {event.url ? (
+            <a href={event.url} rel="noreferrer" target="_blank">
+              {action}
+            </a>
+          ) : (
+            action
+          )}
+        </span>
+        {event.occurredAt ? (
+          <time className="repo-pr-meta" dateTime={event.occurredAt}>
+            {formatLocalDateTime(event.occurredAt)}
+          </time>
+        ) : null}
+      </div>
+      {event.body ? <p className="pr-activity-body">{event.body}</p> : null}
+      {reviewComments.length === 0 ? null : (
+        <ul aria-label="Review comments" className="pr-activity-review-comments">
+          {reviewComments.map((comment, index) => (
+            <li key={comment.id ?? `${comment.actorLogin ?? "github"}-${index}`}>
+              <div className="pr-activity-review-comment-heading">
+                <strong>{comment.actorLogin ?? "GitHub"}</strong>
+                {comment.occurredAt ? (
+                  <time className="repo-pr-meta" dateTime={comment.occurredAt}>
+                    {formatLocalDateTime(comment.occurredAt)}
+                  </time>
+                ) : null}
+              </div>
+              {comment.body ? <p className="pr-activity-body">{comment.body}</p> : null}
+            </li>
+          ))}
+        </ul>
+      )}
+    </li>
+  );
+};
+
+const timelineAction = (event: TimelineEvent) => {
+  switch (event.event) {
+    case "commented":
+      return "commented";
+    case "committed":
+      return event.commitSha ? `committed ${event.commitSha.slice(0, 7)}` : "committed";
+    case "reviewed":
+      return reviewAction(event.state);
+    case "closed":
+      return "closed the pull request";
+    case "reopened":
+      return "reopened the pull request";
+    case "merged":
+      return "merged the pull request";
+    case "ready_for_review":
+      return "marked the pull request ready for review";
+    case "converted_to_draft":
+      return "converted the pull request to draft";
+    case "review_requested":
+      return event.title ? `requested a review from ${event.title}` : "requested a review";
+    case "review_request_removed":
+      return event.title
+        ? `removed the review request for ${event.title}`
+        : "removed a review request";
+    case "review_dismissed":
+      return "dismissed a review";
+    case "head_ref_force_pushed":
+      return "force-pushed the head branch";
+    case "base_ref_force_pushed":
+      return "force-pushed the base branch";
+    case "head_ref_deleted":
+      return event.title ? `deleted the ${event.title} branch` : "deleted the head branch";
+    case "head_ref_restored":
+      return "restored the head branch";
+    default:
+      return event.title ? humanizeEvent(event.title) : humanizeEvent(event.event);
+  }
+};
+
+const reviewAction = (state?: string | null | undefined) => {
+  switch (state) {
+    case "APPROVED":
+      return "approved the pull request";
+    case "CHANGES_REQUESTED":
+      return "requested changes";
+    case "COMMENTED":
+      return "reviewed with comments";
+    case "DISMISSED":
+      return "submitted a dismissed review";
+    default:
+      return "submitted a review";
+  }
+};
+
+const humanizeEvent = (event: string) => {
+  const label = event
+    .replace(/Event$/, "")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replaceAll("_", " ")
+    .trim()
+    .toLowerCase();
+  return label === "" ? "updated the pull request" : label;
 };
 
 const PullRequestChecks = ({ details }: { details: ReturnType<typeof getDetails> }) => {
@@ -608,38 +765,6 @@ const PullRequestStatusIcon = ({
         </Tooltip.Positioner>
       </Tooltip.Portal>
     </Tooltip.Root>
-  );
-};
-
-const PullRequestDiff = ({ diff }: { diff?: string | null | undefined }) => {
-  return (
-    <PullRequestSection title="Diff">
-      {diff ? (
-        <pre className="pr-diff">{diff}</pre>
-      ) : (
-        <p className="repo-pr-status">No diff stored.</p>
-      )}
-    </PullRequestSection>
-  );
-};
-
-const PullRequestSection = ({
-  children,
-  count,
-  title,
-}: {
-  children: ReactNode;
-  count?: number;
-  title: string;
-}) => {
-  return (
-    <section className="pr-detail-section">
-      <h2>
-        {title}
-        {count === undefined ? null : <span className="repo-pr-meta"> {count}</span>}
-      </h2>
-      {count === 0 ? <p className="repo-pr-status">None stored.</p> : children}
-    </section>
   );
 };
 

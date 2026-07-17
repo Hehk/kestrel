@@ -48,6 +48,10 @@ type PullRequest = {
 type SaveRepository = (repository: string) => Response | Promise<Response>;
 type SyncPullRequests = (fullName: string) => Response | Promise<Response>;
 type SyncPullRequestDetail = (fullName: string, number: number) => Response | Promise<Response>;
+type LoadOlderPullRequestTimeline = (
+  fullName: string,
+  number: number,
+) => Response | Promise<Response>;
 
 const repository = (fullName: string, metadata: Partial<Repository> = {}): Repository => {
   const [owner = "", name = ""] = fullName.split("/");
@@ -80,6 +84,7 @@ const pullRequest = (number: number, title = `PR ${number}`): PullRequest => {
 
 const pullRequestDetail = (): PullRequestDetail => {
   return {
+    body: "Adds pull request syncing.\n\nThe description is stored as plain text.",
     checkRuns: [
       {
         name: "test",
@@ -110,7 +115,42 @@ const pullRequestDetail = (): PullRequestDetail => {
       { context: "deploy", description: null, state: "pending", url: null },
     ],
     syncedAt: "2026-01-04T00:00:00Z",
-    timeline: [{ actorLogin: "octocat", event: "committed" }],
+    timeline: [
+      {
+        actorLogin: "octocat",
+        body: "looks good",
+        event: "commented",
+        id: "comment-1",
+        occurredAt: "2026-01-04T00:00:00Z",
+        reviewComments: [],
+        url: "https://github.com/kestrel/app/pull/42#issuecomment-1",
+      },
+      {
+        actorLogin: "reviewer",
+        body: "Approved after one small note.",
+        event: "reviewed",
+        id: "review-1",
+        occurredAt: "2026-01-03T00:00:00Z",
+        reviewComments: [
+          {
+            actorLogin: "reviewer",
+            body: "nit",
+            id: "review-comment-1",
+            occurredAt: "2026-01-03T00:01:00Z",
+          },
+        ],
+        state: "APPROVED",
+      },
+      {
+        actorLogin: "octocat",
+        body: "Add syncing",
+        commitSha: "abcdef123456",
+        event: "committed",
+        id: "commit-1",
+        occurredAt: "2026-01-02T00:00:00Z",
+      },
+    ],
+    timelineHasOlder: true,
   };
 };
 
@@ -124,6 +164,7 @@ const mockAuth = (
   syncPullRequests?: SyncPullRequests,
   initialPullRequestDetails: Record<string, PullRequestDetail> = {},
   syncPullRequestDetail?: SyncPullRequestDetail,
+  loadOlderPullRequestTimeline?: LoadOlderPullRequestTimeline,
 ) => {
   let theme = initialTheme;
   let repositories = initialRepositories;
@@ -171,6 +212,25 @@ const mockAuth = (
         const nextRepository = repositoryFromInput(request.repository);
         repositories = [...repositories, nextRepository];
         return jsonResponse({ repository: nextRepository }, 201);
+      }
+
+      const olderTimelineMatch = url.match(
+        /\/api\/repositories\/([^/]+)\/([^/]+)\/pull-requests\/(\d+)\/timeline\/older$/,
+      );
+      if (olderTimelineMatch && method === "POST") {
+        const owner = decodeURIComponent(olderTimelineMatch[1] ?? "");
+        const name = decodeURIComponent(olderTimelineMatch[2] ?? "");
+        const number = Number(olderTimelineMatch[3]);
+        const fullName = `${owner}/${name}`;
+        if (loadOlderPullRequestTimeline !== undefined) {
+          return loadOlderPullRequestTimeline(fullName, number);
+        }
+
+        const key = `${fullName}#${number}`;
+        const detail = pullRequestDetailsByKey[key] ?? pullRequestDetail();
+        const updatedDetail = { ...detail, timelineHasOlder: false };
+        pullRequestDetailsByKey = { ...pullRequestDetailsByKey, [key]: updatedDetail };
+        return jsonResponse({ pullRequestDetail: updatedDetail });
       }
 
       const pullRequestDetailMatch = url.match(
@@ -470,9 +530,98 @@ describe("App", () => {
     expect(
       within(screen.getByRole("complementary", { name: "Pull request status" })).getByText("test"),
     ).toBeInTheDocument();
-    expect(screen.getByText("diff --git a/app.rs b/app.rs")).toBeInTheDocument();
+    expect(within(content as HTMLElement).queryByRole("heading", { name: "Diff" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Load stored details" })).not.toBeInTheDocument();
     expect(screen.queryByText(/Details synced:/)).not.toBeInTheDocument();
+  });
+
+  it("renders the plain-text description and canonical activity newest first", async () => {
+    window.history.replaceState({}, "", "/pull/kestrel%2Fapp/42");
+    const detail = {
+      ...pullRequestDetail(),
+      body: "**Plain text**\n\n[not a rendered link](https://example.test)",
+    };
+    mockAuth(
+      signedInResponse,
+      "system",
+      undefined,
+      [repository("kestrel/app")],
+      undefined,
+      { "kestrel/app": [pullRequest(42, "Add syncing")] },
+      undefined,
+      { "kestrel/app#42": detail },
+    );
+
+    renderApp();
+
+    const description = await screen.findByRole("region", { name: "Pull request description" });
+    expect(description).toHaveTextContent(
+      "**Plain text** [not a rendered link](https://example.test)",
+    );
+    expect(within(description).queryByRole("link")).not.toBeInTheDocument();
+    expect(within(description).queryByText("Plain text", { selector: "strong" })).toBeNull();
+
+    const activity = screen.getByRole("region", { name: "Activity" });
+    expect(within(activity).getByText("Newest first")).toBeInTheDocument();
+    const newest = within(activity).getByText("looks good");
+    const oldest = within(activity).getByText("Add syncing");
+    expect(newest.compareDocumentPosition(oldest)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(within(activity).getByText("approved the pull request")).toBeInTheDocument();
+    expect(within(activity).getByText("nit")).toBeInTheDocument();
+    expect(within(activity).getByText("committed abcdef1")).toBeInTheDocument();
+    expect(activity.querySelector('time[datetime="2026-01-04T00:00:00Z"]')).not.toBeNull();
+    expect(screen.queryByRole("heading", { name: "Conversation comments" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Review comments" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Timeline" })).toBeNull();
+  });
+
+  it("loads and appends older pull request activity", async () => {
+    const user = userEvent.setup();
+    const olderRequest = deferredResponse();
+    window.history.replaceState({}, "", "/pull/kestrel%2Fapp/42");
+    const detail = pullRequestDetail();
+    mockAuth(
+      signedInResponse,
+      "system",
+      undefined,
+      [repository("kestrel/app")],
+      undefined,
+      { "kestrel/app": [pullRequest(42, "Add syncing")] },
+      undefined,
+      { "kestrel/app#42": detail },
+      undefined,
+      () => olderRequest.promise,
+    );
+
+    renderApp();
+
+    const button = await screen.findByRole("button", { name: "Load older activity" });
+    await user.click(button);
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("button", { name: "Sync pull request from GitHub" })).toBeDisabled();
+
+    olderRequest.resolve(
+      jsonResponse({
+        pullRequestDetail: {
+          ...detail,
+          timeline: [
+            ...detail.timeline,
+            {
+              actorLogin: "octocat",
+              event: "closed",
+              id: "closed-1",
+              occurredAt: "2026-01-01T00:00:00Z",
+            },
+          ],
+          timelineHasOlder: false,
+        },
+      }),
+    );
+
+    expect(await screen.findByText("closed the pull request")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Load older activity" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Sync pull request from GitHub" })).toBeEnabled();
   });
 
   it("refreshes the current pull request summary and details from the toolbar", async () => {

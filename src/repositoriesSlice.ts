@@ -45,12 +45,17 @@ export type PullRequestDetailState =
   | {
       detail: PullRequestDetail;
       error: null;
-      status: "loaded";
+      status: "loaded" | "loadingTimeline";
     }
   | {
       detail: PullRequestDetail | null;
       error: PullRequestsError;
       status: "error";
+    }
+  | {
+      detail: PullRequestDetail;
+      error: PullRequestsError;
+      status: "timelineError";
     };
 export type PullRequestDetailsByKey = Map<string, PullRequestDetailState>;
 
@@ -101,6 +106,11 @@ export type Cmd =
       kind: "SyncPullRequestDetail";
       number: number;
       repository: Repository;
+    }
+  | {
+      kind: "LoadOlderPullRequestTimeline";
+      number: number;
+      repository: Repository;
     };
 
 export type Msg =
@@ -146,6 +156,19 @@ export type Msg =
   | {
       error: PullRequestsError;
       kind: "PullRequestDetailSyncFailed";
+      number: number;
+      repository: Repository;
+    }
+  | { kind: "PullRequestTimelineOlderRequested"; number: number; repository: Repository }
+  | {
+      detail: PullRequestDetail;
+      kind: "PullRequestTimelineOlderLoaded";
+      number: number;
+      repository: Repository;
+    }
+  | {
+      error: PullRequestsError;
+      kind: "PullRequestTimelineOlderLoadFailed";
       number: number;
       repository: Repository;
     };
@@ -338,6 +361,46 @@ export const update = (ctx: UpdateContext, msg: Msg, state: State): State => {
         status: "error",
       });
     }
+    case "PullRequestTimelineOlderRequested": {
+      const current = currentPullRequestDetail(state, msg.repository, msg.number);
+      if (
+        current?.detail === null ||
+        current?.detail === undefined ||
+        !current.detail.timelineHasOlder ||
+        current.status === "loadingTimeline"
+      ) {
+        return state;
+      }
+
+      ctx.runCmd({
+        kind: "LoadOlderPullRequestTimeline",
+        number: msg.number,
+        repository: msg.repository,
+      });
+      return setPullRequestDetailState(state, msg.repository, msg.number, {
+        detail: current.detail,
+        error: null,
+        status: "loadingTimeline",
+      });
+    }
+    case "PullRequestTimelineOlderLoaded": {
+      return setPullRequestDetailState(state, msg.repository, msg.number, {
+        detail: msg.detail,
+        error: null,
+        status: "loaded",
+      });
+    }
+    case "PullRequestTimelineOlderLoadFailed": {
+      const detail = currentPullRequestDetail(state, msg.repository, msg.number)?.detail;
+      if (detail === null || detail === undefined) {
+        return state;
+      }
+      return setPullRequestDetailState(state, msg.repository, msg.number, {
+        detail,
+        error: msg.error,
+        status: "timelineError",
+      });
+    }
   }
 };
 
@@ -365,6 +428,10 @@ export const runCmd = (cmd: Cmd, send: (msg: Msg) => void) => {
     }
     case "SyncPullRequestDetail": {
       void syncPullRequestDetail(cmd.repository, cmd.number, send);
+      return;
+    }
+    case "LoadOlderPullRequestTimeline": {
+      void loadOlderPullRequestTimeline(cmd.repository, cmd.number, send);
       return;
     }
   }
@@ -467,6 +534,35 @@ const syncPullRequestDetail = async (
     kind: "PullRequestDetailSynced",
     number,
     pullRequest: data.pullRequest,
+    repository,
+  });
+};
+
+const loadOlderPullRequestTimeline = async (
+  repository: Repository,
+  number: number,
+  send: (msg: Msg) => void,
+) => {
+  const { data, error } = await api.POST(
+    "/api/repositories/{owner}/{name}/pull-requests/{number}/timeline/older",
+    {
+      params: { path: { name: repository.name, number, owner: repository.owner } },
+    },
+  );
+  if (error || data === undefined) {
+    send({
+      error: pullRequestsError(error),
+      kind: "PullRequestTimelineOlderLoadFailed",
+      number,
+      repository,
+    });
+    return;
+  }
+
+  send({
+    detail: data.pullRequestDetail,
+    kind: "PullRequestTimelineOlderLoaded",
+    number,
     repository,
   });
 };

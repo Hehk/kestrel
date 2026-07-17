@@ -249,7 +249,6 @@
   display: grid;
   gap: 0.45rem;
   padding-top: 0.85rem;
-  border-top: 1px solid var(--rule);
 }
 
 .pr-detail-section h2 {
@@ -257,19 +256,98 @@
   font-size: 1rem;
 }
 
-.pr-detail-list {
-  display: grid;
-  gap: 0.25rem;
+.pr-description {
+  padding: 0.25rem 0 1.5rem;
+}
+
+.pr-description p,
+.pr-activity-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.pr-description p {
+  margin: 0;
+  line-height: 1.7;
+}
+
+.pr-activity-heading,
+.pr-activity-item-heading,
+.pr-activity-review-comment-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.pr-activity-list {
   padding: 0;
   margin: 0;
   list-style: none;
 }
 
-.pr-detail-list li {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 1rem;
+.pr-activity-item {
+  position: relative;
+  padding: 0.85rem 0 1rem 1.25rem;
+}
+
+.pr-activity-item::before {
+  position: absolute;
+  top: 1.15rem;
+  left: 0.1rem;
+  width: 0.45rem;
+  height: 0.45rem;
+  content: "";
+  background: var(--text-muted);
+  border-radius: 50%;
+}
+
+.pr-activity-item::after {
+  position: absolute;
+  top: 1.6rem;
+  bottom: -0.25rem;
+  left: 0.3rem;
+  width: 1px;
+  content: "";
+  background: var(--rule);
+}
+
+.pr-activity-item:last-child::after {
+  display: none;
+}
+
+.pr-activity-item-heading > span {
+  min-width: 0;
+}
+
+.pr-activity-item-heading time,
+.pr-activity-review-comment-heading time {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.pr-activity-body {
+  margin: 0.65rem 0 0;
+  line-height: 1.6;
+}
+
+.pr-activity-review-comments {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.75rem 0 0;
+  margin: 0.75rem 0 0;
+  list-style: none;
+  border-top: 1px solid var(--rule);
+}
+
+.pr-activity-review-comments > li {
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--rule);
+}
+
+.pr-activity-load-older {
+  justify-self: start;
+  margin-top: 0.35rem;
 }
 
 .pr-sidebar-section {
@@ -604,7 +682,8 @@
 
   .repo-add-controls,
   .repo-row-header,
-  .pr-detail-list li,
+  .pr-activity-item-heading,
+  .pr-activity-review-comment-heading,
   .repo-pr-list li {
     align-items: stretch;
     flex-direction: column;

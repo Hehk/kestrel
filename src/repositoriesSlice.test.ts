@@ -35,6 +35,7 @@ const pullRequest = (
 };
 
 const pullRequestDetail = (): Repositories.PullRequestDetail => ({
+  body: "Adds syncing.",
   checkRuns: [],
   commits: [],
   diff: null,
@@ -46,6 +47,7 @@ const pullRequestDetail = (): Repositories.PullRequestDetail => ({
   statuses: [],
   syncedAt: "2026-01-04T00:00:00Z",
   timeline: [],
+  timelineHasOlder: false,
 });
 
 const update = (state: Repositories.State, msg: Repositories.Msg) => {
@@ -238,6 +240,48 @@ describe("repositoriesSlice", () => {
     ).toEqual({ detail: pullRequestDetail(), error: null, status: "loaded" });
   });
 
+  it("loads older timeline activity without discarding the current detail", () => {
+    const repo = repository("kestrel/app");
+    const detail = { ...pullRequestDetail(), timelineHasOlder: true };
+    const loaded = update(loadedState([repo]), {
+      detail,
+      kind: "PullRequestDetailLoaded",
+      number: 42,
+      repository: repo,
+    }).state;
+
+    const requested = update(loaded, {
+      kind: "PullRequestTimelineOlderRequested",
+      number: 42,
+      repository: repo,
+    });
+
+    expect(requested.cmds).toEqual([
+      { kind: "LoadOlderPullRequestTimeline", number: 42, repository: repo },
+    ]);
+    expect(
+      requested.state.pullRequestDetails.get(Repositories.pullRequestDetailKey(repo, 42)),
+    ).toEqual({
+      detail,
+      error: null,
+      status: "loadingTimeline",
+    });
+
+    const failed = update(requested.state, {
+      error: "syncFailed",
+      kind: "PullRequestTimelineOlderLoadFailed",
+      number: 42,
+      repository: repo,
+    });
+    expect(
+      failed.state.pullRequestDetails.get(Repositories.pullRequestDetailKey(repo, 42)),
+    ).toEqual({
+      detail,
+      error: "syncFailed",
+      status: "timelineError",
+    });
+  });
+
   it("loads repositories from the backend", async () => {
     const repositories = [repository("kestrel/app")];
     vi.stubGlobal(
@@ -314,6 +358,38 @@ describe("repositoriesSlice", () => {
           repository: repo,
         },
       ]),
+    );
+  });
+
+  it("loads older pull request timeline data from the backend", async () => {
+    const repo = repository("kestrel/app");
+    const detail = pullRequestDetail();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ pullRequestDetail: detail })),
+    );
+    const messages: Repositories.Msg[] = [];
+
+    Repositories.runCmd(
+      { kind: "LoadOlderPullRequestTimeline", number: 42, repository: repo },
+      (msg) => messages.push(msg),
+    );
+
+    await waitFor(() =>
+      expect(messages).toEqual([
+        {
+          detail,
+          kind: "PullRequestTimelineOlderLoaded",
+          number: 42,
+          repository: repo,
+        },
+      ]),
+    );
+    const request = vi.mocked(fetch).mock.calls[0]?.[0];
+    expect(request).toBeInstanceOf(Request);
+    expect((request as Request).method).toBe("POST");
+    expect((request as Request).url).toContain(
+      "/api/repositories/kestrel/app/pull-requests/42/timeline/older",
     );
   });
 

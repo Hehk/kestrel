@@ -98,6 +98,10 @@ pub fn app(config: &Config, state: AppState) -> Router {
         "/repositories/{owner}/{name}/pull-requests/{number}/sync",
         axum::routing::post(pull_requests::sync_pull_request_detail),
     );
+    let api = api.route(
+        "/repositories/{owner}/{name}/pull-requests/{number}/timeline/older",
+        axum::routing::post(pull_requests::load_older_pull_request_timeline),
+    );
 
     let router = Router::new()
         .nest("/api", api)

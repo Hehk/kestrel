@@ -6,6 +6,7 @@ use axum::{
 use reqwest::StatusCode as ReqwestStatusCode;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sqlx::{Executor, Sqlite, SqlitePool};
+use std::collections::HashSet;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use utoipa::{IntoParams, ToSchema};
 
@@ -14,6 +15,75 @@ use crate::{auth, github_app, http::AppState, repositories};
 const GITHUB_PROVIDER: &str = "github";
 const PAGE_SIZE: u8 = 100;
 const USER_AGENT: &str = "kestrel";
+const GITHUB_TIMELINE_QUERY: &str = r#"
+query PullRequestTimeline($owner: String!, $name: String!, $number: Int!, $before: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewDecision
+      timelineItems(last: 100, before: $before) {
+        nodes {
+          __typename
+          ... on IssueComment {
+            id
+            author { login }
+            body
+            createdAt
+            url
+          }
+          ... on PullRequestCommit {
+            id
+            commit {
+              oid
+              message
+              messageHeadline
+              committedDate
+              url
+              author { user { login } }
+            }
+          }
+          ... on PullRequestReview {
+            id
+            author { login }
+            body
+            state
+            submittedAt
+            url
+            comments(first: 100) {
+              nodes { id author { login } body createdAt url }
+            }
+          }
+          ... on ClosedEvent { id actor { login } createdAt }
+          ... on ReopenedEvent { id actor { login } createdAt }
+          ... on MergedEvent { id actor { login } createdAt commit { oid } }
+          ... on ReadyForReviewEvent { id actor { login } createdAt }
+          ... on ConvertToDraftEvent { id actor { login } createdAt }
+          ... on ReviewRequestedEvent {
+            id actor { login } createdAt
+            requestedReviewer { ... on User { login } ... on Team { name } }
+          }
+          ... on ReviewRequestRemovedEvent {
+            id actor { login } createdAt
+            requestedReviewer { ... on User { login } ... on Team { name } }
+          }
+          ... on ReviewDismissedEvent {
+            id actor { login } createdAt previousReviewState
+            review { body state url author { login } }
+          }
+          ... on HeadRefForcePushedEvent {
+            id actor { login } createdAt beforeCommit { oid } afterCommit { oid }
+          }
+          ... on BaseRefForcePushedEvent {
+            id actor { login } createdAt beforeCommit { oid } afterCommit { oid }
+          }
+          ... on HeadRefDeletedEvent { id actor { login } createdAt headRefName }
+          ... on HeadRefRestoredEvent { id actor { login } createdAt }
+        }
+        pageInfo { hasPreviousPage startCursor }
+      }
+    }
+  }
+}
+"#;
 
 #[derive(Deserialize, IntoParams)]
 pub(crate) struct RepositoryPath {
@@ -109,14 +179,46 @@ pub struct PullRequestStatusDto {
 
 #[derive(Clone, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+pub struct PullRequestTimelineReviewCommentDto {
+    #[serde(default)]
+    pub actor_login: Option<String>,
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub occurred_at: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+#[derive(Clone, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct PullRequestTimelineEventDto {
     pub actor_login: Option<String>,
     pub event: String,
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(default)]
+    pub commit_sha: Option<String>,
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub occurred_at: Option<String>,
+    #[serde(default)]
+    pub review_comments: Vec<PullRequestTimelineReviewCommentDto>,
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PullRequestDetailDto {
+    pub body: Option<String>,
     pub check_runs: Vec<PullRequestCheckRunDto>,
     pub commits: Vec<PullRequestCommitDto>,
     pub diff: Option<String>,
@@ -128,6 +230,7 @@ pub struct PullRequestDetailDto {
     pub statuses: Vec<PullRequestStatusDto>,
     pub synced_at: String,
     pub timeline: Vec<PullRequestTimelineEventDto>,
+    pub timeline_has_older: bool,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -487,6 +590,158 @@ pub(crate) async fn sync_pull_request_detail(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/repositories/{owner}/{name}/pull-requests/{number}/timeline/older",
+    params(PullRequestPath),
+    responses(
+        (status = 200, description = "Stored pull request detail with the next older timeline page", body = PullRequestDetailResponse),
+        (status = 400, description = "Invalid repository or pull request", body = PullRequestErrorResponse),
+        (status = 401, description = "Authentication required"),
+        (status = 403, description = "GitHub App authorization required", body = PullRequestErrorResponse),
+        (status = 404, description = "Repository or pull request detail is not stored", body = PullRequestErrorResponse),
+        (status = 502, description = "GitHub timeline sync failed", body = PullRequestErrorResponse)
+    )
+)]
+pub(crate) async fn load_older_pull_request_timeline(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<PullRequestPath>,
+) -> Result<Json<PullRequestDetailResponse>, (StatusCode, Json<PullRequestErrorResponse>)> {
+    let user_id = require_user_id(&state, &headers)
+        .await
+        .map_err(|status| api_error(status, PullRequestErrorCode::SyncFailed))?;
+    let (repository, number) = parse_pull_request_path(path)?;
+    let tracked = load_tracked_repository(&state.db, &user_id, &repository)
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "failed to load tracked repository for older timeline");
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                PullRequestErrorCode::SyncFailed,
+            )
+        })?
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::NOT_FOUND,
+                PullRequestErrorCode::RepositoryNotTracked,
+            )
+        })?;
+    let mut detail = load_pull_request_detail(&state.db, &tracked, number)
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "failed to load pull request detail for older timeline");
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                PullRequestErrorCode::SyncFailed,
+            )
+        })?
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::NOT_FOUND,
+                PullRequestErrorCode::PullRequestNotFound,
+            )
+        })?;
+    let (cursor, has_older) = load_timeline_page_state(&state.db, &tracked, number)
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "failed to load older timeline cursor");
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                PullRequestErrorCode::SyncFailed,
+            )
+        })?
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::NOT_FOUND,
+                PullRequestErrorCode::PullRequestNotFound,
+            )
+        })?;
+    if !has_older {
+        return Ok(Json(PullRequestDetailResponse {
+            pull_request_detail: detail,
+        }));
+    }
+    let cursor = cursor.ok_or_else(|| {
+        tracing::error!(number, "stored timeline has older items but no cursor");
+        api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            PullRequestErrorCode::SyncFailed,
+        )
+    })?;
+    let page =
+        match fetch_timeline_page_with_installation(&state, &user_id, &tracked, number, &cursor)
+            .await
+        {
+            Ok(page) => page,
+            Err(PullRequestSyncError::AuthorizationRequired) => {
+                return Err(api_error(
+                    StatusCode::FORBIDDEN,
+                    PullRequestErrorCode::AuthorizationRequired,
+                ));
+            }
+            Err(PullRequestSyncError::Other(error)) => {
+                tracing::error!(%error, "failed to fetch older pull request timeline");
+                return Err(api_error(
+                    StatusCode::BAD_GATEWAY,
+                    PullRequestErrorCode::SyncFailed,
+                ));
+            }
+        };
+
+    let mut stable_ids = detail
+        .timeline
+        .iter()
+        .filter_map(|item| item.id.clone())
+        .collect::<HashSet<_>>();
+    detail
+        .timeline
+        .extend(page.items.into_iter().filter(|item| {
+            item.id
+                .as_ref()
+                .is_none_or(|id| stable_ids.insert(id.clone()))
+        }));
+    detail.timeline_has_older = page.has_older;
+    let updated = update_pull_request_timeline_if_current(
+        &state.db,
+        &tracked,
+        number,
+        &cursor,
+        &detail.timeline,
+        page.cursor.as_deref(),
+        page.has_older,
+    )
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "failed to store older pull request timeline");
+        api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            PullRequestErrorCode::SyncFailed,
+        )
+    })?;
+    if !updated {
+        detail = load_pull_request_detail(&state.db, &tracked, number)
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, "failed to reload pull request detail after timeline changed");
+                api_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    PullRequestErrorCode::SyncFailed,
+                )
+            })?
+            .ok_or_else(|| {
+                api_error(
+                    StatusCode::NOT_FOUND,
+                    PullRequestErrorCode::PullRequestNotFound,
+                )
+            })?;
+    }
+
+    Ok(Json(PullRequestDetailResponse {
+        pull_request_detail: detail,
+    }))
+}
+
 async fn require_user_id(state: &AppState, headers: &HeaderMap) -> Result<String, StatusCode> {
     auth::current_user_id(state, headers)
         .await
@@ -574,7 +829,7 @@ async fn load_pull_request_detail(
     number: i64,
 ) -> Result<Option<PullRequestDetailDto>, PullRequestDataError> {
     let row = sqlx::query_as::<_, PullRequestDetailRow>(
-        "SELECT files_json, commits_json, reviews_json, review_comments_json, review_decision, issue_comments_json, timeline_json, check_runs_json, statuses_json, diff, synced_at FROM tracked_repository_pull_request_details WHERE user_id = ? AND provider = ? AND owner = ? AND name = ? AND number = ?",
+        "SELECT body, files_json, commits_json, reviews_json, review_comments_json, review_decision, issue_comments_json, timeline_json, timeline_has_older, check_runs_json, statuses_json, diff, synced_at FROM tracked_repository_pull_request_details WHERE user_id = ? AND provider = ? AND owner = ? AND name = ? AND number = ?",
     )
     .bind(&repository.user_id)
     .bind(GITHUB_PROVIDER)
@@ -585,6 +840,51 @@ async fn load_pull_request_detail(
     .await?;
 
     row.map(PullRequestDetailRow::into_dto).transpose()
+}
+
+async fn load_timeline_page_state(
+    db: &SqlitePool,
+    repository: &TrackedRepository,
+    number: i64,
+) -> Result<Option<(Option<String>, bool)>, PullRequestDataError> {
+    Ok(sqlx::query_as::<_, (Option<String>, bool)>(
+        "SELECT timeline_cursor, timeline_has_older FROM tracked_repository_pull_request_details WHERE user_id = ? AND provider = ? AND owner = ? AND name = ? AND number = ?",
+    )
+    .bind(&repository.user_id)
+    .bind(GITHUB_PROVIDER)
+    .bind(&repository.owner)
+    .bind(&repository.name)
+    .bind(number)
+    .fetch_optional(db)
+    .await?)
+}
+
+async fn update_pull_request_timeline_if_current(
+    db: &SqlitePool,
+    repository: &TrackedRepository,
+    number: i64,
+    expected_cursor: &str,
+    timeline: &[PullRequestTimelineEventDto],
+    next_cursor: Option<&str>,
+    has_older: bool,
+) -> Result<bool, PullRequestDataError> {
+    let timeline_json = serde_json::to_string(timeline)?;
+    let update = sqlx::query(
+        "UPDATE tracked_repository_pull_request_details SET timeline_json = ?, timeline_cursor = ?, timeline_has_older = ? WHERE user_id = ? AND provider = ? AND owner = ? AND name = ? AND number = ? AND timeline_cursor = ? AND timeline_has_older = 1",
+    )
+    .bind(&timeline_json)
+    .bind(next_cursor)
+    .bind(has_older)
+    .bind(&repository.user_id)
+    .bind(GITHUB_PROVIDER)
+    .bind(&repository.owner)
+    .bind(&repository.name)
+    .bind(number)
+    .bind(expected_cursor)
+    .execute(db)
+    .await?;
+
+    Ok(update.rows_affected() == 1)
 }
 
 async fn fetch_pull_requests_with_installation(
@@ -648,6 +948,40 @@ async fn fetch_pull_request_detail_with_installation(
     }
 }
 
+async fn fetch_timeline_page_with_installation(
+    state: &AppState,
+    user_id: &str,
+    repository: &TrackedRepository,
+    number: i64,
+    before: &str,
+) -> Result<GitHubTimelinePage, PullRequestSyncError> {
+    let installation_ids = github_app::installation_ids_for_user(&state.db, user_id)
+        .await
+        .map_err(|error| PullRequestSyncError::Other(error.into()))?;
+    if installation_ids.is_empty() {
+        return Err(PullRequestSyncError::AuthorizationRequired);
+    }
+
+    let mut last_error: Option<PullRequestDataError> = None;
+    for installation_id in installation_ids {
+        let token = github_app::create_installation_token(state, &installation_id)
+            .await
+            .map_err(|error| PullRequestSyncError::Other(error.into()))?;
+        match fetch_github_timeline_page(state, &token.token, repository, number, Some(before))
+            .await
+        {
+            Ok(page) => return Ok(page),
+            Err(PullRequestDataError::GitHubAccessDenied) => continue,
+            Err(error) => last_error = Some(error),
+        }
+    }
+
+    match last_error {
+        Some(error) => Err(PullRequestSyncError::Other(error)),
+        None => Err(PullRequestSyncError::AuthorizationRequired),
+    }
+}
+
 async fn fetch_github_pull_requests(
     state: &AppState,
     token: &str,
@@ -698,33 +1032,14 @@ async fn fetch_github_pull_request_detail(
     );
     let pull_request: GitHubPullRequestDetail =
         fetch_github_json(state, token, &pull_request_url).await?;
-    let review_decision = fetch_github_review_decision(state, token, repository, number).await?;
+    // TODO: Move timeline syncing to background pagination with rate-limit headers/backoff,
+    // resumable cursors, webhook/incremental reconciliation, nested review-comment pagination,
+    // and no large foreground syncs once background syncing exists.
+    let timeline_page = fetch_github_timeline_page(state, token, repository, number, None).await?;
     let files: Vec<GitHubPullRequestFile> =
         fetch_github_json(state, token, &format!("{pull_request_url}/files")).await?;
     let commits: Vec<GitHubPullRequestCommit> =
         fetch_github_json(state, token, &format!("{pull_request_url}/commits")).await?;
-    let reviews: Vec<GitHubPullRequestReview> =
-        fetch_github_json(state, token, &format!("{pull_request_url}/reviews")).await?;
-    let review_comments: Vec<GitHubPullRequestComment> =
-        fetch_github_json(state, token, &format!("{pull_request_url}/comments")).await?;
-    let issue_comments: Vec<GitHubPullRequestComment> = fetch_github_json(
-        state,
-        token,
-        &format!(
-            "{base_url}/repos/{}/{}/issues/{number}/comments",
-            repository.owner, repository.name
-        ),
-    )
-    .await?;
-    let timeline: Vec<GitHubPullRequestTimelineEvent> = fetch_github_json(
-        state,
-        token,
-        &format!(
-            "{base_url}/repos/{}/{}/issues/{number}/timeline",
-            repository.owner, repository.name
-        ),
-    )
-    .await?;
     let check_runs: GitHubCheckRuns = fetch_github_json(
         state,
         token,
@@ -757,6 +1072,7 @@ async fn fetch_github_pull_request_detail(
 
     Ok(PullRequestSyncSnapshot {
         detail: PullRequestDetailSnapshot {
+            body: pull_request.body.clone(),
             check_runs: check_runs
                 .check_runs
                 .into_iter()
@@ -768,39 +1084,30 @@ async fn fetch_github_pull_request_detail(
                 .collect(),
             diff: Some(diff),
             files: files.into_iter().map(PullRequestFileDto::from).collect(),
-            issue_comments: issue_comments
-                .into_iter()
-                .map(PullRequestCommentDto::from)
-                .collect(),
-            review_comments: review_comments
-                .into_iter()
-                .map(PullRequestCommentDto::from)
-                .collect(),
-            review_decision,
-            reviews: reviews
-                .into_iter()
-                .map(PullRequestReviewDto::from)
-                .collect(),
+            issue_comments: Vec::new(),
+            review_comments: Vec::new(),
+            review_decision: timeline_page.review_decision,
+            reviews: Vec::new(),
             statuses: statuses
                 .statuses
                 .into_iter()
                 .map(PullRequestStatusDto::from)
                 .collect(),
-            timeline: timeline
-                .into_iter()
-                .map(PullRequestTimelineEventDto::from)
-                .collect(),
+            timeline: timeline_page.items,
+            timeline_cursor: timeline_page.cursor,
+            timeline_has_older: timeline_page.has_older,
         },
         pull_request: pull_request.pull_request,
     })
 }
 
-async fn fetch_github_review_decision(
+async fn fetch_github_timeline_page(
     state: &AppState,
     token: &str,
     repository: &TrackedRepository,
     number: i64,
-) -> Result<Option<String>, PullRequestDataError> {
+    before: Option<&str>,
+) -> Result<GitHubTimelinePage, PullRequestDataError> {
     let response = state
         .http_client
         .post(github_graphql_url(&state.config.github_api_url))
@@ -808,11 +1115,12 @@ async fn fetch_github_review_decision(
         .header("Accept", "application/vnd.github+json")
         .header("User-Agent", USER_AGENT)
         .json(&serde_json::json!({
-            "query": "query PullRequestReviewDecision($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewDecision } } }",
+            "query": GITHUB_TIMELINE_QUERY,
             "variables": {
                 "owner": repository.owner,
                 "name": repository.name,
                 "number": number,
+                "before": before,
             }
         }))
         .send()
@@ -825,7 +1133,7 @@ async fn fetch_github_review_decision(
 
     let response = response
         .error_for_status()?
-        .json::<GitHubReviewDecisionResponse>()
+        .json::<GitHubTimelineResponse>()
         .await?;
     if !response.errors.is_empty() {
         return Err(PullRequestDataError::GitHubGraphQl(
@@ -838,16 +1146,29 @@ async fn fetch_github_review_decision(
         ));
     }
 
-    response
+    let pull_request = response
         .data
         .and_then(|data| data.repository)
         .and_then(|repository| repository.pull_request)
-        .map(|pull_request| pull_request.review_decision)
         .ok_or_else(|| {
             PullRequestDataError::GitHubGraphQl(
                 "GitHub GraphQL response did not include the pull request".to_string(),
             )
-        })
+        })?;
+    let mut items = pull_request
+        .timeline_items
+        .nodes
+        .into_iter()
+        .map(map_github_timeline_item)
+        .collect::<Vec<_>>();
+    items.reverse();
+
+    Ok(GitHubTimelinePage {
+        cursor: pull_request.timeline_items.page_info.start_cursor,
+        has_older: pull_request.timeline_items.page_info.has_previous_page,
+        items,
+        review_decision: pull_request.review_decision,
+    })
 }
 
 fn github_graphql_url(api_url: &str) -> String {
@@ -984,13 +1305,14 @@ where
     let statuses_json = serde_json::to_string(&detail.statuses)?;
 
     sqlx::query(
-        "INSERT INTO tracked_repository_pull_request_details (user_id, provider, owner, name, number, files_json, commits_json, reviews_json, review_comments_json, review_decision, issue_comments_json, timeline_json, check_runs_json, statuses_json, diff, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, provider, owner, name, number) DO UPDATE SET files_json = excluded.files_json, commits_json = excluded.commits_json, reviews_json = excluded.reviews_json, review_comments_json = excluded.review_comments_json, review_decision = excluded.review_decision, issue_comments_json = excluded.issue_comments_json, timeline_json = excluded.timeline_json, check_runs_json = excluded.check_runs_json, statuses_json = excluded.statuses_json, diff = excluded.diff, synced_at = excluded.synced_at",
+        "INSERT INTO tracked_repository_pull_request_details (user_id, provider, owner, name, number, body, files_json, commits_json, reviews_json, review_comments_json, review_decision, issue_comments_json, timeline_json, timeline_cursor, timeline_has_older, check_runs_json, statuses_json, diff, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, provider, owner, name, number) DO UPDATE SET body = excluded.body, files_json = excluded.files_json, commits_json = excluded.commits_json, reviews_json = excluded.reviews_json, review_comments_json = excluded.review_comments_json, review_decision = excluded.review_decision, issue_comments_json = excluded.issue_comments_json, timeline_json = excluded.timeline_json, timeline_cursor = excluded.timeline_cursor, timeline_has_older = excluded.timeline_has_older, check_runs_json = excluded.check_runs_json, statuses_json = excluded.statuses_json, diff = excluded.diff, synced_at = excluded.synced_at",
     )
     .bind(&repository.user_id)
     .bind(GITHUB_PROVIDER)
     .bind(&repository.owner)
     .bind(&repository.name)
     .bind(number)
+    .bind(&detail.body)
     .bind(&files_json)
     .bind(&commits_json)
     .bind(&reviews_json)
@@ -998,6 +1320,8 @@ where
     .bind(&detail.review_decision)
     .bind(&issue_comments_json)
     .bind(&timeline_json)
+    .bind(&detail.timeline_cursor)
+    .bind(detail.timeline_has_older)
     .bind(&check_runs_json)
     .bind(&statuses_json)
     .bind(&detail.diff)
@@ -1006,6 +1330,7 @@ where
     .await?;
 
     Ok(PullRequestDetailDto {
+        body: detail.body.clone(),
         check_runs: detail.check_runs.clone(),
         commits: detail.commits.clone(),
         diff: detail.diff.clone(),
@@ -1017,6 +1342,7 @@ where
         statuses: detail.statuses.clone(),
         synced_at: synced_at.to_string(),
         timeline: detail.timeline.clone(),
+        timeline_has_older: detail.timeline_has_older,
     })
 }
 
@@ -1159,6 +1485,7 @@ struct PullRequestRow {
 }
 
 struct PullRequestDetailSnapshot {
+    body: Option<String>,
     check_runs: Vec<PullRequestCheckRunDto>,
     commits: Vec<PullRequestCommitDto>,
     diff: Option<String>,
@@ -1169,6 +1496,8 @@ struct PullRequestDetailSnapshot {
     reviews: Vec<PullRequestReviewDto>,
     statuses: Vec<PullRequestStatusDto>,
     timeline: Vec<PullRequestTimelineEventDto>,
+    timeline_cursor: Option<String>,
+    timeline_has_older: bool,
 }
 
 struct PullRequestSyncSnapshot {
@@ -1178,6 +1507,7 @@ struct PullRequestSyncSnapshot {
 
 #[derive(sqlx::FromRow)]
 struct PullRequestDetailRow {
+    body: Option<String>,
     check_runs_json: String,
     commits_json: String,
     diff: Option<String>,
@@ -1189,11 +1519,13 @@ struct PullRequestDetailRow {
     statuses_json: String,
     synced_at: String,
     timeline_json: String,
+    timeline_has_older: bool,
 }
 
 impl PullRequestDetailRow {
     fn into_dto(self) -> Result<PullRequestDetailDto, PullRequestDataError> {
         Ok(PullRequestDetailDto {
+            body: self.body,
             check_runs: serde_json::from_str(&self.check_runs_json)?,
             commits: serde_json::from_str(&self.commits_json)?,
             diff: self.diff,
@@ -1205,6 +1537,7 @@ impl PullRequestDetailRow {
             statuses: serde_json::from_str(&self.statuses_json)?,
             synced_at: self.synced_at,
             timeline: serde_json::from_str(&self.timeline_json)?,
+            timeline_has_older: self.timeline_has_older,
         })
     }
 }
@@ -1228,28 +1561,53 @@ impl PullRequestRow {
     }
 }
 
+struct GitHubTimelinePage {
+    cursor: Option<String>,
+    has_older: bool,
+    items: Vec<PullRequestTimelineEventDto>,
+    review_decision: Option<String>,
+}
+
 #[derive(Deserialize)]
-struct GitHubReviewDecisionResponse {
-    data: Option<GitHubReviewDecisionData>,
+struct GitHubTimelineResponse {
+    data: Option<GitHubTimelineData>,
     #[serde(default)]
     errors: Vec<GitHubGraphQlError>,
 }
 
 #[derive(Deserialize)]
-struct GitHubReviewDecisionData {
-    repository: Option<GitHubReviewDecisionRepository>,
+struct GitHubTimelineData {
+    repository: Option<GitHubTimelineRepository>,
 }
 
 #[derive(Deserialize)]
-struct GitHubReviewDecisionRepository {
+struct GitHubTimelineRepository {
     #[serde(rename = "pullRequest")]
-    pull_request: Option<GitHubReviewDecisionPullRequest>,
+    pull_request: Option<GitHubTimelinePullRequest>,
 }
 
 #[derive(Deserialize)]
-struct GitHubReviewDecisionPullRequest {
+struct GitHubTimelinePullRequest {
     #[serde(rename = "reviewDecision")]
     review_decision: Option<String>,
+    #[serde(rename = "timelineItems")]
+    timeline_items: GitHubTimelineConnection,
+}
+
+#[derive(Deserialize)]
+struct GitHubTimelineConnection {
+    #[serde(default)]
+    nodes: Vec<serde_json::Value>,
+    #[serde(rename = "pageInfo")]
+    page_info: GitHubTimelinePageInfo,
+}
+
+#[derive(Deserialize)]
+struct GitHubTimelinePageInfo {
+    #[serde(rename = "hasPreviousPage")]
+    has_previous_page: bool,
+    #[serde(rename = "startCursor")]
+    start_cursor: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1279,6 +1637,7 @@ struct GitHubUser {
 
 #[derive(Deserialize)]
 struct GitHubPullRequestDetail {
+    body: Option<String>,
     head: GitHubPullRequestHead,
     #[serde(flatten)]
     pull_request: GitHubPullRequest,
@@ -1324,49 +1683,83 @@ impl From<GitHubPullRequestCommit> for PullRequestCommitDto {
     }
 }
 
-#[derive(Deserialize)]
-struct GitHubPullRequestReview {
-    state: String,
-    user: Option<GitHubUser>,
-}
+fn map_github_timeline_item(item: serde_json::Value) -> PullRequestTimelineEventDto {
+    let typename = json_string(&item, &["__typename"]);
+    let event = match typename.as_deref() {
+        Some("IssueComment") => "commented",
+        Some("PullRequestCommit") => "committed",
+        Some("PullRequestReview") => "reviewed",
+        Some("ClosedEvent") => "closed",
+        Some("ReopenedEvent") => "reopened",
+        Some("MergedEvent") => "merged",
+        Some("ReadyForReviewEvent") => "ready_for_review",
+        Some("ConvertToDraftEvent") => "converted_to_draft",
+        Some("ReviewRequestedEvent") => "review_requested",
+        Some("ReviewRequestRemovedEvent") => "review_request_removed",
+        Some("ReviewDismissedEvent") => "review_dismissed",
+        Some("HeadRefForcePushedEvent") => "head_ref_force_pushed",
+        Some("BaseRefForcePushedEvent") => "base_ref_force_pushed",
+        Some("HeadRefDeletedEvent") => "head_ref_deleted",
+        Some("HeadRefRestoredEvent") => "head_ref_restored",
+        _ => "unknown",
+    }
+    .to_string();
+    let actor_login = json_string(&item, &["actor", "login"])
+        .or_else(|| json_string(&item, &["author", "login"]))
+        .or_else(|| json_string(&item, &["commit", "author", "user", "login"]))
+        .or_else(|| json_string(&item, &["review", "author", "login"]));
+    let body = json_string(&item, &["body"])
+        .or_else(|| json_string(&item, &["commit", "message"]))
+        .or_else(|| json_string(&item, &["review", "body"]));
+    let commit_sha = json_string(&item, &["commit", "oid"])
+        .or_else(|| json_string(&item, &["afterCommit", "oid"]));
+    let occurred_at = json_string(&item, &["createdAt"])
+        .or_else(|| json_string(&item, &["submittedAt"]))
+        .or_else(|| json_string(&item, &["commit", "committedDate"]));
+    let review_comments = item
+        .pointer("/comments/nodes")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|comment| PullRequestTimelineReviewCommentDto {
+            actor_login: json_string(comment, &["author", "login"]),
+            body: json_string(comment, &["body"]),
+            id: json_string(comment, &["id"]),
+            occurred_at: json_string(comment, &["createdAt"]),
+            url: json_string(comment, &["url"]),
+        })
+        .collect();
+    let state = json_string(&item, &["state"])
+        .or_else(|| json_string(&item, &["review", "state"]))
+        .or_else(|| json_string(&item, &["previousReviewState"]));
+    let title = json_string(&item, &["requestedReviewer", "login"])
+        .or_else(|| json_string(&item, &["requestedReviewer", "name"]))
+        .or_else(|| json_string(&item, &["headRefName"]))
+        .or_else(|| json_string(&item, &["commit", "messageHeadline"]))
+        .or_else(|| (event == "unknown").then_some(typename).flatten());
+    let url = json_string(&item, &["url"])
+        .or_else(|| json_string(&item, &["commit", "url"]))
+        .or_else(|| json_string(&item, &["review", "url"]));
 
-impl From<GitHubPullRequestReview> for PullRequestReviewDto {
-    fn from(review: GitHubPullRequestReview) -> Self {
-        Self {
-            author_login: review.user.map(|user| user.login),
-            state: review.state,
-        }
+    PullRequestTimelineEventDto {
+        actor_login,
+        body,
+        commit_sha,
+        event,
+        id: json_string(&item, &["id"]),
+        occurred_at,
+        review_comments,
+        state,
+        title,
+        url,
     }
 }
 
-#[derive(Deserialize)]
-struct GitHubPullRequestComment {
-    body: Option<String>,
-    user: Option<GitHubUser>,
-}
-
-impl From<GitHubPullRequestComment> for PullRequestCommentDto {
-    fn from(comment: GitHubPullRequestComment) -> Self {
-        Self {
-            author_login: comment.user.map(|user| user.login),
-            body: comment.body,
-        }
-    }
-}
-
-#[derive(Deserialize)]
-struct GitHubPullRequestTimelineEvent {
-    actor: Option<GitHubUser>,
-    event: String,
-}
-
-impl From<GitHubPullRequestTimelineEvent> for PullRequestTimelineEventDto {
-    fn from(event: GitHubPullRequestTimelineEvent) -> Self {
-        Self {
-            actor_login: event.actor.map(|actor| actor.login),
-            event: event.event,
-        }
-    }
+fn json_string(value: &serde_json::Value, path: &[&str]) -> Option<String> {
+    path.iter()
+        .try_fold(value, |current, key| current.get(*key))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
 }
 
 #[derive(Deserialize)]
@@ -1450,11 +1843,11 @@ mod tests {
 
     use super::{
         fetch_github_pull_request_detail, fetch_github_pull_requests, load_pull_request_detail,
-        load_pull_requests, load_tracked_repository, update_sync_error, update_sync_state,
-        upsert_pull_request_detail, upsert_pull_requests, GitHubPullRequest, GitHubUser,
-        PullRequestCheckRunDto, PullRequestCommentDto, PullRequestCommitDto,
-        PullRequestDetailSnapshot, PullRequestFileDto, PullRequestReviewDto, PullRequestStatusDto,
-        PullRequestTimelineEventDto, TrackedRepository,
+        load_pull_requests, load_tracked_repository, update_pull_request_timeline_if_current,
+        update_sync_error, update_sync_state, upsert_pull_request_detail, upsert_pull_requests,
+        GitHubPullRequest, GitHubUser, PullRequestCheckRunDto, PullRequestCommentDto,
+        PullRequestCommitDto, PullRequestDetailSnapshot, PullRequestFileDto, PullRequestReviewDto,
+        PullRequestStatusDto, PullRequestTimelineEventDto, TrackedRepository,
     };
     use crate::{
         config::{Config, Environment, SessionConfig, TokenEncryptionKey},
@@ -1544,11 +1937,42 @@ mod tests {
             assert_eq!(body["variables"]["owner"], "kestrel");
             assert_eq!(body["variables"]["name"], "app");
             assert_eq!(body["variables"]["number"], 42);
+            assert_eq!(body["variables"]["before"], Value::Null);
 
             Json(serde_json::json!({
                 "data": {
                     "repository": {
-                        "pullRequest": { "reviewDecision": "APPROVED" }
+                        "pullRequest": {
+                            "reviewDecision": "APPROVED",
+                            "timelineItems": {
+                                "nodes": [
+                                    {
+                                        "__typename": "IssueComment",
+                                        "id": "comment-1",
+                                        "author": { "login": "octocat" },
+                                        "body": "looks good",
+                                        "createdAt": "2026-01-02T00:00:00Z",
+                                        "url": "https://github.com/kestrel/app/pull/42#issuecomment-1"
+                                    },
+                                    {
+                                        "__typename": "PullRequestCommit",
+                                        "id": "commit-1",
+                                        "commit": {
+                                            "oid": "head-sha",
+                                            "message": "Add syncing",
+                                            "messageHeadline": "Add syncing",
+                                            "committedDate": "2026-01-03T00:00:00Z",
+                                            "url": "https://github.com/kestrel/app/commit/head-sha",
+                                            "author": { "user": { "login": "octocat" } }
+                                        }
+                                    }
+                                ],
+                                "pageInfo": {
+                                    "hasPreviousPage": true,
+                                    "startCursor": "older-cursor"
+                                }
+                            }
+                        }
                     }
                 }
             }))
@@ -1567,6 +1991,7 @@ mod tests {
                 "closed_at": null,
                 "created_at": "2026-01-01T00:00:00Z",
                 "draft": false,
+                "body": "This pull request adds syncing.",
                 "head": { "sha": "head-sha" },
                 "html_url": "https://github.com/kestrel/app/pull/42",
                 "id": 1042,
@@ -1588,32 +2013,6 @@ mod tests {
             Json(serde_json::json!([{
                 "commit": { "message": "Add syncing" },
                 "sha": "head-sha"
-            }]))
-        }
-
-        async fn reviews() -> Json<Value> {
-            Json(serde_json::json!([{ "state": "APPROVED", "user": { "login": "reviewer" } }]))
-        }
-
-        async fn review_comments() -> Json<Value> {
-            Json(serde_json::json!([{
-                "body": "nit",
-                "path": "app.rs",
-                "user": { "login": "reviewer" }
-            }]))
-        }
-
-        async fn issue_comments() -> Json<Value> {
-            Json(serde_json::json!([{
-                "body": "looks good",
-                "user": { "login": "octocat" }
-            }]))
-        }
-
-        async fn timeline() -> Json<Value> {
-            Json(serde_json::json!([{
-                "actor": { "login": "octocat" },
-                "event": "committed"
             }]))
         }
 
@@ -1678,10 +2077,6 @@ mod tests {
             .route("/repos/kestrel/app/pulls/42", get(pull))
             .route("/repos/kestrel/app/pulls/42/files", get(files))
             .route("/repos/kestrel/app/pulls/42/commits", get(commits))
-            .route("/repos/kestrel/app/pulls/42/reviews", get(reviews))
-            .route("/repos/kestrel/app/pulls/42/comments", get(review_comments))
-            .route("/repos/kestrel/app/issues/42/comments", get(issue_comments))
-            .route("/repos/kestrel/app/issues/42/timeline", get(timeline))
             .route(
                 "/repos/kestrel/app/commits/head-sha/check-runs",
                 get(check_runs),
@@ -1775,6 +2170,61 @@ mod tests {
             .expect("request should complete");
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn load_older_timeline_requires_authentication() {
+        let config = test_config();
+        let db = test_db().await;
+        let response = app(&config, AppState::new(db, config.clone()))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/repositories/kestrel/app/pull-requests/42/timeline/older")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn load_older_timeline_returns_unchanged_detail_when_complete() {
+        let config = test_config();
+        let db = test_db().await;
+        insert_tracked_repository(&db).await;
+        sqlx::query(
+            "INSERT INTO tracked_repository_pull_request_details (user_id, provider, owner, name, number, body, files_json, commits_json, reviews_json, review_comments_json, review_decision, issue_comments_json, timeline_json, timeline_cursor, timeline_has_older, check_runs_json, statuses_json, diff, synced_at) VALUES (?, ?, ?, ?, ?, ?, '[]', '[]', '[]', '[]', NULL, '[]', '[]', NULL, 0, '[]', '[]', NULL, ?)",
+        )
+        .bind("user_1")
+        .bind("github")
+        .bind("kestrel")
+        .bind("app")
+        .bind(42_i64)
+        .bind("Stored description")
+        .bind("2026-01-03T00:00:00Z")
+        .execute(&db)
+        .await
+        .expect("pull request detail should insert");
+        let cookie = session_cookie(&db, &config).await;
+        let response = app(&config, AppState::new(db, config.clone()))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/repositories/kestrel/app/pull-requests/42/timeline/older")
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = response_json(response).await;
+        assert_eq!(json["pullRequestDetail"]["body"], "Stored description");
+        assert_eq!(json["pullRequestDetail"]["timelineHasOlder"], false);
     }
 
     #[tokio::test]
@@ -2004,11 +2454,20 @@ mod tests {
         assert_eq!(detail.files[0].filename, "app.rs");
         assert_eq!(detail.commits[0].sha, "head-sha");
         assert_eq!(detail.commits[0].message, "Add syncing");
-        assert_eq!(detail.reviews[0].state, "APPROVED");
+        assert!(detail.reviews.is_empty());
         assert_eq!(detail.review_decision.as_deref(), Some("APPROVED"));
-        assert_eq!(detail.review_comments[0].body.as_deref(), Some("nit"));
-        assert_eq!(detail.issue_comments[0].body.as_deref(), Some("looks good"));
+        assert!(detail.review_comments.is_empty());
+        assert!(detail.issue_comments.is_empty());
+        assert_eq!(
+            detail.body.as_deref(),
+            Some("This pull request adds syncing.")
+        );
         assert_eq!(detail.timeline[0].event, "committed");
+        assert_eq!(detail.timeline[0].id.as_deref(), Some("commit-1"));
+        assert_eq!(detail.timeline[0].commit_sha.as_deref(), Some("head-sha"));
+        assert_eq!(detail.timeline[1].event, "commented");
+        assert!(detail.timeline_has_older);
+        assert_eq!(detail.timeline_cursor.as_deref(), Some("older-cursor"));
         assert_eq!(detail.check_runs[0].state, "success");
         assert_eq!(
             detail.check_runs[0].url.as_deref(),
@@ -2131,6 +2590,7 @@ mod tests {
         .expect("tracked repository should load")
         .expect("tracked repository should exist");
         let detail = PullRequestDetailSnapshot {
+            body: Some("This pull request adds syncing.".to_string()),
             check_runs: vec![PullRequestCheckRunDto {
                 name: "test".to_string(),
                 state: "success".to_string(),
@@ -2168,8 +2628,18 @@ mod tests {
             }],
             timeline: vec![PullRequestTimelineEventDto {
                 actor_login: Some("octocat".to_string()),
+                body: None,
+                commit_sha: Some("head-sha".to_string()),
                 event: "committed".to_string(),
+                id: Some("timeline-1".to_string()),
+                occurred_at: Some("2026-01-02T00:00:00Z".to_string()),
+                review_comments: Vec::new(),
+                state: None,
+                title: Some("Add syncing".to_string()),
+                url: None,
             }],
+            timeline_cursor: Some("cursor-1".to_string()),
+            timeline_has_older: true,
         };
 
         let saved =
@@ -2182,6 +2652,10 @@ mod tests {
             .expect("pull request detail should exist");
 
         assert_eq!(saved.commits[0].message, "Add syncing");
+        assert_eq!(
+            saved.body.as_deref(),
+            Some("This pull request adds syncing.")
+        );
         assert_eq!(loaded.files[0].filename, "app.rs");
         assert_eq!(loaded.issue_comments[0].body.as_deref(), Some("ship it"));
         assert_eq!(saved.review_decision.as_deref(), Some("CHANGES_REQUESTED"));
@@ -2203,7 +2677,108 @@ mod tests {
             Some("https://ci.example.test/builds/42")
         );
         assert_eq!(loaded.diff.as_deref(), Some("diff --git a/app.rs b/app.rs"));
+        assert!(loaded.timeline_has_older);
+        assert_eq!(loaded.timeline[0].id.as_deref(), Some("timeline-1"));
+        assert_eq!(
+            sqlx::query_scalar::<_, Option<String>>(
+                "SELECT timeline_cursor FROM tracked_repository_pull_request_details WHERE user_id = ? AND provider = ? AND owner = ? AND name = ? AND number = ?",
+            )
+            .bind("user_1")
+            .bind("github")
+            .bind("kestrel")
+            .bind("app")
+            .bind(42_i64)
+            .fetch_one(&db)
+            .await
+            .expect("timeline cursor should load")
+            .as_deref(),
+            Some("cursor-1"),
+        );
         assert_eq!(loaded.synced_at, "2026-01-03T00:00:00Z");
+    }
+
+    #[tokio::test]
+    async fn older_timeline_update_requires_the_stored_cursor() {
+        let db = test_db().await;
+        insert_tracked_repository(&db).await;
+        let repository = load_tracked_repository(
+            &db,
+            "user_1",
+            &repositories::ParsedRepository {
+                owner: "kestrel".to_string(),
+                name: "app".to_string(),
+            },
+        )
+        .await
+        .expect("tracked repository should load")
+        .expect("tracked repository should exist");
+        sqlx::query(
+            "INSERT INTO tracked_repository_pull_request_details (user_id, provider, owner, name, number, body, files_json, commits_json, reviews_json, review_comments_json, review_decision, issue_comments_json, timeline_json, timeline_cursor, timeline_has_older, check_runs_json, statuses_json, diff, synced_at) VALUES (?, ?, ?, ?, ?, NULL, '[]', '[]', '[]', '[]', NULL, '[]', ?, ?, 1, '[]', '[]', NULL, ?)",
+        )
+        .bind("user_1")
+        .bind("github")
+        .bind("kestrel")
+        .bind("app")
+        .bind(42_i64)
+        .bind(r#"[{"actorLogin":"octocat","event":"commented"}]"#)
+        .bind("current-cursor")
+        .bind("2026-01-03T00:00:00Z")
+        .execute(&db)
+        .await
+        .expect("pull request detail should insert");
+        let replacement = vec![PullRequestTimelineEventDto {
+            actor_login: Some("reviewer".to_string()),
+            body: None,
+            commit_sha: None,
+            event: "reviewed".to_string(),
+            id: Some("review-1".to_string()),
+            occurred_at: Some("2026-01-02T00:00:00Z".to_string()),
+            review_comments: Vec::new(),
+            state: Some("APPROVED".to_string()),
+            title: None,
+            url: None,
+        }];
+
+        let stale_update = update_pull_request_timeline_if_current(
+            &db,
+            &repository,
+            42,
+            "stale-cursor",
+            &replacement,
+            None,
+            false,
+        )
+        .await
+        .expect("stale update should complete");
+        assert!(!stale_update);
+        assert_eq!(
+            load_pull_request_detail(&db, &repository, 42)
+                .await
+                .expect("detail should load")
+                .expect("detail should exist")
+                .timeline[0]
+                .event,
+            "commented",
+        );
+
+        let current_update = update_pull_request_timeline_if_current(
+            &db,
+            &repository,
+            42,
+            "current-cursor",
+            &replacement,
+            None,
+            false,
+        )
+        .await
+        .expect("current update should complete");
+        assert!(current_update);
+        let loaded = load_pull_request_detail(&db, &repository, 42)
+            .await
+            .expect("detail should load")
+            .expect("detail should exist");
+        assert_eq!(loaded.timeline[0].event, "reviewed");
+        assert!(!loaded.timeline_has_older);
     }
 
     #[test]
@@ -2220,5 +2795,30 @@ mod tests {
         assert_eq!(check_runs[0].url, None);
         assert_eq!(statuses[0].description, None);
         assert_eq!(statuses[0].url, None);
+    }
+
+    #[test]
+    fn timeline_dto_deserializes_legacy_sparse_json() {
+        let timeline: Vec<PullRequestTimelineEventDto> =
+            serde_json::from_str(r#"[{"actorLogin":"octocat","event":"closed"}]"#)
+                .expect("legacy timeline should deserialize");
+
+        assert_eq!(timeline[0].actor_login.as_deref(), Some("octocat"));
+        assert_eq!(timeline[0].event, "closed");
+        assert_eq!(timeline[0].id, None);
+        assert_eq!(timeline[0].occurred_at, None);
+        assert!(timeline[0].review_comments.is_empty());
+    }
+
+    #[test]
+    fn unknown_graphql_timeline_item_maps_to_generic_fallback() {
+        let item = super::map_github_timeline_item(serde_json::json!({
+            "__typename": "FutureTimelineEvent",
+            "id": "future-1"
+        }));
+
+        assert_eq!(item.event, "unknown");
+        assert_eq!(item.id.as_deref(), Some("future-1"));
+        assert_eq!(item.title.as_deref(), Some("FutureTimelineEvent"));
     }
 }
