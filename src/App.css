@@ -345,6 +345,12 @@
   border-left: 2px solid var(--rule);
 }
 
+.pr-activity-truncated {
+  margin: 0.75rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
 .pr-activity-load-older {
   justify-self: start;
   margin-top: 0.35rem;

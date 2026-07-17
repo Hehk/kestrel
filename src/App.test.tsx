@@ -139,7 +139,9 @@ const pullRequestDetail = (): PullRequestDetail => {
             occurredAt: "2026-01-03T00:01:00Z",
           },
         ],
+        reviewCommentsHasMore: true,
         state: "APPROVED",
+        url: "https://github.com/kestrel/app/pull/42#pullrequestreview-1",
       },
       {
         actorLogin: "octocat",
@@ -568,6 +570,9 @@ describe("App", () => {
     expect(newest.compareDocumentPosition(oldest)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(within(activity).getByText("approved the pull request")).toBeInTheDocument();
     expect(within(activity).getByText("nit")).toBeInTheDocument();
+    expect(
+      within(activity).getByRole("link", { name: "View the complete review on GitHub" }),
+    ).toHaveAttribute("href", "https://github.com/kestrel/app/pull/42#pullrequestreview-1");
     expect(within(activity).getByText("committed abcdef1")).toBeInTheDocument();
     expect(activity.querySelector('time[datetime="2026-01-04T00:00:00Z"]')).not.toBeNull();
     expect(screen.queryByRole("heading", { name: "Conversation comments" })).toBeNull();

@@ -469,6 +469,18 @@ const PullRequestTimelineItem = ({ event }: { event: TimelineEvent }) => {
           ))}
         </ul>
       )}
+      {event.reviewCommentsHasMore ? (
+        <p className="pr-activity-truncated">
+          Additional review comments are available.{" "}
+          {event.url ? (
+            <a href={event.url} rel="noreferrer" target="_blank">
+              View the complete review on GitHub
+            </a>
+          ) : (
+            "Open the review on GitHub to see them."
+          )}
+        </p>
+      ) : null}
     </li>
   );
 };

@@ -50,6 +50,7 @@ query PullRequestTimeline($owner: String!, $name: String!, $number: Int!, $befor
             url
             comments(first: 100) {
               nodes { id author { login } body createdAt url }
+              pageInfo { hasNextPage }
             }
           }
           ... on ClosedEvent { id actor { login } createdAt }
@@ -207,6 +208,8 @@ pub struct PullRequestTimelineEventDto {
     pub occurred_at: Option<String>,
     #[serde(default)]
     pub review_comments: Vec<PullRequestTimelineReviewCommentDto>,
+    #[serde(default)]
+    pub review_comments_has_more: bool,
     #[serde(default)]
     pub state: Option<String>,
     #[serde(default)]
@@ -1729,6 +1732,10 @@ fn map_github_timeline_item(item: serde_json::Value) -> PullRequestTimelineEvent
             url: json_string(comment, &["url"]),
         })
         .collect();
+    let review_comments_has_more = item
+        .pointer("/comments/pageInfo/hasNextPage")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
     let state = json_string(&item, &["state"])
         .or_else(|| json_string(&item, &["review", "state"]))
         .or_else(|| json_string(&item, &["previousReviewState"]));
@@ -1749,6 +1756,7 @@ fn map_github_timeline_item(item: serde_json::Value) -> PullRequestTimelineEvent
         id: json_string(&item, &["id"]),
         occurred_at,
         review_comments,
+        review_comments_has_more,
         state,
         title,
         url,
@@ -2634,6 +2642,7 @@ mod tests {
                 id: Some("timeline-1".to_string()),
                 occurred_at: Some("2026-01-02T00:00:00Z".to_string()),
                 review_comments: Vec::new(),
+                review_comments_has_more: false,
                 state: None,
                 title: Some("Add syncing".to_string()),
                 url: None,
@@ -2734,6 +2743,7 @@ mod tests {
             id: Some("review-1".to_string()),
             occurred_at: Some("2026-01-02T00:00:00Z".to_string()),
             review_comments: Vec::new(),
+            review_comments_has_more: false,
             state: Some("APPROVED".to_string()),
             title: None,
             url: None,
@@ -2808,6 +2818,30 @@ mod tests {
         assert_eq!(timeline[0].id, None);
         assert_eq!(timeline[0].occurred_at, None);
         assert!(timeline[0].review_comments.is_empty());
+        assert!(!timeline[0].review_comments_has_more);
+    }
+
+    #[test]
+    fn review_timeline_item_exposes_truncated_comments() {
+        let item = super::map_github_timeline_item(serde_json::json!({
+            "__typename": "PullRequestReview",
+            "id": "review-1",
+            "author": { "login": "reviewer" },
+            "state": "APPROVED",
+            "url": "https://github.com/kestrel/app/pull/42#pullrequestreview-1",
+            "comments": {
+                "nodes": [{
+                    "id": "comment-1",
+                    "author": { "login": "reviewer" },
+                    "body": "One of many comments"
+                }],
+                "pageInfo": { "hasNextPage": true }
+            }
+        }));
+
+        assert_eq!(item.event, "reviewed");
+        assert_eq!(item.review_comments.len(), 1);
+        assert!(item.review_comments_has_more);
     }
 
     #[test]

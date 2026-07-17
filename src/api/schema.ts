@@ -335,6 +335,7 @@ export interface components {
       id?: string | null;
       occurredAt?: string | null;
       reviewComments?: components["schemas"]["PullRequestTimelineReviewCommentDto"][];
+      reviewCommentsHasMore?: boolean;
       state?: string | null;
       title?: string | null;
       url?: string | null;
