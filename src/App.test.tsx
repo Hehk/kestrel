@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
@@ -48,6 +48,10 @@ type PullRequest = {
 type SaveRepository = (repository: string) => Response | Promise<Response>;
 type SyncPullRequests = (fullName: string) => Response | Promise<Response>;
 type SyncPullRequestDetail = (fullName: string, number: number) => Response | Promise<Response>;
+type LoadOlderPullRequestTimeline = (
+  fullName: string,
+  number: number,
+) => Response | Promise<Response>;
 
 const repository = (fullName: string, metadata: Partial<Repository> = {}): Repository => {
   const [owner = "", name = ""] = fullName.split("/");
@@ -80,16 +84,75 @@ const pullRequest = (number: number, title = `PR ${number}`): PullRequest => {
 
 const pullRequestDetail = (): PullRequestDetail => {
   return {
-    checkRuns: [{ name: "test", state: "success" }],
+    body: "Adds pull request syncing.\n\nThe description is stored as plain text.",
+    checkRuns: [
+      {
+        name: "test",
+        state: "success",
+        summary: "All test suites completed successfully.",
+        title: "Tests passed",
+        url: "https://ci.example.test/runs/42",
+      },
+      { name: "lint", state: "in_progress", summary: "Lint is still running.", url: null },
+      { name: "optional", state: "neutral" },
+      { name: "docs", state: "skipped" },
+      { name: "mystery", state: "new_state" },
+    ],
     commits: [{ message: "Add syncing", sha: "abcdef123456" }],
     diff: "diff --git a/app.rs b/app.rs",
     files: [{ filename: "app.rs", status: "modified" }],
     issueComments: [{ authorLogin: "octocat", body: "looks good" }],
     reviewComments: [{ authorLogin: "reviewer", body: "nit" }],
+    reviewDecision: "APPROVED",
     reviews: [{ authorLogin: "reviewer", state: "APPROVED" }],
-    statuses: [{ context: "ci", state: "success" }],
+    statuses: [
+      {
+        context: "ci",
+        description: "Build failed",
+        state: "failure",
+        url: "https://ci.example.test/builds/42",
+      },
+      { context: "deploy", description: null, state: "pending", url: null },
+    ],
     syncedAt: "2026-01-04T00:00:00Z",
-    timeline: [{ actorLogin: "octocat", event: "committed" }],
+    timeline: [
+      {
+        actorLogin: "octocat",
+        body: "looks good",
+        event: "commented",
+        id: "comment-1",
+        occurredAt: "2026-01-04T00:00:00Z",
+        reviewComments: [],
+        url: "https://github.com/kestrel/app/pull/42#issuecomment-1",
+      },
+      {
+        actorLogin: "reviewer",
+        body: "Approved after one small note.",
+        event: "reviewed",
+        id: "review-1",
+        occurredAt: "2026-01-03T00:00:00Z",
+        reviewComments: [
+          {
+            actorLogin: "reviewer",
+            body: "nit",
+            id: "review-comment-1",
+            occurredAt: "2026-01-03T00:01:00Z",
+          },
+        ],
+        reviewCommentsHasMore: true,
+        state: "APPROVED",
+        url: "https://github.com/kestrel/app/pull/42#pullrequestreview-1",
+      },
+      {
+        actorLogin: "octocat",
+        body: "Add syncing",
+        commitSha: "abcdef123456",
+        event: "committed",
+        id: "commit-1",
+        occurredAt: "2026-01-02T00:00:00Z",
+      },
+    ],
+    timelineHasOlder: true,
   };
 };
 
@@ -103,6 +166,7 @@ const mockAuth = (
   syncPullRequests?: SyncPullRequests,
   initialPullRequestDetails: Record<string, PullRequestDetail> = {},
   syncPullRequestDetail?: SyncPullRequestDetail,
+  loadOlderPullRequestTimeline?: LoadOlderPullRequestTimeline,
 ) => {
   let theme = initialTheme;
   let repositories = initialRepositories;
@@ -152,6 +216,25 @@ const mockAuth = (
         return jsonResponse({ repository: nextRepository }, 201);
       }
 
+      const olderTimelineMatch = url.match(
+        /\/api\/repositories\/([^/]+)\/([^/]+)\/pull-requests\/(\d+)\/timeline\/older$/,
+      );
+      if (olderTimelineMatch && method === "POST") {
+        const owner = decodeURIComponent(olderTimelineMatch[1] ?? "");
+        const name = decodeURIComponent(olderTimelineMatch[2] ?? "");
+        const number = Number(olderTimelineMatch[3]);
+        const fullName = `${owner}/${name}`;
+        if (loadOlderPullRequestTimeline !== undefined) {
+          return loadOlderPullRequestTimeline(fullName, number);
+        }
+
+        const key = `${fullName}#${number}`;
+        const detail = pullRequestDetailsByKey[key] ?? pullRequestDetail();
+        const updatedDetail = { ...detail, timelineHasOlder: false };
+        pullRequestDetailsByKey = { ...pullRequestDetailsByKey, [key]: updatedDetail };
+        return jsonResponse({ pullRequestDetail: updatedDetail });
+      }
+
       const pullRequestDetailMatch = url.match(
         /\/api\/repositories\/([^/]+)\/([^/]+)\/pull-requests\/(\d+)(?:\/sync)?$/,
       );
@@ -176,7 +259,11 @@ const mockAuth = (
 
           const detail = pullRequestDetail();
           pullRequestDetailsByKey = { ...pullRequestDetailsByKey, [key]: detail };
-          return jsonResponse({ pullRequestDetail: detail });
+          const syncedPullRequest =
+            pullRequestsByRepository[fullName]?.find(
+              (pullRequest) => pullRequest.number === number,
+            ) ?? pullRequest(number);
+          return jsonResponse({ pullRequest: syncedPullRequest, pullRequestDetail: detail });
         }
       }
 
@@ -329,7 +416,7 @@ describe("App", () => {
     expect(screen.getByRole("heading", { name: "kestrel" })).toBeInTheDocument();
     expect(screen.getByText("Repository is not tracked.")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("link", { name: "Home" }));
+    await user.click(screen.getByRole("link", { name: "Back to home" }));
     expect(screen.getByRole("heading", { name: "Tracked repositories" })).toBeInTheDocument();
   });
 
@@ -386,12 +473,24 @@ describe("App", () => {
     await user.click(await screen.findByRole("link", { name: "#42 Add syncing" }));
 
     expect(screen.getByRole("heading", { name: "Add syncing" })).toBeInTheDocument();
-    expect(screen.getByText("kestrel/app")).toBeInTheDocument();
-    expect(screen.getByText("#42")).toBeInTheDocument();
+    const sidebar = screen.getByRole("complementary", { name: "Pull request metadata" });
+    expect(within(sidebar).getByRole("heading", { name: "Details" })).toBeInTheDocument();
+    expect(within(sidebar).getByText("kestrel/app")).toBeInTheDocument();
+    expect(within(sidebar).getByText("#42")).toBeInTheDocument();
+    expect(within(sidebar).getByText("open")).toBeInTheDocument();
+    expect(within(sidebar).getByText("octocat")).toBeInTheDocument();
+    expect(
+      within(sidebar).getByText(
+        new Intl.DateTimeFormat(undefined, { dateStyle: "short", timeStyle: "short" }).format(
+          new Date("2026-01-02T00:00:00Z"),
+        ),
+      ),
+    ).toHaveAttribute("datetime", "2026-01-02T00:00:00Z");
     expect(screen.getByRole("link", { name: "Open on GitHub" })).toHaveAttribute(
       "href",
       "https://github.com/kestrel/app/pull/42",
     );
+    expect(screen.getByRole("link", { name: "Back to home" })).toHaveAttribute("href", "/");
   });
 
   it("syncs and renders pull request detail sections", async () => {
@@ -405,18 +504,395 @@ describe("App", () => {
     await user.click(await screen.findByRole("button", { name: "Load PRs for kestrel/app" }));
     await user.click(await screen.findByRole("link", { name: "#42 Add syncing" }));
     await screen.findByText("Pull request details are not stored yet.");
-    await user.click(screen.getByRole("button", { name: "Sync details" }));
+    await user.click(screen.getByRole("button", { name: "Sync pull request from GitHub" }));
 
-    expect(await screen.findByText("Details synced: 2026-01-04T00:00:00Z")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /Files changed/ })).toBeInTheDocument();
-    expect(screen.getByText("app.rs")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /Commits/ })).toBeInTheDocument();
-    expect(screen.getAllByText("Add syncing").length).toBeGreaterThan(1);
-    expect(screen.getByRole("heading", { name: /Reviews/ })).toBeInTheDocument();
-    expect(screen.getAllByText("reviewer").length).toBeGreaterThan(0);
-    expect(screen.getByRole("heading", { name: /Checks and statuses/ })).toBeInTheDocument();
-    expect(screen.getByText("test")).toBeInTheDocument();
-    expect(screen.getByText("diff --git a/app.rs b/app.rs")).toBeInTheDocument();
+    const sidebar = screen.getByRole("complementary", { name: "Pull request metadata" });
+    const detailsHeading = within(sidebar).getByRole("heading", { name: "Details" });
+    const filesHeading = within(sidebar).getByRole("heading", { name: "Files changed" });
+    const commitsHeading = within(sidebar).getByRole("heading", { name: "Commits" });
+    expect(detailsHeading.compareDocumentPosition(filesHeading)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(filesHeading.compareDocumentPosition(commitsHeading)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(within(sidebar).getByText("app.rs")).toBeInTheDocument();
+    expect(within(sidebar).getByText("Add syncing")).toBeInTheDocument();
+
+    const content = screen
+      .getByRole("heading", { name: "Add syncing" })
+      .closest<HTMLElement>(".PullRequestPage-content");
+    expect(content).not.toBeNull();
+    expect(
+      within(content as HTMLElement).queryByRole("heading", { name: /Files changed/ }),
+    ).toBeNull();
+    expect(within(content as HTMLElement).queryByRole("heading", { name: /Commits/ })).toBeNull();
+    expect(within(content as HTMLElement).queryByRole("heading", { name: /Reviews/ })).toBeNull();
+    expect(screen.getByRole("heading", { name: "Checks" })).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("complementary", { name: "Pull request status" })).getByText("test"),
+    ).toBeInTheDocument();
+    expect(within(content as HTMLElement).queryByRole("heading", { name: "Diff" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Load stored details" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Details synced:/)).not.toBeInTheDocument();
+  });
+
+  it("renders the plain-text description and canonical activity newest first", async () => {
+    window.history.replaceState({}, "", "/pull/kestrel%2Fapp/42");
+    const detail = {
+      ...pullRequestDetail(),
+      body: "**Plain text**\n\n[not a rendered link](https://example.test)",
+    };
+    mockAuth(
+      signedInResponse,
+      "system",
+      undefined,
+      [repository("kestrel/app")],
+      undefined,
+      { "kestrel/app": [pullRequest(42, "Add syncing")] },
+      undefined,
+      { "kestrel/app#42": detail },
+    );
+
+    renderApp();
+
+    const description = await screen.findByRole("region", { name: "Pull request description" });
+    expect(description).toHaveTextContent(
+      "**Plain text** [not a rendered link](https://example.test)",
+    );
+    expect(within(description).queryByRole("link")).not.toBeInTheDocument();
+    expect(within(description).queryByText("Plain text", { selector: "strong" })).toBeNull();
+
+    const activity = screen.getByRole("region", { name: "Activity" });
+    expect(within(activity).getByText("Newest first")).toBeInTheDocument();
+    const newest = within(activity).getByText("looks good");
+    const oldest = within(activity).getByText("Add syncing");
+    expect(newest.compareDocumentPosition(oldest)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(within(activity).getByText("approved the pull request")).toBeInTheDocument();
+    expect(within(activity).getByText("nit")).toBeInTheDocument();
+    expect(
+      within(activity).getByRole("link", { name: "View the complete review on GitHub" }),
+    ).toHaveAttribute("href", "https://github.com/kestrel/app/pull/42#pullrequestreview-1");
+    expect(within(activity).getByText("committed abcdef1")).toBeInTheDocument();
+    expect(activity.querySelector('time[datetime="2026-01-04T00:00:00Z"]')).not.toBeNull();
+    expect(screen.queryByRole("heading", { name: "Conversation comments" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Review comments" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Timeline" })).toBeNull();
+  });
+
+  it("loads and appends older pull request activity", async () => {
+    const user = userEvent.setup();
+    const olderRequest = deferredResponse();
+    window.history.replaceState({}, "", "/pull/kestrel%2Fapp/42");
+    const detail = pullRequestDetail();
+    mockAuth(
+      signedInResponse,
+      "system",
+      undefined,
+      [repository("kestrel/app")],
+      undefined,
+      { "kestrel/app": [pullRequest(42, "Add syncing")] },
+      undefined,
+      { "kestrel/app#42": detail },
+      undefined,
+      () => olderRequest.promise,
+    );
+
+    renderApp();
+
+    const button = await screen.findByRole("button", { name: "Load older activity" });
+    await user.click(button);
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("button", { name: "Sync pull request from GitHub" })).toBeDisabled();
+
+    olderRequest.resolve(
+      jsonResponse({
+        pullRequestDetail: {
+          ...detail,
+          timeline: [
+            ...detail.timeline,
+            {
+              actorLogin: "octocat",
+              event: "closed",
+              id: "closed-1",
+              occurredAt: "2026-01-01T00:00:00Z",
+            },
+          ],
+          timelineHasOlder: false,
+        },
+      }),
+    );
+
+    expect(await screen.findByText("closed the pull request")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Load older activity" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Sync pull request from GitHub" })).toBeEnabled();
+  });
+
+  it("refreshes the current pull request summary and details from the toolbar", async () => {
+    const user = userEvent.setup();
+    let finishSync: ((response: Response) => void) | undefined;
+    mockAuth(
+      signedInResponse,
+      "system",
+      undefined,
+      [repository("kestrel/app")],
+      undefined,
+      { "kestrel/app": [pullRequest(42, "Old title")] },
+      undefined,
+      {},
+      () =>
+        new Promise<Response>((resolve) => {
+          finishSync = resolve;
+        }),
+    );
+
+    renderApp();
+    await user.click(await screen.findByRole("button", { name: "Load PRs for kestrel/app" }));
+    await user.click(await screen.findByRole("link", { name: "#42 Old title" }));
+
+    const syncButton = screen.getByRole("button", { name: "Sync pull request from GitHub" });
+    await user.click(syncButton);
+
+    expect(syncButton).toBeDisabled();
+    expect(syncButton).toHaveAttribute("aria-busy", "true");
+    expect(syncButton.querySelector("svg")).toHaveClass("pr-sidebar-sync-icon");
+
+    if (finishSync === undefined) {
+      throw new Error("sync request did not start");
+    }
+    finishSync(
+      jsonResponse({
+        pullRequest: {
+          ...pullRequest(42, "Synced title"),
+          authorLogin: "hubot",
+          state: "closed",
+          updatedAt: "2026-01-05T00:00:00Z",
+        },
+        pullRequestDetail: pullRequestDetail(),
+      }),
+    );
+
+    expect(await screen.findByRole("heading", { name: "Synced title" })).toBeInTheDocument();
+    const metadata = screen.getByRole("complementary", { name: "Pull request metadata" });
+    expect(within(metadata).getByText("closed")).toBeInTheDocument();
+    expect(within(metadata).getByText("hubot")).toBeInTheDocument();
+    expect(syncButton).toHaveAttribute("aria-busy", "false");
+    expect(syncButton.querySelector("svg")).not.toHaveClass("pr-sidebar-sync-icon");
+  });
+
+  it("renders actions and review status above checks in the left sidebar", async () => {
+    const user = userEvent.setup();
+    window.history.replaceState({}, "", "/pull/kestrel%2Fapp/42");
+    mockAuth(
+      signedInResponse,
+      "system",
+      undefined,
+      [repository("kestrel/app")],
+      undefined,
+      { "kestrel/app": [pullRequest(42, "Add syncing")] },
+      undefined,
+      {
+        "kestrel/app#42": {
+          ...pullRequestDetail(),
+          reviewDecision: "CHANGES_REQUESTED",
+        },
+      },
+    );
+
+    renderApp();
+
+    const sidebar = await screen.findByRole("complementary", { name: "Pull request status" });
+    const actions = within(sidebar).getByRole("navigation", { name: "Pull request actions" });
+    const reviewHeading = within(sidebar).getByRole("heading", { name: "Review status" });
+    const checksHeading = within(sidebar).getByRole("heading", { name: "Checks" });
+    expect(actions.compareDocumentPosition(reviewHeading)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(reviewHeading.compareDocumentPosition(checksHeading)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(within(sidebar).getByText("Changes requested")).toHaveAttribute(
+      "data-status-kind",
+      "failure",
+    );
+
+    const backLink = within(actions).getByRole("link", { name: "Back to home" });
+    await user.hover(backLink);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Back to tracked repositories");
+    await user.unhover(backLink);
+    await waitFor(() => expect(screen.queryByRole("tooltip")).not.toBeInTheDocument());
+
+    const githubLink = within(actions).getByRole("link", { name: "Open on GitHub" });
+    await user.hover(githubLink);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Open this pull request on GitHub",
+    );
+    await user.unhover(githubLink);
+    await waitFor(() => expect(screen.queryByRole("tooltip")).not.toBeInTheDocument());
+
+    const syncButton = within(actions).getByRole("button", {
+      name: "Sync pull request from GitHub",
+    });
+    await user.hover(syncButton);
+    const syncTooltip = await screen.findByRole("tooltip");
+    expect(syncTooltip).toHaveTextContent("Sync pull request from GitHub");
+    expect(syncTooltip).toHaveTextContent(
+      `Last synced: ${new Intl.DateTimeFormat(undefined, {
+        dateStyle: "short",
+        timeStyle: "short",
+      }).format(new Date("2026-01-04T00:00:00Z"))}`,
+    );
+  });
+
+  it("keeps retained sidebar details visible when a refresh fails", async () => {
+    const user = userEvent.setup();
+    window.history.replaceState({}, "", "/pull/kestrel%2Fapp/42");
+    mockAuth(
+      signedInResponse,
+      "system",
+      undefined,
+      [repository("kestrel/app")],
+      undefined,
+      { "kestrel/app": [pullRequest(42, "Add syncing")] },
+      undefined,
+      { "kestrel/app#42": pullRequestDetail() },
+      () => jsonResponse({ error: "sync_failed" }, 500),
+    );
+
+    renderApp();
+    await user.click(await screen.findByRole("button", { name: "Sync pull request from GitHub" }));
+    expect(
+      await screen.findByText("Pull request details could not be loaded."),
+    ).toBeInTheDocument();
+
+    const metadata = screen.getByRole("complementary", { name: "Pull request metadata" });
+    expect(within(metadata).getByText("app.rs")).toBeInTheDocument();
+    const status = screen.getByRole("complementary", { name: "Pull request status" });
+    expect(within(status).getByText("Approved")).toBeInTheDocument();
+  });
+
+  it("renders check and status icons by state", async () => {
+    window.history.replaceState({}, "", "/pull/kestrel%2Fapp/42");
+    mockAuth(
+      signedInResponse,
+      "system",
+      undefined,
+      [repository("kestrel/app")],
+      undefined,
+      { "kestrel/app": [pullRequest(42, "Add syncing")] },
+      undefined,
+      { "kestrel/app#42": pullRequestDetail() },
+    );
+
+    renderApp();
+
+    expect(await screen.findByRole("button", { name: "test: Success" })).toHaveAttribute(
+      "data-status-kind",
+      "success",
+    );
+    expect(screen.getByRole("button", { name: "ci: Failure" })).toHaveAttribute(
+      "data-status-kind",
+      "failure",
+    );
+    expect(screen.getByRole("button", { name: "lint: In progress" })).toHaveAttribute(
+      "data-status-kind",
+      "pending",
+    );
+    expect(screen.getByRole("button", { name: "deploy: Pending" })).toHaveAttribute(
+      "data-status-kind",
+      "pending",
+    );
+    expect(screen.getByRole("button", { name: "optional: Neutral" })).toHaveAttribute(
+      "data-status-kind",
+      "neutral",
+    );
+    expect(screen.getByRole("button", { name: "docs: Skipped" })).toHaveAttribute(
+      "data-status-kind",
+      "neutral",
+    );
+    expect(screen.getByRole("button", { name: "mystery: New state" })).toHaveAttribute(
+      "data-status-kind",
+      "neutral",
+    );
+  });
+
+  it("shows check run details on hover without click toggling", async () => {
+    const user = userEvent.setup();
+    window.history.replaceState({}, "", "/pull/kestrel%2Fapp/42");
+    mockAuth(
+      signedInResponse,
+      "system",
+      undefined,
+      [repository("kestrel/app")],
+      undefined,
+      { "kestrel/app": [pullRequest(42, "Add syncing")] },
+      undefined,
+      { "kestrel/app#42": pullRequestDetail() },
+    );
+
+    renderApp();
+
+    const trigger = await screen.findByRole("button", { name: "test: Success" });
+    await user.hover(trigger);
+
+    const tooltip = await screen.findByRole("tooltip");
+    expect(within(tooltip).getByText("Success")).toBeInTheDocument();
+    expect(within(tooltip).getByText("Tests passed")).toBeInTheDocument();
+    expect(
+      within(tooltip).getByText("All test suites completed successfully."),
+    ).toBeInTheDocument();
+    expect(within(tooltip).getByRole("link", { name: "View run" })).toHaveAttribute(
+      "href",
+      "https://ci.example.test/runs/42",
+    );
+    expect(within(tooltip).getByRole("link", { name: "View run" })).toHaveAttribute(
+      "target",
+      "_blank",
+    );
+    expect(within(tooltip).getByRole("link", { name: "View run" })).toHaveAttribute(
+      "rel",
+      "noreferrer",
+    );
+
+    await user.click(trigger);
+    expect(screen.getByRole("tooltip")).toBeInTheDocument();
+  });
+
+  it("shows status details on hover and handles missing run links", async () => {
+    const user = userEvent.setup();
+    window.history.replaceState({}, "", "/pull/kestrel%2Fapp/42");
+    mockAuth(
+      signedInResponse,
+      "system",
+      undefined,
+      [repository("kestrel/app")],
+      undefined,
+      { "kestrel/app": [pullRequest(42, "Add syncing")] },
+      undefined,
+      { "kestrel/app#42": pullRequestDetail() },
+    );
+
+    renderApp();
+
+    const statusTrigger = await screen.findByRole("button", { name: "ci: Failure" });
+    await user.hover(statusTrigger);
+
+    const statusTooltip = await screen.findByRole("tooltip");
+    expect(within(statusTooltip).getByText("Failure")).toBeInTheDocument();
+    expect(within(statusTooltip).getByText("Build failed")).toBeInTheDocument();
+    expect(within(statusTooltip).getByRole("link", { name: "View run" })).toHaveAttribute(
+      "href",
+      "https://ci.example.test/builds/42",
+    );
+
+    await user.unhover(statusTrigger);
+    await waitFor(() => expect(screen.queryByRole("tooltip")).not.toBeInTheDocument());
+
+    await user.hover(screen.getByRole("button", { name: "lint: In progress" }));
+
+    const checkTooltip = await screen.findByRole("tooltip");
+    expect(within(checkTooltip).getByText("In progress")).toBeInTheDocument();
+    expect(within(checkTooltip).getByText("Lint is still running.")).toBeInTheDocument();
+    expect(within(checkTooltip).queryByRole("link", { name: "View run" })).not.toBeInTheDocument();
   });
 
   it("loads pull requests automatically from the pull request route", async () => {

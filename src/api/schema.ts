@@ -196,6 +196,22 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/repositories/{owner}/{name}/pull-requests/{number}/timeline/older": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["load_older_pull_request_timeline"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/settings": {
     parameters: {
       query?: never;
@@ -240,6 +256,9 @@ export interface components {
     PullRequestCheckRunDto: {
       name: string;
       state: string;
+      summary?: string | null;
+      title?: string | null;
+      url?: string | null;
     };
     PullRequestCommentDto: {
       authorLogin?: string | null;
@@ -250,16 +269,19 @@ export interface components {
       sha: string;
     };
     PullRequestDetailDto: {
+      body?: string | null;
       checkRuns: components["schemas"]["PullRequestCheckRunDto"][];
       commits: components["schemas"]["PullRequestCommitDto"][];
       diff?: string | null;
       files: components["schemas"]["PullRequestFileDto"][];
       issueComments: components["schemas"]["PullRequestCommentDto"][];
       reviewComments: components["schemas"]["PullRequestCommentDto"][];
+      reviewDecision?: string | null;
       reviews: components["schemas"]["PullRequestReviewDto"][];
       statuses: components["schemas"]["PullRequestStatusDto"][];
       syncedAt: string;
       timeline: components["schemas"]["PullRequestTimelineEventDto"][];
+      timelineHasOlder: boolean;
     };
     PullRequestDetailResponse: {
       pullRequestDetail: components["schemas"]["PullRequestDetailDto"];
@@ -301,11 +323,29 @@ export interface components {
     };
     PullRequestStatusDto: {
       context: string;
+      description?: string | null;
       state: string;
+      url?: string | null;
     };
     PullRequestTimelineEventDto: {
       actorLogin?: string | null;
+      body?: string | null;
+      commitSha?: string | null;
       event: string;
+      id?: string | null;
+      occurredAt?: string | null;
+      reviewComments?: components["schemas"]["PullRequestTimelineReviewCommentDto"][];
+      reviewCommentsHasMore?: boolean;
+      state?: string | null;
+      title?: string | null;
+      url?: string | null;
+    };
+    PullRequestTimelineReviewCommentDto: {
+      actorLogin?: string | null;
+      body?: string | null;
+      id?: string | null;
+      occurredAt?: string | null;
+      url?: string | null;
     };
     RepositoryDto: {
       createdAt: string;
@@ -323,6 +363,10 @@ export interface components {
     };
     SettingsResponse: {
       theme: components["schemas"]["Theme"];
+    };
+    SyncPullRequestResponse: {
+      pullRequest: components["schemas"]["PullRequestDto"];
+      pullRequestDetail: components["schemas"]["PullRequestDetailDto"];
     };
     SyncPullRequestsResponse: {
       complete: boolean;
@@ -768,7 +812,65 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Pull request detail synced */
+      /** @description Pull request synced */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SyncPullRequestResponse"];
+        };
+      };
+      /** @description Invalid repository or pull request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PullRequestErrorResponse"];
+        };
+      };
+      /** @description Authentication required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description GitHub App authorization required */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PullRequestErrorResponse"];
+        };
+      };
+      /** @description Repository is not tracked */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PullRequestErrorResponse"];
+        };
+      };
+    };
+  };
+  load_older_pull_request_timeline: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        owner: string;
+        name: string;
+        number: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Stored pull request detail with the next older timeline page */
       200: {
         headers: {
           [name: string]: unknown;
@@ -802,8 +904,17 @@ export interface operations {
           "application/json": components["schemas"]["PullRequestErrorResponse"];
         };
       };
-      /** @description Repository is not tracked */
+      /** @description Repository or pull request detail is not stored */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PullRequestErrorResponse"];
+        };
+      };
+      /** @description GitHub timeline sync failed */
+      502: {
         headers: {
           [name: string]: unknown;
         };

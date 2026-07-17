@@ -1,0 +1,1 @@
+ALTER TABLE tracked_repository_pull_request_details ADD COLUMN review_decision TEXT;

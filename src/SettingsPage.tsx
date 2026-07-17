@@ -1,67 +1,8 @@
 import { Select } from "@base-ui/react/select";
 import { useModel, send } from "./model";
 import * as Settings from "./settingsSlice";
-
-function CaretUpDownIcon(props: React.ComponentProps<"svg">) {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
-      fill="currentColor"
-      {...props}
-      style={{ display: "block", ...props.style }}
-    >
-      <path d="M11 10H5l3 3.5zm0-4H5l3-3.5z" />
-    </svg>
-  );
-}
-
-function CheckIcon(props: React.ComponentProps<"svg">) {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      {...props}
-      style={{ display: "block", ...props.style }}
-    >
-      <path d="m2.5 8.5 4 4 7-9" />
-    </svg>
-  );
-}
-
-function CaretUpIcon(props: React.ComponentProps<"svg">) {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
-      fill="currentColor"
-      {...props}
-      style={{ display: "block", ...props.style }}
-    >
-      <path d="M12 10H4l4-4.5z" />
-    </svg>
-  );
-}
-
-function CaretDownIcon(props: React.ComponentProps<"svg">) {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
-      fill="currentColor"
-      {...props}
-      style={{ display: "block", ...props.style }}
-    >
-      <path d="M12 6H4l4 4.5z" />
-    </svg>
-  );
-}
+import DefaultHeader from "./DefaultHeader";
+import { CaretDownIcon, CaretUpDownIcon, CaretUpIcon, CheckIcon } from "./icons/Icons";
 
 const themes: Array<{ label: string; value: Settings.Theme }> = [
   { label: "System", value: "system" },
@@ -124,7 +65,7 @@ export const SettingsPage = () => {
   const themeSyncError = useModel((model) => model.get("settings").themeSyncError);
 
   return (
-    <>
+    <div className="default-page">
       <DefaultHeader />
       <section className="page-card">
         <h1>Settings</h1>
@@ -143,6 +84,6 @@ export const SettingsPage = () => {
           ) : null}
         </div>
       </section>
-    </>
+    </div>
   );
 };

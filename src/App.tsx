@@ -26,7 +26,7 @@ const Page = ({ route }: { route: Router.AuthenticatedRoute }) => {
 
 const HomePage = () => {
   return (
-    <>
+    <div className="default-page">
       <DefaultHeader />
       <section className="page-card">
         <p className="eyebrow">Repositories</p>
@@ -34,7 +34,7 @@ const HomePage = () => {
         <RepositoryList />
         <AddRepositoryForm />
       </section>
-    </>
+    </div>
   );
 };
 
@@ -179,8 +179,6 @@ const PullRequestsSummary = ({
   }
 };
 
-
-
 const AddRepositoryForm = () => {
   const errorId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -248,17 +246,16 @@ const addErrorText = (error: Repositories.AddError | null) => {
   }
 };
 
-
 const NotFoundPage = ({ path }: { path: string }) => {
   return (
-    <>
+    <div className="default-page">
       <DefaultHeader />
       <section className="page-card">
         <p className="eyebrow">Not Found</p>
         <h1>Route not found</h1>
         <p>No page exists for {path}.</p>
       </section>
-    </>
+    </div>
   );
 };
 
@@ -266,11 +263,9 @@ const AuthenticatedApp = () => {
   const route = useModel((model) => model.get("route"));
 
   return (
-    <div className="app-shell">
-      <main>
-        <Page route={route} />
-      </main>
-    </div>
+    <main>
+      <Page route={route} />
+    </main>
   );
 };
 
