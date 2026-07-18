@@ -4,19 +4,19 @@ import * as Session from "./session";
 
 const DefaultHeader = () => {
   return (
-    <header className="app-header">
-      <p className="site-title">Kestrel</p>
-      <nav className="app-nav" aria-label="Primary">
+    <header class="app-header">
+      <p class="site-title">Kestrel</p>
+      <nav class="app-nav" aria-label="Primary">
         <Link to={{ name: "Home" }}>Home</Link>
-        <span className="nav-separator" aria-hidden="true">
+        <span class="nav-separator" aria-hidden="true">
           |
         </span>
         <Link to={{ name: "Settings" }}>Settings</Link>
-        <span className="nav-separator" aria-hidden="true">
+        <span class="nav-separator" aria-hidden="true">
           |
         </span>
         <Link to={{ name: "PullRequest", repo: "kestrel", id: "42" }}>Sample PR</Link>
-        <span className="nav-separator" aria-hidden="true">
+        <span class="nav-separator" aria-hidden="true">
           |
         </span>
         <AuthNav />
@@ -33,7 +33,7 @@ const AuthNav = () => {
   return (
     <>
       <span>{displayName()}</span>
-      <button type="button" className="counter" onClick={onLogout}>
+      <button type="button" class="counter" onClick={onLogout}>
         Sign out
       </button>
     </>

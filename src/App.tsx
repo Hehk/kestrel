@@ -29,10 +29,10 @@ const Page = (props: { route: Router.AuthenticatedRoute }) => {
 
 const HomePage = () => {
   return (
-    <div className="default-page">
+    <div class="default-page">
       <DefaultHeader />
-      <section className="page-card">
-        <p className="eyebrow">Repositories</p>
+      <section class="page-card">
+        <p class="eyebrow">Repositories</p>
         <h1>Tracked repositories</h1>
         <RepositoryList />
         <AddRepositoryForm />
@@ -46,16 +46,16 @@ const RepositoryList = () => {
   return (
     <Switch>
       <Match when={repositories().status === "loading"}>
-        <p className="repo-status">Loading repositories...</p>
+        <p class="repo-status">Loading repositories...</p>
       </Match>
       <Match when={repositories().status === "error"}>
-        <p className="repo-status">Repositories could not be loaded.</p>
+        <p class="repo-status">Repositories could not be loaded.</p>
       </Match>
       <Match when={repositories().repositories.length === 0}>
-        <p className="repo-status">No repositories tracked yet.</p>
+        <p class="repo-status">No repositories tracked yet.</p>
       </Match>
       <Match when={repositories().status === "loaded"}>
-        <ul className="repo-list" aria-label="Tracked repositories">
+        <ul class="repo-list" aria-label="Tracked repositories">
           <For each={repositories().repositories}>
             {(repository) => (
               <RepositoryRow
@@ -75,12 +75,12 @@ const RepositoryRow = (props: {
   repository: Repositories.Repository;
 }) => {
   return (
-    <li className="repo-row">
-      <div className="repo-row-header">
+    <li class="repo-row">
+      <div class="repo-row-header">
         <a href={props.repository.htmlUrl}>{props.repository.fullName}</a>
-        <span className="repo-provider">GitHub</span>
+        <span class="repo-provider">GitHub</span>
       </div>
-      <div className="repo-actions">
+      <div class="repo-actions">
         <button
           aria-label={`Load PRs for ${props.repository.fullName}`}
           disabled={
@@ -119,14 +119,14 @@ const RepositoryRow = (props: {
 const RepositorySyncStatus = ({ repository }: { repository: Repositories.Repository }) => {
   if (repository.pullRequestsSyncError) {
     return (
-      <p className="repo-pr-status">
+      <p class="repo-pr-status">
         Last PR sync failed: {repositorySyncErrorText(repository.pullRequestsSyncError)}
       </p>
     );
   }
 
   if (repository.pullRequestsSyncedAt) {
-    return <p className="repo-pr-status">Last PR sync: {repository.pullRequestsSyncedAt}</p>;
+    return <p class="repo-pr-status">Last PR sync: {repository.pullRequestsSyncedAt}</p>;
   }
 
   return null;
@@ -148,23 +148,30 @@ const PullRequestsSummary = (props: {
   repository: Repositories.Repository;
 }) => {
   return (
-    <Switch fallback={<p className="repo-pr-status">Pull requests not loaded.</p>}>
+    <Switch fallback={<p class="repo-pr-status">Pull requests not loaded.</p>}>
       <Match when={props.pullRequests?.status === "loading"}>
-        <p className="repo-pr-status">Loading pull requests...</p>
+        <p class="repo-pr-status">Loading pull requests...</p>
       </Match>
       <Match when={props.pullRequests?.status === "syncing"}>
-        <p className="repo-pr-status">Syncing pull requests...</p>
+        <p class="repo-pr-status">Syncing pull requests...</p>
       </Match>
       <Match when={props.pullRequests?.status === "error"}>
         <PullRequestsError
-          error={(props.pullRequests as Extract<Repositories.PullRequestsState, { status: "error" }>).error}
+          error={
+            (props.pullRequests as Extract<Repositories.PullRequestsState, { status: "error" }>)
+              .error
+          }
         />
       </Match>
-      <Match when={props.pullRequests?.status === "loaded" && props.pullRequests.pullRequests.length === 0}>
-        <p className="repo-pr-status">No pull requests stored yet.</p>
+      <Match
+        when={
+          props.pullRequests?.status === "loaded" && props.pullRequests.pullRequests.length === 0
+        }
+      >
+        <p class="repo-pr-status">No pull requests stored yet.</p>
       </Match>
       <Match when={props.pullRequests?.status === "loaded"}>
-        <ul className="repo-pr-list" aria-label={`Pull requests for ${props.repository.fullName}`}>
+        <ul class="repo-pr-list" aria-label={`Pull requests for ${props.repository.fullName}`}>
           <For each={props.pullRequests?.pullRequests}>
             {(pullRequest) => (
               <li>
@@ -177,7 +184,7 @@ const PullRequestsSummary = (props: {
                 >
                   #{pullRequest.number} {pullRequest.title}
                 </Link>
-                <span className="repo-pr-meta">{pullRequest.state}</span>
+                <span class="repo-pr-meta">{pullRequest.state}</span>
               </li>
             )}
           </For>
@@ -200,7 +207,7 @@ const AddRepositoryForm = () => {
 
   return (
     <form
-      className="repo-add-form"
+      class="repo-add-form"
       onSubmit={(event) => {
         event.preventDefault();
         if (repositories().status !== "loaded" || saving()) {
@@ -218,10 +225,10 @@ const AddRepositoryForm = () => {
         setRepositoryInput("");
       }}
     >
-      <label className="repo-add-label" for="repository-input">
+      <label class="repo-add-label" for="repository-input">
         Add GitHub repository
       </label>
-      <div className="repo-add-controls">
+      <div class="repo-add-controls">
         <input
           aria-describedby={error() ? errorId : undefined}
           disabled={repositories().status !== "loaded" || saving()}
@@ -237,7 +244,7 @@ const AddRepositoryForm = () => {
         </button>
       </div>
       {error() ? (
-        <p className="repo-add-error" id={errorId}>
+        <p class="repo-add-error" id={errorId}>
           {error()}
         </p>
       ) : null}
@@ -264,10 +271,10 @@ const addErrorText = (error: Repositories.AddError | null) => {
 
 const NotFoundPage = ({ path }: { path: string }) => {
   return (
-    <div className="default-page">
+    <div class="default-page">
       <DefaultHeader />
-      <section className="page-card">
-        <p className="eyebrow">Not Found</p>
+      <section class="page-card">
+        <p class="eyebrow">Not Found</p>
         <h1>Route not found</h1>
         <p>No page exists for {path}.</p>
       </section>

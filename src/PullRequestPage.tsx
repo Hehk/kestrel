@@ -74,15 +74,18 @@ const PullRequestPage = ({ repo, id }: { repo: string; id: string }) => {
       return {
         content: (
           <>
-          <p>Pull request is not stored yet.</p>
-          <button
-            onClick={() =>
-              send({ kind: "Repositories", msg: { kind: "PullRequestsSyncRequested", repository } })
-            }
-            type="button"
-          >
-            Sync pull requests
-          </button>
+            <p>Pull request is not stored yet.</p>
+            <button
+              onClick={() =>
+                send({
+                  kind: "Repositories",
+                  msg: { kind: "PullRequestsSyncRequested", repository },
+                })
+              }
+              type="button"
+            >
+              Sync pull requests
+            </button>
           </>
         ),
         kind: "message",
@@ -103,9 +106,7 @@ const PullRequestPage = ({ repo, id }: { repo: string; id: string }) => {
     <Switch>
       <Match when={ready()}>{(data) => <PullRequestContent data={data} />}</Match>
       <Match when={message()}>
-        {(data) => (
-          <PullRequestMessage title={data().title}>{data().content}</PullRequestMessage>
-        )}
+        {(data) => <PullRequestMessage title={data().title}>{data().content}</PullRequestMessage>}
       </Match>
     </Switch>
   );
@@ -129,17 +130,17 @@ const PullRequestContent = (props: { data: Accessor<PullRequestPageData> }) => {
   const details = () => getDetails(props.data().pullRequestDetail);
 
   return (
-    <div className="PullRequestPage">
-      <aside aria-label="Pull request status" className="PullRequestPage-leftSidebar">
+    <div class="PullRequestPage">
+      <aside aria-label="Pull request status" class="PullRequestPage-leftSidebar">
         <PullRequestActions data={props.data} />
         <PullRequestReviewStatus details={details} />
         <PullRequestChecks details={details} />
       </aside>
-      <section className="PullRequestPage-content">
-        <h1 className="PullRequestPage-title">{props.data().pullRequest.title}</h1>
+      <section class="PullRequestPage-content">
+        <h1 class="PullRequestPage-title">{props.data().pullRequest.title}</h1>
         <PullRequestDetailPanel data={props.data} />
       </section>
-      <aside aria-label="Pull request metadata" className="PullRequestPage-rightSidebar">
+      <aside aria-label="Pull request metadata" class="PullRequestPage-rightSidebar">
         <PullRequestMetadata data={props.data} />
         <Show when={details()}>
           {(detail) => (
@@ -155,10 +156,10 @@ const PullRequestContent = (props: { data: Accessor<PullRequestPageData> }) => {
 };
 
 const PullRequestMessage = ({ children, title }: ParentProps<{ title: string }>) => (
-  <section className="default-page page-card">
+  <section class="default-page page-card">
     <Link
       aria-label="Back to home"
-      className="pr-page-back pr-sidebar-action"
+      class="pr-page-back pr-sidebar-action"
       title="Back to home"
       to={{ name: "Home" }}
     >
@@ -171,12 +172,12 @@ const PullRequestMessage = ({ children, title }: ParentProps<{ title: string }>)
 
 const PullRequestActions = (props: { data: Accessor<PullRequestPageData> }) => {
   return (
-    <nav aria-label="Pull request actions" className="pr-sidebar-actions">
+    <nav aria-label="Pull request actions" class="pr-sidebar-actions">
       <Tooltip closeDelay={150} gutter={8} openDelay={0}>
         <Tooltip.Trigger
           as={Link}
           aria-label="Back to home"
-          className="pr-sidebar-action"
+          class="pr-sidebar-action"
           to={{ name: "Home" }}
         >
           <ArrowLeftIcon />
@@ -187,7 +188,7 @@ const PullRequestActions = (props: { data: Accessor<PullRequestPageData> }) => {
         <Tooltip.Trigger
           as="a"
           aria-label="Open on GitHub"
-          className="pr-sidebar-action"
+          class="pr-sidebar-action"
           href={props.data().pullRequest.htmlUrl}
         >
           <GitHubIcon />
@@ -198,7 +199,7 @@ const PullRequestActions = (props: { data: Accessor<PullRequestPageData> }) => {
         <Tooltip.Trigger
           aria-busy={props.data().pullRequestDetail?.status === "syncing"}
           aria-label="Sync pull request from GitHub"
-          className="pr-sidebar-action"
+          class="pr-sidebar-action"
           disabled={
             props.data().pullRequestDetail?.status === "loading" ||
             props.data().pullRequestDetail?.status === "loadingTimeline" ||
@@ -217,7 +218,7 @@ const PullRequestActions = (props: { data: Accessor<PullRequestPageData> }) => {
           type="button"
         >
           <SyncIcon
-            className={
+            class={
               props.data().pullRequestDetail?.status === "syncing"
                 ? "pr-sidebar-sync-icon"
                 : undefined
@@ -226,8 +227,9 @@ const PullRequestActions = (props: { data: Accessor<PullRequestPageData> }) => {
         </Tooltip.Trigger>
         <PullRequestTooltip>
           <span>Sync pull request from GitHub</span>
-          <span className="pr-tooltip-secondary">
-            Last synced: {props.data().pullRequestDetail?.detail?.syncedAt === undefined
+          <span class="pr-tooltip-secondary">
+            Last synced:{" "}
+            {props.data().pullRequestDetail?.detail?.syncedAt === undefined
               ? "Never"
               : formatLocalDateTime(props.data().pullRequestDetail?.detail?.syncedAt ?? "")}
           </span>
@@ -239,7 +241,7 @@ const PullRequestActions = (props: { data: Accessor<PullRequestPageData> }) => {
 
 const PullRequestTooltip = ({ children }: ParentProps) => (
   <Tooltip.Portal>
-    <Tooltip.Content className="pr-tooltip pr-tooltip-positioner">{children}</Tooltip.Content>
+    <Tooltip.Content class="pr-tooltip pr-tooltip-positioner">{children}</Tooltip.Content>
   </Tooltip.Portal>
 );
 
@@ -257,22 +259,23 @@ const PullRequestDetailPanel = (props: { data: Accessor<PullRequestPageData> }) 
   const detailState = () => props.data().pullRequestDetail;
   const detail = () => getDetails(detailState());
   return (
-    <Switch fallback={<p className="repo-pr-status">Pull request details not loaded.</p>}>
+    <Switch fallback={<p class="repo-pr-status">Pull request details not loaded.</p>}>
       <Match when={detailState()?.status === "loading"}>
-        <p className="repo-pr-status">Loading pull request details...</p>
+        <p class="repo-pr-status">Loading pull request details...</p>
       </Match>
       <Match when={detailState()?.status === "syncing"}>
-        <p className="repo-pr-status">Syncing pull request details...</p>
+        <p class="repo-pr-status">Syncing pull request details...</p>
       </Match>
       <Match when={detailState()?.status === "error" && detail() === undefined}>
         <PullRequestDetailError
           error={
-            (detailState() as Extract<Repositories.PullRequestDetailState, { status: "error" }>).error
+            (detailState() as Extract<Repositories.PullRequestDetailState, { status: "error" }>)
+              .error
           }
         />
       </Match>
       <Match when={detail()}>
-        <div className="pr-detail-sections">
+        <div class="pr-detail-sections">
           <Show when={detailState()?.status === "error"}>
             <PullRequestDetailError
               error={
@@ -293,38 +296,36 @@ const PullRequestDetailError = ({ error }: { error: Repositories.PullRequestsErr
   switch (error) {
     case "authorizationRequired":
       return (
-        <p className="repo-pr-status">
+        <p class="repo-pr-status">
           GitHub App authorization required.{" "}
           <a href={apiUrl("/api/github-app/authorize")}>Authorize more repos</a>.
         </p>
       );
     case "pullRequestNotFound":
-      return <p className="repo-pr-status">Pull request details are not stored yet.</p>;
+      return <p class="repo-pr-status">Pull request details are not stored yet.</p>;
     case "repositoryNotTracked":
-      return <p className="repo-pr-status">Repository is not tracked.</p>;
+      return <p class="repo-pr-status">Repository is not tracked.</p>;
     case "syncFailed":
-      return <p className="repo-pr-status">Pull request details could not be loaded.</p>;
+      return <p class="repo-pr-status">Pull request details could not be loaded.</p>;
   }
 };
 
-const PullRequestFiles = (props: {
-  files: Accessor<Repositories.PullRequestDetail["files"]>;
-}) => {
+const PullRequestFiles = (props: { files: Accessor<Repositories.PullRequestDetail["files"]> }) => {
   return (
-    <section className="pr-sidebar-section">
-      <header className="pr-sidebar-header">
-        <h2 className="pr-sidebar-title">Files changed</h2>
-        <span className="pr-sidebar-count">{props.files().length}</span>
+    <section class="pr-sidebar-section">
+      <header class="pr-sidebar-header">
+        <h2 class="pr-sidebar-title">Files changed</h2>
+        <span class="pr-sidebar-count">{props.files().length}</span>
       </header>
       {props.files().length === 0 ? (
-        <p className="pr-sidebar-empty">None stored.</p>
+        <p class="pr-sidebar-empty">None stored.</p>
       ) : (
-        <ul className="pr-sidebar-list">
+        <ul class="pr-sidebar-list">
           <For each={props.files()}>
             {(file) => (
-              <li className="pr-sidebar-data-row">
-                <span className="pr-sidebar-data-primary">{file.filename}</span>
-                <span className="pr-sidebar-data-secondary">{file.status}</span>
+              <li class="pr-sidebar-data-row">
+                <span class="pr-sidebar-data-primary">{file.filename}</span>
+                <span class="pr-sidebar-data-secondary">{file.status}</span>
               </li>
             )}
           </For>
@@ -338,20 +339,20 @@ const PullRequestCommits = (props: {
   commits: Accessor<Repositories.PullRequestDetail["commits"]>;
 }) => {
   return (
-    <section className="pr-sidebar-section">
-      <header className="pr-sidebar-header">
-        <h2 className="pr-sidebar-title">Commits</h2>
-        <span className="pr-sidebar-count">{props.commits().length}</span>
+    <section class="pr-sidebar-section">
+      <header class="pr-sidebar-header">
+        <h2 class="pr-sidebar-title">Commits</h2>
+        <span class="pr-sidebar-count">{props.commits().length}</span>
       </header>
       {props.commits().length === 0 ? (
-        <p className="pr-sidebar-empty">None stored.</p>
+        <p class="pr-sidebar-empty">None stored.</p>
       ) : (
-        <ul className="pr-sidebar-list">
+        <ul class="pr-sidebar-list">
           <For each={props.commits()}>
             {(commit) => (
-              <li className="pr-sidebar-data-row">
-                <span className="pr-sidebar-data-primary">{commit.message}</span>
-                <span className="pr-sidebar-data-secondary">{commit.sha.slice(0, 7)}</span>
+              <li class="pr-sidebar-data-row">
+                <span class="pr-sidebar-data-primary">{commit.message}</span>
+                <span class="pr-sidebar-data-secondary">{commit.sha.slice(0, 7)}</span>
               </li>
             )}
           </For>
@@ -361,15 +362,13 @@ const PullRequestCommits = (props: {
   );
 };
 
-const PullRequestDescription = (props: {
-  body: Accessor<string | null | undefined>;
-}) => {
+const PullRequestDescription = (props: { body: Accessor<string | null | undefined> }) => {
   return (
-    <section aria-label="Pull request description" className="pr-description">
+    <section aria-label="Pull request description" class="pr-description">
       {props.body()?.trim() ? (
         <p>{props.body()}</p>
       ) : (
-        <p className="repo-pr-status">No description provided.</p>
+        <p class="repo-pr-status">No description provided.</p>
       )}
     </section>
   );
@@ -381,36 +380,31 @@ const PullRequestTimeline = (props: { data: Accessor<PullRequestPageData> }) => 
   const timeline = () => detail()?.timeline ?? [];
 
   return (
-    <section
-      aria-labelledby="pull-request-activity-heading"
-      className="pr-detail-section pr-activity"
-    >
-      <header className="pr-activity-heading">
+    <section aria-labelledby="pull-request-activity-heading" class="pr-detail-section pr-activity">
+      <header class="pr-activity-heading">
         <h2 id="pull-request-activity-heading">Activity</h2>
-        <span className="repo-pr-meta">
+        <span class="repo-pr-meta">
           {timeline().some((event) => event.id === undefined && event.occurredAt === undefined)
             ? "Stored activity; sync to refresh"
             : "Newest first"}
         </span>
       </header>
       {timeline().length === 0 ? (
-        <p className="repo-pr-status">No activity stored.</p>
+        <p class="repo-pr-status">No activity stored.</p>
       ) : (
-        <ol className="pr-activity-list">
-          <For each={timeline()}>
-            {(event) => <PullRequestTimelineItem event={event} />}
-          </For>
+        <ol class="pr-activity-list">
+          <For each={timeline()}>{(event) => <PullRequestTimelineItem event={event} />}</For>
         </ol>
       )}
       {detailState()?.status === "timelineError" ? (
-        <p className="repo-pr-status" role="alert">
+        <p class="repo-pr-status" role="alert">
           Older activity could not be loaded. Try again.
         </p>
       ) : null}
       <Show when={detail()?.timelineHasOlder}>
         <button
           aria-busy={detailState()?.status === "loadingTimeline"}
-          className="pr-activity-load-older"
+          class="pr-activity-load-older"
           disabled={detailState()?.status === "loadingTimeline"}
           onClick={() =>
             send({
@@ -441,8 +435,8 @@ const PullRequestTimelineItem = ({ event }: { event: TimelineEvent }) => {
   const reviewComments = event.reviewComments ?? [];
 
   return (
-    <li className="pr-activity-item">
-      <div className="pr-activity-item-heading">
+    <li class="pr-activity-item">
+      <div class="pr-activity-item-heading">
         <span>
           <strong>{actor}</strong>{" "}
           {event.url ? (
@@ -454,31 +448,31 @@ const PullRequestTimelineItem = ({ event }: { event: TimelineEvent }) => {
           )}
         </span>
         {event.occurredAt ? (
-          <time className="repo-pr-meta" dateTime={event.occurredAt}>
+          <time class="repo-pr-meta" dateTime={event.occurredAt}>
             {formatLocalDateTime(event.occurredAt)}
           </time>
         ) : null}
       </div>
-      {event.body ? <p className="pr-activity-body">{event.body}</p> : null}
+      {event.body ? <p class="pr-activity-body">{event.body}</p> : null}
       {reviewComments.length === 0 ? null : (
-        <ul aria-label="Review comments" className="pr-activity-review-comments">
+        <ul aria-label="Review comments" class="pr-activity-review-comments">
           {reviewComments.map((comment) => (
             <li>
-              <div className="pr-activity-review-comment-heading">
+              <div class="pr-activity-review-comment-heading">
                 <strong>{comment.actorLogin ?? "GitHub"}</strong>
                 {comment.occurredAt ? (
-                  <time className="repo-pr-meta" dateTime={comment.occurredAt}>
+                  <time class="repo-pr-meta" dateTime={comment.occurredAt}>
                     {formatLocalDateTime(comment.occurredAt)}
                   </time>
                 ) : null}
               </div>
-              {comment.body ? <p className="pr-activity-body">{comment.body}</p> : null}
+              {comment.body ? <p class="pr-activity-body">{comment.body}</p> : null}
             </li>
           ))}
         </ul>
       )}
       {event.reviewCommentsHasMore ? (
-        <p className="pr-activity-truncated">
+        <p class="pr-activity-truncated">
           Additional review comments are available.{" "}
           {event.url ? (
             <a href={event.url} rel="noreferrer" target="_blank">
@@ -557,26 +551,24 @@ const humanizeEvent = (event: string) => {
   return label === "" ? "updated the pull request" : label;
 };
 
-const PullRequestChecks = (props: {
-  details: Accessor<ReturnType<typeof getDetails>>;
-}) => {
+const PullRequestChecks = (props: { details: Accessor<ReturnType<typeof getDetails>> }) => {
   return (
     <Show when={props.details()}>
       {(details) => (
-        <section className="pr-sidebar-section">
-          <header className="pr-sidebar-header">
-            <h2 className="pr-sidebar-title">Checks</h2>
-            <span className="pr-sidebar-count">
+        <section class="pr-sidebar-section">
+          <header class="pr-sidebar-header">
+            <h2 class="pr-sidebar-title">Checks</h2>
+            <span class="pr-sidebar-count">
               {details().checkRuns.length + details().statuses.length}
             </span>
           </header>
           {details().checkRuns.length + details().statuses.length === 0 ? (
-            <p className="pr-sidebar-empty">None stored.</p>
+            <p class="pr-sidebar-empty">None stored.</p>
           ) : (
-            <ul className="pr-sidebar-list">
+            <ul class="pr-sidebar-list">
               <For each={details().checkRuns}>
                 {(check) => (
-                  <li className="pr-sidebar-item">
+                  <li class="pr-sidebar-item">
                     <PullRequestStatusIcon
                       label={check.name}
                       state={check.state}
@@ -589,7 +581,7 @@ const PullRequestChecks = (props: {
               </For>
               <For each={details().statuses}>
                 {(status) => (
-                  <li className="pr-sidebar-item">
+                  <li class="pr-sidebar-item">
                     <PullRequestStatusIcon
                       description={status.description}
                       label={status.context}
@@ -609,31 +601,31 @@ const PullRequestChecks = (props: {
 
 const PullRequestMetadata = (props: { data: Accessor<PullRequestPageData> }) => {
   return (
-    <section className="pr-sidebar-section pr-sidebar-metadata">
-      <header className="pr-sidebar-header">
-        <h2 className="pr-sidebar-title">Details</h2>
+    <section class="pr-sidebar-section pr-sidebar-metadata">
+      <header class="pr-sidebar-header">
+        <h2 class="pr-sidebar-title">Details</h2>
       </header>
-      <dl className="pr-sidebar-metadata-list">
-        <div className="pr-sidebar-metadata-item">
+      <dl class="pr-sidebar-metadata-list">
+        <div class="pr-sidebar-metadata-item">
           <dt>Repository</dt>
           <dd>{props.data().repository.fullName}</dd>
         </div>
-        <div className="pr-sidebar-metadata-item">
+        <div class="pr-sidebar-metadata-item">
           <dt>Number</dt>
           <dd>#{props.data().pullRequest.number}</dd>
         </div>
-        <div className="pr-sidebar-metadata-item">
+        <div class="pr-sidebar-metadata-item">
           <dt>State</dt>
           <dd>{props.data().pullRequest.state}</dd>
         </div>
-        <div className="pr-sidebar-metadata-item">
+        <div class="pr-sidebar-metadata-item">
           <dt>Author</dt>
           <dd>{props.data().pullRequest.authorLogin ?? "Unknown"}</dd>
         </div>
-        <div className="pr-sidebar-metadata-item">
+        <div class="pr-sidebar-metadata-item">
           <dt>Updated</dt>
           <dd>
-            <time className="pr-sidebar-time" dateTime={props.data().pullRequest.updatedAt}>
+            <time class="pr-sidebar-time" dateTime={props.data().pullRequest.updatedAt}>
               {formatLocalDateTime(props.data().pullRequest.updatedAt)}
             </time>
           </dd>
@@ -643,21 +635,19 @@ const PullRequestMetadata = (props: { data: Accessor<PullRequestPageData> }) => 
   );
 };
 
-const PullRequestReviewStatus = (props: {
-  details: Accessor<ReturnType<typeof getDetails>>;
-}) => {
+const PullRequestReviewStatus = (props: { details: Accessor<ReturnType<typeof getDetails>> }) => {
   const decision = createMemo(() => reviewDecisionPresentation(props.details()));
 
   return (
-    <section className="pr-sidebar-section pr-sidebar-review">
-      <header className="pr-sidebar-header">
-        <h2 className="pr-sidebar-title">Review status</h2>
+    <section class="pr-sidebar-section pr-sidebar-review">
+      <header class="pr-sidebar-header">
+        <h2 class="pr-sidebar-title">Review status</h2>
       </header>
-      <p className="pr-review-decision" data-status-kind={decision().kind}>
-        <span className="pr-status-name" data-status-kind={decision().kind}>
+      <p class="pr-review-decision" data-status-kind={decision().kind}>
+        <span class="pr-status-name" data-status-kind={decision().kind}>
           {decision().label}
         </span>
-        <span className="pr-status-icon">
+        <span class="pr-status-icon">
           {decision().kind === "success" ? <CheckIcon /> : null}
           {decision().kind === "failure" ? <XIcon /> : null}
           {decision().kind === "pending" ? <HourglassIcon /> : null}
@@ -757,12 +747,12 @@ const PullRequestStatusIcon = ({
     <Tooltip closeDelay={150} gutter={8} openDelay={0} placement="right">
       <Tooltip.Trigger
         aria-label={`${label}: ${accessibleState}`}
-        className="pr-status-trigger"
+        class="pr-status-trigger"
         data-status-kind={kind}
         type="button"
       >
-        <span className="pr-status-name">{label}</span>
-        <span className="pr-status-icon">
+        <span class="pr-status-name">{label}</span>
+        <span class="pr-status-icon">
           {kind === "success" ? <CheckIcon /> : null}
           {kind === "failure" ? <XIcon /> : null}
           {kind === "pending" ? <HourglassIcon /> : null}
@@ -770,13 +760,13 @@ const PullRequestStatusIcon = ({
         </span>
       </Tooltip.Trigger>
       <Tooltip.Portal>
-        <Tooltip.Content className="pr-check-tooltip pr-tooltip pr-tooltip-positioner">
-          <p className="pr-tooltip-title">{label}</p>
-          <p className="pr-tooltip-state">{accessibleState}</p>
-          {title ? <p className="pr-tooltip-detail-title">{title}</p> : null}
-          {detail ? <p className="pr-tooltip-description">{detail}</p> : null}
+        <Tooltip.Content class="pr-check-tooltip pr-tooltip pr-tooltip-positioner">
+          <p class="pr-tooltip-title">{label}</p>
+          <p class="pr-tooltip-state">{accessibleState}</p>
+          {title ? <p class="pr-tooltip-detail-title">{title}</p> : null}
+          {detail ? <p class="pr-tooltip-description">{detail}</p> : null}
           {url ? (
-            <a className="pr-tooltip-link" href={url} rel="noreferrer" target="_blank">
+            <a class="pr-tooltip-link" href={url} rel="noreferrer" target="_blank">
               View run
             </a>
           ) : null}

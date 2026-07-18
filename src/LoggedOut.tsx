@@ -37,11 +37,11 @@ const PublicLink = ({ children, to }: ParentProps<{ to: Router.LoginRoute }>) =>
 
 const LoginPage = () => {
   return (
-    <section className="page-card">
-      <p className="eyebrow">Login</p>
+    <section class="page-card">
+      <p class="eyebrow">Login</p>
       <h1>Sign in to Kestrel</h1>
       <p>Use your GitHub account to create or continue your Kestrel session.</p>
-      <a className="counter" href={apiUrl("/api/auth/github/start")}>
+      <a class="counter" href={apiUrl("/api/auth/github/start")}>
         Sign in with GitHub
       </a>
     </section>
@@ -50,8 +50,8 @@ const LoginPage = () => {
 
 const NotFoundPage = ({ path }: { path: string }) => {
   return (
-    <section className="page-card">
-      <p className="eyebrow">Not Found</p>
+    <section class="page-card">
+      <p class="eyebrow">Not Found</p>
       <h1>Route not found</h1>
       <p>No page exists for {path}.</p>
     </section>
@@ -72,10 +72,10 @@ const Page = (props: { route: Router.PublicRoute }) => {
 
 export const LoggedOut = ({ route }: LoggedOutProps) => {
   return (
-    <div className="app-shell">
-      <header className="app-header">
-        <p className="site-title">Kestrel</p>
-        <nav className="app-nav" aria-label="Primary">
+    <div class="app-shell">
+      <header class="app-header">
+        <p class="site-title">Kestrel</p>
+        <nav class="app-nav" aria-label="Primary">
           <PublicLink to={{ name: "Login" }}>Login</PublicLink>
         </nav>
       </header>

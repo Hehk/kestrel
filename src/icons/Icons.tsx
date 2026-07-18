@@ -1,8 +1,8 @@
-import type { ComponentProps, JSX } from "solid-js";
+import type { ComponentProps } from "solid-js";
 
 type IconProps = ComponentProps<"svg">;
 
-const iconStyle = (style: JSX.CSSProperties | string | undefined) => {
+const iconStyle = (style: IconProps["style"]) => {
   return typeof style === "string" ? `display: block; ${style}` : { display: "block", ...style };
 };
 

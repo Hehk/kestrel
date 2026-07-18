@@ -30,19 +30,17 @@ const ThemeSelect = () => {
         }
       }}
       itemComponent={(props) => (
-        <Select.Item className="select-item" item={props.item}>
-          <Select.ItemIndicator className="select-item-indicator">
+        <Select.Item class="select-item" item={props.item}>
+          <Select.ItemIndicator class="select-item-indicator">
             <CheckIcon />
           </Select.ItemIndicator>
-          <Select.ItemLabel className="select-item-text">
-            {props.item.rawValue.label}
-          </Select.ItemLabel>
+          <Select.ItemLabel class="select-item-text">{props.item.rawValue.label}</Select.ItemLabel>
         </Select.Item>
       )}
     >
-      <Select.Label className="select-label">Theme</Select.Label>
-      <Select.Trigger className="theme-select-trigger">
-        <Select.Value<(typeof themes)[number]> className="select-value">
+      <Select.Label class="select-label">Theme</Select.Label>
+      <Select.Trigger class="theme-select-trigger">
+        <Select.Value<(typeof themes)[number]> class="select-value">
           {(state) => state.selectedOption().label}
         </Select.Value>
         <Select.Icon>
@@ -50,8 +48,8 @@ const ThemeSelect = () => {
         </Select.Icon>
       </Select.Trigger>
       <Select.Portal>
-        <Select.Content className="select-popup select-positioner">
-          <Select.Listbox className="select-list" />
+        <Select.Content class="select-popup select-positioner">
+          <Select.Listbox class="select-list" />
         </Select.Content>
       </Select.Portal>
     </Select>
@@ -62,14 +60,14 @@ export const SettingsPage = () => {
   const themeSyncError = useModel((model) => model.settings.themeSyncError);
 
   return (
-    <div className="default-page">
+    <div class="default-page">
       <DefaultHeader />
-      <section className="page-card">
+      <section class="page-card">
         <h1>Settings</h1>
-        <div className="settings-form">
+        <div class="settings-form">
           <ThemeSelect />
           {themeSyncError() ? (
-            <p className="settings-error">
+            <p class="settings-error">
               Theme is saved on this device but has not synced.{" "}
               <button
                 onClick={() => send({ kind: "Settings", msg: { kind: "ThemeSyncRetryRequested" } })}
