@@ -1,4 +1,5 @@
-import { useSyncExternalStore } from "react";
+import { batch, createMemo } from "solid-js";
+import { createStore, unwrap } from "solid-js/store";
 import { api } from "./api/client";
 import * as Cache from "./cache";
 import * as Model from "./model";
@@ -141,9 +142,10 @@ export const update = (ctx: UpdateContext, msg: SessionMsg, state: SessionState)
   }
 };
 
-let state = initialState();
+const [sessionStore, setSessionStore] = createStore<{ value: SessionState | null }>({
+  value: initialState(),
+});
 let started = false;
-let subs: Set<() => void> = new Set();
 let authCheckController: AbortController | null = null;
 
 const defaultRunCmd = (cmd: SessionCmd) => {
@@ -202,6 +204,21 @@ const checkAuth = async (controller: AbortController) => {
 
 let runCmd = defaultRunCmd;
 
+const sessionState = (): SessionState => {
+  if (sessionStore.value === null) {
+    throw new Error("Session state is unavailable");
+  }
+
+  return sessionStore.value;
+};
+
+const replaceSessionState = (nextState: SessionState) => {
+  batch(() => {
+    setSessionStore("value", null);
+    setSessionStore("value", nextState);
+  });
+};
+
 export const send = (msg: SessionMsg) => {
   const cmds: SessionCmd[] = [];
   const ctx: UpdateContext = {
@@ -210,8 +227,16 @@ export const send = (msg: SessionMsg) => {
     },
   };
 
-  state = update(ctx, msg, state);
-  subs.forEach((sub) => sub());
+  const previousState = sessionState();
+  const nextState = update(ctx, msg, unwrap(previousState));
+  if (previousState.status === "loggedOut" && nextState.status === "loggedIn") {
+    cmds.filter((cmd) => cmd.kind === "ModelStart").forEach((cmd) => runCmd(cmd));
+    replaceSessionState(nextState);
+    cmds.filter((cmd) => cmd.kind !== "ModelStart").forEach((cmd) => runCmd(cmd));
+    return;
+  }
+
+  replaceSessionState(nextState);
   cmds.forEach((cmd) => runCmd(cmd));
 };
 
@@ -230,17 +255,12 @@ export const start = () => {
   send({ kind: "Started", cachedUser: Cache.readCachedUser(), route: Router.getRoute() });
 };
 
-const subscribe = (onStoreChange: () => void) => {
-  subs.add(onStoreChange);
-  return () => subs.delete(onStoreChange);
-};
-
 export const useSession = <A>(selector: (state: SessionState) => A) => {
-  return useSyncExternalStore(subscribe, () => selector(state));
+  return createMemo(() => selector(sessionState()));
 };
 
 export const get = (): SessionState => {
-  return state;
+  return sessionState();
 };
 
 export const setRunCmdForTest = (nextRunCmd: (cmd: SessionCmd) => void) => {
@@ -253,8 +273,7 @@ export const setRunCmdForTest = (nextRunCmd: (cmd: SessionCmd) => void) => {
 export const resetForTest = () => {
   authCheckController?.abort();
   authCheckController = null;
-  state = initialState();
+  replaceSessionState(initialState());
   started = false;
-  subs = new Set();
   runCmd = defaultRunCmd;
 };

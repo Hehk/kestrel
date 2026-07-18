@@ -1,4 +1,3 @@
-import { List, Map } from "immutable";
 import type { components } from "./api/schema";
 import { api } from "./api/client";
 
@@ -17,24 +16,24 @@ export type PullRequestsState =
       complete: false;
       error: null;
       nextPage: null;
-      pullRequests: List<PullRequest>;
+      pullRequests: PullRequest[];
       status: "loading" | "syncing";
     }
   | {
       complete: boolean;
       error: null;
       nextPage: number | null;
-      pullRequests: List<PullRequest>;
+      pullRequests: PullRequest[];
       status: "loaded";
     }
   | {
       complete: false;
       error: PullRequestsError;
       nextPage: null;
-      pullRequests: List<PullRequest>;
+      pullRequests: PullRequest[];
       status: "error";
     };
-export type PullRequestsByRepository = Map<string, PullRequestsState>;
+export type PullRequestsByRepository = Record<string, PullRequestsState>;
 
 export type PullRequestDetailState =
   | {
@@ -57,18 +56,18 @@ export type PullRequestDetailState =
       error: PullRequestsError;
       status: "timelineError";
     };
-export type PullRequestDetailsByKey = Map<string, PullRequestDetailState>;
+export type PullRequestDetailsByKey = Record<string, PullRequestDetailState>;
 
 export type State =
   | {
       status: "loading";
-      repositories: List<Repository>;
+      repositories: Repository[];
       pullRequestDetails: PullRequestDetailsByKey;
       pullRequests: PullRequestsByRepository;
     }
   | {
       status: "loaded";
-      repositories: List<Repository>;
+      repositories: Repository[];
       addStatus: "idle" | "saving" | "error";
       addError: AddError | null;
       pullRequestDetails: PullRequestDetailsByKey;
@@ -76,7 +75,7 @@ export type State =
     }
   | {
       status: "error";
-      repositories: List<Repository>;
+      repositories: Repository[];
       pullRequestDetails: PullRequestDetailsByKey;
       pullRequests: PullRequestsByRepository;
     };
@@ -180,9 +179,9 @@ type UpdateContext = {
 export const initialState = (): State => {
   return {
     status: "loading",
-    repositories: List(),
-    pullRequestDetails: Map(),
-    pullRequests: Map(),
+    repositories: [],
+    pullRequestDetails: {},
+    pullRequests: {},
   };
 };
 
@@ -197,7 +196,7 @@ export const update = (ctx: UpdateContext, msg: Msg, state: State): State => {
     case "Loaded": {
       return {
         status: "loaded",
-        repositories: List(msg.repositories),
+        repositories: msg.repositories,
         addStatus: "idle",
         addError: null,
         pullRequestDetails: state.pullRequestDetails,
@@ -264,7 +263,7 @@ export const update = (ctx: UpdateContext, msg: Msg, state: State): State => {
         complete: false,
         error: null,
         nextPage: null,
-        pullRequests: List(msg.pullRequests),
+        pullRequests: msg.pullRequests,
         status: "loaded",
       });
     }
@@ -344,7 +343,7 @@ export const update = (ctx: UpdateContext, msg: Msg, state: State): State => {
         error: null,
         status: "loaded",
       });
-      const pullRequests = nextState.pullRequests.get(msg.repository.fullName);
+      const pullRequests = nextState.pullRequests[msg.repository.fullName];
       if (pullRequests === undefined) {
         return nextState;
       }
@@ -601,7 +600,7 @@ const currentPullRequestDetail = (
   repository: Repository,
   number: number,
 ): PullRequestDetailState | undefined => {
-  return state.pullRequestDetails.get(pullRequestDetailKey(repository, number));
+  return state.pullRequestDetails[pullRequestDetailKey(repository, number)];
 };
 
 const setPullRequestDetailState = (
@@ -612,15 +611,15 @@ const setPullRequestDetailState = (
 ): State => {
   return {
     ...state,
-    pullRequestDetails: state.pullRequestDetails.set(
-      pullRequestDetailKey(repository, number),
-      detailState,
-    ),
+    pullRequestDetails: {
+      ...state.pullRequestDetails,
+      [pullRequestDetailKey(repository, number)]: detailState,
+    },
   };
 };
 
-const currentPullRequests = (state: State, repository: Repository): List<PullRequest> => {
-  return state.pullRequests.get(repository.fullName)?.pullRequests ?? List();
+const currentPullRequests = (state: State, repository: Repository): PullRequest[] => {
+  return state.pullRequests[repository.fullName]?.pullRequests ?? [];
 };
 
 const setPullRequestsState = (
@@ -630,35 +629,32 @@ const setPullRequestsState = (
 ): State => {
   return {
     ...state,
-    pullRequests: state.pullRequests.set(repository.fullName, pullRequestsState),
+    pullRequests: {
+      ...state.pullRequests,
+      [repository.fullName]: pullRequestsState,
+    },
   };
 };
 
-const upsertRepository = (
-  repositories: List<Repository>,
-  repository: Repository,
-): List<Repository> => {
+const upsertRepository = (repositories: Repository[], repository: Repository): Repository[] => {
   const index = repositories.findIndex((existing) => existing.fullName === repository.fullName);
   if (index === -1) {
-    return repositories.push(repository);
+    return [...repositories, repository];
   }
 
-  return repositories.set(index, repository);
+  return repositories.map((existing, currentIndex) =>
+    currentIndex === index ? repository : existing,
+  );
 };
 
-const upsertPullRequests = (
-  existing: List<PullRequest>,
-  incoming: PullRequest[],
-): List<PullRequest> => {
+const upsertPullRequests = (existing: PullRequest[], incoming: PullRequest[]): PullRequest[] => {
   const byNumber = new globalThis.Map(
     existing.map((pullRequest) => [pullRequest.number, pullRequest]),
   );
   incoming.forEach((pullRequest) => byNumber.set(pullRequest.number, pullRequest));
 
-  return List(
-    Array.from(byNumber.values()).sort((a, b) => {
-      const createdAtOrder = b.createdAt.localeCompare(a.createdAt);
-      return createdAtOrder === 0 ? b.number - a.number : createdAtOrder;
-    }),
-  );
+  return Array.from(byNumber.values()).sort((a, b) => {
+    const createdAtOrder = b.createdAt.localeCompare(a.createdAt);
+    return createdAtOrder === 0 ? b.number - a.number : createdAtOrder;
+  });
 };

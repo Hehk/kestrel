@@ -1,4 +1,6 @@
 import { apiUrl } from "./api/client";
+import { createMemo } from "solid-js";
+import type { ParentProps } from "solid-js";
 import * as Router from "./router";
 import * as Session from "./session";
 
@@ -6,7 +8,7 @@ type LoggedOutProps = {
   route: Router.PublicRoute;
 };
 
-const PublicLink = ({ children, to }: { children: React.ReactNode; to: Router.LoginRoute }) => {
+const PublicLink = ({ children, to }: ParentProps<{ to: Router.LoginRoute }>) => {
   const href = Router.fromRoute(to);
 
   return (
@@ -56,13 +58,16 @@ const NotFoundPage = ({ path }: { path: string }) => {
   );
 };
 
-const Page = ({ route }: { route: Router.PublicRoute }) => {
-  switch (route.name) {
-    case "Login":
-      return <LoginPage />;
-    case "NotFound":
-      return <NotFoundPage path={route.path} />;
-  }
+const Page = (props: { route: Router.PublicRoute }) => {
+  const view = createMemo(() => {
+    switch (props.route.name) {
+      case "Login":
+        return <LoginPage />;
+      case "NotFound":
+        return <NotFoundPage path={props.route.path} />;
+    }
+  });
+  return <>{view}</>;
 };
 
 export const LoggedOut = ({ route }: LoggedOutProps) => {

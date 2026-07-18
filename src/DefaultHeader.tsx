@@ -26,13 +26,13 @@ const DefaultHeader = () => {
 };
 
 const AuthNav = () => {
-  const displayName = useModel((model) => model.get("user").displayName);
+  const displayName = useModel((model) => model.user.displayName);
   // TODO: just doing styling/refactoring now, but this should part of a model message not the session stuff
   const onLogout = () => Session.send({ kind: "LogoutRequested" });
 
   return (
     <>
-      <span>{displayName}</span>
+      <span>{displayName()}</span>
       <button type="button" className="counter" onClick={onLogout}>
         Sign out
       </button>

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Link } from "./Link";
@@ -55,8 +55,8 @@ const clickWithoutNativeNavigation = (element: HTMLElement, eventInit?: MouseEve
 };
 
 const CurrentRoute = () => {
-  const route = Model.useModel((model) => model.get("route"));
-  return <div>Route is {route.name}</div>;
+  const route = Model.useModel((model) => model.route);
+  return <div>Route is {route().name}</div>;
 };
 
 describe("Link", () => {
@@ -70,7 +70,7 @@ describe("Link", () => {
   });
 
   it("renders a typed route href", () => {
-    render(<Link to={{ name: "Settings" }}>Settings</Link>);
+    render(() => <Link to={{ name: "Settings" }}>Settings</Link>);
 
     expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
   });
@@ -79,7 +79,7 @@ describe("Link", () => {
     const user = userEvent.setup();
     const cmds = collectCommands();
 
-    render(<Link to={{ name: "Settings" }}>Settings</Link>);
+    render(() => <Link to={{ name: "Settings" }}>Settings</Link>);
 
     await user.click(screen.getByRole("link", { name: "Settings" }));
 
@@ -90,11 +90,11 @@ describe("Link", () => {
     const user = userEvent.setup();
     const cmds = collectCommands();
 
-    render(
+    render(() => (
       <Link replace to={{ name: "Settings" }}>
         Settings
-      </Link>,
-    );
+      </Link>
+    ));
 
     await user.click(screen.getByRole("link", { name: "Settings" }));
 
@@ -105,12 +105,12 @@ describe("Link", () => {
     const user = userEvent.setup();
     const cmds = runCommandsAsNavigation();
 
-    render(
+    render(() => (
       <>
         <Link to={{ name: "Settings" }}>Settings</Link>
         <CurrentRoute />
-      </>,
-    );
+      </>
+    ));
 
     expect(screen.getByText("Route is Home")).toBeInTheDocument();
 
@@ -125,7 +125,7 @@ describe("Link", () => {
     resetLocation("/settings");
     const cmds = collectCommands();
 
-    render(<Link to={{ name: "Settings" }}>Settings</Link>);
+    render(() => <Link to={{ name: "Settings" }}>Settings</Link>);
 
     await user.click(screen.getByRole("link", { name: "Settings" }));
 
@@ -135,7 +135,7 @@ describe("Link", () => {
   it("lets modified clicks use normal browser behavior", () => {
     const cmds = collectCommands();
 
-    render(<Link to={{ name: "Settings" }}>Settings</Link>);
+    render(() => <Link to={{ name: "Settings" }}>Settings</Link>);
 
     clickWithoutNativeNavigation(screen.getByRole("link", { name: "Settings" }), { metaKey: true });
 
@@ -145,7 +145,7 @@ describe("Link", () => {
   it("lets target and download links use normal browser behavior", () => {
     const cmds = collectCommands();
 
-    render(
+    render(() => (
       <>
         <Link target="_blank" to={{ name: "Settings" }}>
           New tab
@@ -153,8 +153,8 @@ describe("Link", () => {
         <Link download to={{ name: "PullRequest", repo: "kestrel", id: "123" }}>
           Download
         </Link>
-      </>,
-    );
+      </>
+    ));
 
     clickWithoutNativeNavigation(screen.getByRole("link", { name: "New tab" }));
     clickWithoutNativeNavigation(screen.getByRole("link", { name: "Download" }));
@@ -166,11 +166,11 @@ describe("Link", () => {
     const user = userEvent.setup();
     const cmds = collectCommands();
 
-    render(
+    render(() => (
       <Link onClick={(event) => event.preventDefault()} to={{ name: "Settings" }}>
         Settings
-      </Link>,
-    );
+      </Link>
+    ));
 
     await user.click(screen.getByRole("link", { name: "Settings" }));
 

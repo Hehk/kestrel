@@ -1,5 +1,4 @@
-import { StrictMode } from "react";
-import { createRoot } from "react-dom/client";
+import { render } from "solid-js/web";
 import "./index.css";
 import App from "./App";
 import * as Session from "./session";
@@ -12,8 +11,4 @@ if (rootElement === null) {
 
 Session.start();
 
-createRoot(rootElement).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+render(() => <App />, rootElement);
