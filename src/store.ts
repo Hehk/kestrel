@@ -11,7 +11,7 @@ export type User = {
   avatarUrl?: string | null;
 };
 
-export type Model = {
+export type State = {
   count: number;
   repositories: Repositories.State;
   route: Router.AuthenticatedRoute;
@@ -48,7 +48,7 @@ export type Msg =
   | { kind: "Settings"; msg: Settings.Msg }
   | { kind: "UserRefreshed"; user: User };
 
-const createModel = (user: User, route: Router.AuthenticatedRoute): Model => {
+const createInitialState = (user: User, route: Router.AuthenticatedRoute): State => {
   return {
     count: 0,
     repositories: Repositories.initialState(),
@@ -61,29 +61,29 @@ const createModel = (user: User, route: Router.AuthenticatedRoute): Model => {
 const settingsCmd = (cmd: Settings.Cmd): Cmd => ({ kind: "Settings", cmd });
 const repositoriesCmd = (cmd: Repositories.Cmd): Cmd => ({ kind: "Repositories", cmd });
 
-export const update = (msg: Msg, model: Model): Mvu.Transition<Model, Cmd> => {
+export const update = (msg: Msg, state: State): Mvu.Transition<State, Cmd> => {
   switch (msg.kind) {
     case "Started": {
       return [
-        model,
+        state,
         Mvu.Cmd.batch(
-          Mvu.Cmd.map(settingsCmd, Settings.initialCommands(model.settings)),
+          Mvu.Cmd.map(settingsCmd, Settings.initialCommands(state.settings)),
           Mvu.Cmd.of(repositoriesCmd({ kind: "Load" })),
         ),
       ];
     }
     case "CountIncrement": {
-      return [{ ...model, count: model.count + 1 }, Mvu.Cmd.none()];
+      return [{ ...state, count: state.count + 1 }, Mvu.Cmd.none()];
     }
     case "CountDecrement": {
-      return [{ ...model, count: model.count - 1 }, Mvu.Cmd.none()];
+      return [{ ...state, count: state.count - 1 }, Mvu.Cmd.none()];
     }
     case "RouteRequested": {
-      if (Router.equal(model.route, msg.route)) {
-        return [model, Mvu.Cmd.none()];
+      if (Router.equal(state.route, msg.route)) {
+        return [state, Mvu.Cmd.none()];
       }
 
-      return [model, Mvu.Cmd.of({ kind: "Navigate", route: msg.route, replace: msg.replace })];
+      return [state, Mvu.Cmd.of({ kind: "Navigate", route: msg.route, replace: msg.replace })];
     }
     case "RouteChanged": {
       const commands: Cmd[] = [];
@@ -93,16 +93,16 @@ export const update = (msg: Msg, model: Model): Mvu.Transition<Model, Cmd> => {
         ctx.runCmd({ kind: "Navigate", route: { name: "Home" }, replace: true });
       }
 
-      if (Router.equal(model.route, route)) {
-        return [model, commands];
+      if (Router.equal(state.route, route)) {
+        return [state, commands];
       }
 
-      return [queuePullRequestRouteWork(ctx, { ...model, route }, { syncMissing: true }), commands];
+      return [queuePullRequestRouteWork(ctx, { ...state, route }, { syncMissing: true }), commands];
     }
     case "Settings": {
-      const [settings, commands] = Settings.update(msg.msg, model.settings);
+      const [settings, commands] = Settings.update(msg.msg, state.settings);
 
-      return [{ ...model, settings }, Mvu.Cmd.map(settingsCmd, commands)];
+      return [{ ...state, settings }, Mvu.Cmd.map(settingsCmd, commands)];
     }
     case "Repositories": {
       const commands: Cmd[] = [];
@@ -112,13 +112,13 @@ export const update = (msg: Msg, model: Model): Mvu.Transition<Model, Cmd> => {
           runCmd: (cmd) => ctx.runCmd(repositoriesCmd(cmd)),
         },
         msg.msg,
-        model.repositories,
+        state.repositories,
       );
 
       return [
         queuePullRequestRouteWork(
           ctx,
-          { ...model, repositories },
+          { ...state, repositories },
           {
             syncMissing: msg.msg.kind === "PullRequestsLoaded",
           },
@@ -127,15 +127,15 @@ export const update = (msg: Msg, model: Model): Mvu.Transition<Model, Cmd> => {
       ];
     }
     case "UserRefreshed": {
-      if (model.user.id === msg.user.id) {
-        return [{ ...model, user: msg.user }, Mvu.Cmd.none()];
+      if (state.user.id === msg.user.id) {
+        return [{ ...state, user: msg.user }, Mvu.Cmd.none()];
       }
 
-      const nextModel = createModel(msg.user, model.route);
+      const nextState = createInitialState(msg.user, state.route);
       return [
-        nextModel,
+        nextState,
         Mvu.Cmd.batch(
-          Mvu.Cmd.map(settingsCmd, Settings.initialCommands(nextModel.settings)),
+          Mvu.Cmd.map(settingsCmd, Settings.initialCommands(nextState.settings)),
           Mvu.Cmd.of(repositoriesCmd({ kind: "Load" })),
         ),
       ];
@@ -145,35 +145,35 @@ export const update = (msg: Msg, model: Model): Mvu.Transition<Model, Cmd> => {
 
 const queuePullRequestRouteWork = (
   ctx: RepositoryUpdateContext,
-  model: Model,
+  state: State,
   options: { syncMissing: boolean },
-): Model => {
-  const route = model.route;
+): State => {
+  const route = state.route;
   if (route.name !== "PullRequest") {
-    return model;
+    return state;
   }
 
-  const repositories = model.repositories;
+  const repositories = state.repositories;
   if (repositories.status !== "loaded") {
-    return model;
+    return state;
   }
 
   const repository = repositories.repositories.find(
     (candidate) => candidate.fullName === route.repo.toLowerCase(),
   );
   if (repository === undefined) {
-    return model;
+    return state;
   }
 
   const pullRequests = repositories.pullRequests[repository.fullName];
   if (pullRequests === undefined) {
     ctx.runCmd({ kind: "Repositories", cmd: { kind: "LoadPullRequests", repository } });
-    return model;
+    return state;
   }
 
   const number = Number(route.id);
   if (!Number.isInteger(number) || number <= 0 || pullRequests.status !== "loaded") {
-    return model;
+    return state;
   }
 
   const hasPullRequest = pullRequests.pullRequests.some(
@@ -181,22 +181,22 @@ const queuePullRequestRouteWork = (
   );
   if (!hasPullRequest) {
     if (!options.syncMissing || pullRequests.complete) {
-      return model;
+      return state;
     }
 
     ctx.runCmd({ kind: "Repositories", cmd: { kind: "SyncPullRequests", repository } });
-    return model;
+    return state;
   }
 
   if (Repositories.pullRequestDetailKey(repository, number) in repositories.pullRequestDetails) {
-    return model;
+    return state;
   }
 
   ctx.runCmd({ kind: "Repositories", cmd: { kind: "LoadPullRequestDetail", number, repository } });
-  return model;
+  return state;
 };
 
-const [modelStore, setModelStore] = createStore<{ value: Model | null }>({ value: null });
+const [store, setStore] = createStore<{ value: State | null }>({ value: null });
 let messageQueue: Msg[] = [];
 let processingMessages = false;
 
@@ -220,10 +220,10 @@ const defaultRunCmd = (cmd: Cmd) => {
 
 let runCmd = defaultRunCmd;
 
-const replaceModel = (nextModel: Model) => {
+const replaceState = (nextState: State) => {
   batch(() => {
-    setModelStore("value", null);
-    setModelStore("value", nextModel);
+    setStore("value", null);
+    setStore("value", nextState);
   });
 };
 
@@ -231,20 +231,20 @@ export const start = (
   user: User,
   route: Router.AuthenticatedRoute = Router.toAuthenticatedRoute(Router.getRoute()),
 ) => {
-  replaceModel(createModel(user, route));
+  replaceState(createInitialState(user, route));
   send({ kind: "Started" });
 };
 
 export const stop = () => {
   Settings.applyTheme("system");
-  setModelStore("value", null);
+  setStore("value", null);
   messageQueue = [];
   processingMessages = false;
 };
 
 export const send = (msg: Msg) => {
-  if (modelStore.value === null) {
-    throw new Error("Authenticated model was updated before a user was available");
+  if (store.value === null) {
+    throw new Error("Authenticated store was updated before a user was available");
   }
 
   messageQueue.push(msg);
@@ -256,14 +256,14 @@ export const send = (msg: Msg) => {
   try {
     while (messageQueue.length > 0) {
       const nextMsg = messageQueue.shift();
-      if (nextMsg === undefined || modelStore.value === null) {
+      if (nextMsg === undefined || store.value === null) {
         continue;
       }
 
-      const model = unwrap(modelStore.value);
-      const [nextModel, commands] = update(nextMsg, model);
-      if (nextModel !== model) {
-        replaceModel(nextModel);
+      const state = unwrap(store.value);
+      const [nextState, commands] = update(nextMsg, state);
+      if (nextState !== state) {
+        replaceState(nextState);
       }
       commands.forEach((cmd) => runCmd(cmd));
     }
@@ -273,27 +273,27 @@ export const send = (msg: Msg) => {
 };
 
 Router.onStateChange((route) => {
-  if (modelStore.value !== null) {
+  if (store.value !== null) {
     send({ kind: "RouteChanged", route });
   }
 });
 
-export const useModel = <A>(selector: (model: Model) => A) => {
+export const appStore = <A>(selector: (state: State) => A) => {
   return createMemo(() => {
-    if (modelStore.value === null) {
-      throw new Error("Authenticated model was read before a user was available");
+    if (store.value === null) {
+      throw new Error("Authenticated store was read before a user was available");
     }
 
-    return selector(modelStore.value);
+    return selector(store.value);
   });
 };
 
-export const get = (): Model => {
-  if (modelStore.value === null) {
-    throw new Error("Authenticated model was read before a user was available");
+export const get = (): State => {
+  if (store.value === null) {
+    throw new Error("Authenticated store was read before a user was available");
   }
 
-  return modelStore.value;
+  return store.value;
 };
 
 // NOTE: I am not 100% about these, testing patterns but once we are using the commands
@@ -308,7 +308,7 @@ export const setRunCmdForTest = (nextRunCmd: (cmd: Cmd) => void) => {
 // NOTE: I am not 100% about these, testing patterns but once we are using the commands
 // more, I will probably want to refactor them.
 export const resetForTest = () => {
-  setModelStore("value", null);
+  setStore("value", null);
   messageQueue = [];
   processingMessages = false;
   runCmd = defaultRunCmd;

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
-import * as Model from "./model";
+import * as Store from "./store";
 import type * as Repositories from "./repositoriesSlice";
 
-const user: Model.User = {
+const user: Store.User = {
   displayName: "User One",
   id: "user_1",
 };
@@ -35,23 +35,23 @@ const pullRequest = (number: number): Repositories.PullRequest => {
   };
 };
 
-describe("model", () => {
+describe("store", () => {
   afterEach(() => {
-    Model.resetForTest();
+    Store.resetForTest();
     window.localStorage.clear();
   });
 
   it("queues synchronous command messages until the current command batch is handed off", () => {
-    const commands: Model.Cmd[] = [];
+    const commands: Store.Cmd[] = [];
     window.localStorage.clear();
-    Model.setRunCmdForTest((cmd) => {
+    Store.setRunCmdForTest((cmd) => {
       commands.push(cmd);
       if (cmd.kind === "Settings" && cmd.cmd.kind === "ApplyTheme") {
-        Model.send({ kind: "RouteRequested", route: { name: "Settings" }, replace: false });
+        Store.send({ kind: "RouteRequested", route: { name: "Settings" }, replace: false });
       }
     });
 
-    Model.start(user, { name: "Home" });
+    Store.start(user, { name: "Home" });
 
     expect(commands.map((cmd) => (cmd.kind === "Settings" ? cmd.cmd.kind : cmd.kind))).toEqual([
       "ApplyTheme",
@@ -63,13 +63,13 @@ describe("model", () => {
   });
 
   it("loads stored pull requests after repositories load on a pull request route", () => {
-    const commands: Model.Cmd[] = [];
-    Model.setRunCmdForTest((cmd) => commands.push(cmd));
+    const commands: Store.Cmd[] = [];
+    Store.setRunCmdForTest((cmd) => commands.push(cmd));
     const repo = repository("kestrel/app");
-    Model.start(user, { name: "PullRequest", repo: "Kestrel/App", id: "42" });
+    Store.start(user, { name: "PullRequest", repo: "Kestrel/App", id: "42" });
     commands.length = 0;
 
-    Model.send({ kind: "Repositories", msg: { kind: "Loaded", repositories: [repo] } });
+    Store.send({ kind: "Repositories", msg: { kind: "Loaded", repositories: [repo] } });
 
     expect(commands).toEqual([
       { kind: "Repositories", cmd: { kind: "LoadPullRequests", repository: repo } },
@@ -77,14 +77,14 @@ describe("model", () => {
   });
 
   it("syncs once after stored pull requests load without the routed pull request", () => {
-    const commands: Model.Cmd[] = [];
-    Model.setRunCmdForTest((cmd) => commands.push(cmd));
+    const commands: Store.Cmd[] = [];
+    Store.setRunCmdForTest((cmd) => commands.push(cmd));
     const repo = repository("kestrel/app");
-    Model.start(user, { name: "PullRequest", repo: "kestrel/app", id: "42" });
-    Model.send({ kind: "Repositories", msg: { kind: "Loaded", repositories: [repo] } });
+    Store.start(user, { name: "PullRequest", repo: "kestrel/app", id: "42" });
+    Store.send({ kind: "Repositories", msg: { kind: "Loaded", repositories: [repo] } });
     commands.length = 0;
 
-    Model.send({
+    Store.send({
       kind: "Repositories",
       msg: { kind: "PullRequestsLoaded", pullRequests: [], repository: repo },
     });
@@ -94,7 +94,7 @@ describe("model", () => {
     ]);
 
     commands.length = 0;
-    Model.send({
+    Store.send({
       kind: "Repositories",
       msg: {
         complete: false,
@@ -108,14 +108,14 @@ describe("model", () => {
   });
 
   it("loads stored pull request detail when stored pull requests include the routed pull request", () => {
-    const commands: Model.Cmd[] = [];
-    Model.setRunCmdForTest((cmd) => commands.push(cmd));
+    const commands: Store.Cmd[] = [];
+    Store.setRunCmdForTest((cmd) => commands.push(cmd));
     const repo = repository("kestrel/app");
-    Model.start(user, { name: "PullRequest", repo: "kestrel/app", id: "42" });
-    Model.send({ kind: "Repositories", msg: { kind: "Loaded", repositories: [repo] } });
+    Store.start(user, { name: "PullRequest", repo: "kestrel/app", id: "42" });
+    Store.send({ kind: "Repositories", msg: { kind: "Loaded", repositories: [repo] } });
     commands.length = 0;
 
-    Model.send({
+    Store.send({
       kind: "Repositories",
       msg: { kind: "PullRequestsLoaded", pullRequests: [pullRequest(42)], repository: repo },
     });
@@ -129,14 +129,14 @@ describe("model", () => {
   });
 
   it("loads stored pull request detail after sync returns the routed pull request", () => {
-    const commands: Model.Cmd[] = [];
-    Model.setRunCmdForTest((cmd) => commands.push(cmd));
+    const commands: Store.Cmd[] = [];
+    Store.setRunCmdForTest((cmd) => commands.push(cmd));
     const repo = repository("kestrel/app");
-    Model.start(user, { name: "PullRequest", repo: "kestrel/app", id: "42" });
-    Model.send({ kind: "Repositories", msg: { kind: "Loaded", repositories: [repo] } });
+    Store.start(user, { name: "PullRequest", repo: "kestrel/app", id: "42" });
+    Store.send({ kind: "Repositories", msg: { kind: "Loaded", repositories: [repo] } });
     commands.length = 0;
 
-    Model.send({
+    Store.send({
       kind: "Repositories",
       msg: {
         complete: false,

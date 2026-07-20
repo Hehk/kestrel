@@ -1,4 +1,4 @@
-import type { User } from "./model";
+import type { User } from "./store";
 import type { Theme } from "./settingsSlice";
 
 const SESSION_KEY = "kestrel.session";

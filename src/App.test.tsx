@@ -2,7 +2,7 @@ import { cleanup, render, screen, waitFor, within } from "@solidjs/testing-libra
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
-import { resetForTest } from "./model";
+import { resetForTest } from "./store";
 import type { PullRequestDetail } from "./repositoriesSlice";
 import * as Session from "./session";
 

@@ -2,7 +2,7 @@ import { createMemo, createSignal, createUniqueId, For, Match, Switch } from "so
 import "./App.css";
 import { Link } from "./Link";
 import { LoggedOut } from "./LoggedOut";
-import { send, useModel } from "./model";
+import { appStore, send } from "./store";
 import * as Repositories from "./repositoriesSlice";
 import type * as Router from "./router";
 import * as Session from "./session";
@@ -42,7 +42,7 @@ const HomePage = () => {
 };
 
 const RepositoryList = () => {
-  const repositories = useModel((model) => model.repositories);
+  const repositories = appStore((state) => state.repositories);
   return (
     <Switch>
       <Match when={repositories().status === "loading"}>
@@ -198,7 +198,7 @@ const AddRepositoryForm = () => {
   const errorId = createUniqueId();
   const [repositoryInput, setRepositoryInput] = createSignal("");
 
-  const repositories = useModel((model) => model.repositories);
+  const repositories = appStore((state) => state.repositories);
   const saving = () => addStatus(repositories()) === "saving";
   const error = () => {
     const state = repositories();
@@ -283,7 +283,7 @@ const NotFoundPage = ({ path }: { path: string }) => {
 };
 
 const AuthenticatedApp = () => {
-  const route = useModel((model) => model.route);
+  const route = appStore((state) => state.route);
 
   return (
     <main>

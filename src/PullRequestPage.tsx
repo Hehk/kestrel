@@ -1,7 +1,7 @@
 import { Tooltip } from "@kobalte/core/tooltip";
 import { createMemo, For, Match, Show, Switch } from "solid-js";
 import type { Accessor, JSX, ParentProps } from "solid-js";
-import { useModel, send } from "./model";
+import { appStore, send } from "./store";
 import * as Repositories from "./repositoriesSlice";
 import { apiUrl } from "./api/client";
 import { Link } from "./Link";
@@ -18,7 +18,7 @@ import PullRequestsError from "./PullRequestError";
 
 // TODO: Figure out a better way to handle all the error cases
 const PullRequestPage = ({ repo, id }: { repo: string; id: string }) => {
-  const repositories = useModel((model) => model.repositories);
+  const repositories = appStore((state) => state.repositories);
   const page = createMemo<PullRequestPageData | PullRequestMessageData>(() => {
     const state = repositories();
 

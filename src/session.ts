@@ -2,13 +2,13 @@ import { batch, createMemo } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
 import { api } from "./api/client";
 import * as Cache from "./cache";
-import * as Model from "./model";
-import type { User } from "./model";
+import * as Store from "./store";
+import type { User } from "./store";
 import * as Router from "./router";
 
-// This is a separate model for handling the session state.
+// This is a separate store for handling the session state.
 // The goal of this is to separate the logged in flow from the
-// main model. In theory they should be combined but it would add
+// main store. In theory they should be combined but it would add
 // more complexity for little benefit.
 
 export type SessionState =
@@ -167,17 +167,17 @@ const defaultRunCmd = (cmd: SessionCmd) => {
     case "EndAuthenticatedSession": {
       Cache.clearCachedSettings(cmd.userId);
       Cache.clearCachedUser();
-      Model.stop();
+      Store.stop();
       Router.navigate({ name: "Login" }, { replace: true });
       send({ kind: "RouteChanged", route: { name: "Login" } });
       return;
     }
     case "ModelStart": {
-      Model.start(cmd.user, cmd.route);
+      Store.start(cmd.user, cmd.route);
       return;
     }
     case "ModelUserRefresh": {
-      Model.send({ kind: "UserRefreshed", user: cmd.user });
+      Store.send({ kind: "UserRefreshed", user: cmd.user });
       return;
     }
     case "Navigate": {

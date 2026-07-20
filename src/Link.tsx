@@ -1,7 +1,7 @@
 import type { ComponentProps } from "solid-js";
 import { splitProps } from "solid-js";
 import * as Router from "./router";
-import * as Model from "./model";
+import * as Store from "./store";
 
 type LinkProps = Omit<ComponentProps<"a">, "download" | "href"> & {
   download?: boolean | string;
@@ -54,7 +54,7 @@ export const Link = (props: LinkProps) => {
 
         event.preventDefault();
 
-        Model.send({ kind: "RouteRequested", route: local.to, replace: local.replace ?? false });
+        Store.send({ kind: "RouteRequested", route: local.to, replace: local.replace ?? false });
       }}
     />
   );

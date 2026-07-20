@@ -1,5 +1,5 @@
 import { Select } from "@kobalte/core/select";
-import { useModel, send } from "./model";
+import { appStore, send } from "./store";
 import * as Settings from "./settingsSlice";
 import DefaultHeader from "./DefaultHeader";
 import { CaretUpDownIcon, CheckIcon } from "./icons/Icons";
@@ -11,7 +11,7 @@ const themes: Array<{ label: string; value: Settings.Theme }> = [
 ];
 
 const ThemeSelect = () => {
-  const theme = useModel((model) => model.settings.theme);
+  const theme = appStore((state) => state.settings.theme);
   const selectedTheme = () => themes.find((option) => option.value === theme()) ?? themes[0]!;
 
   return (
@@ -57,7 +57,7 @@ const ThemeSelect = () => {
 };
 
 export const SettingsPage = () => {
-  const themeSyncError = useModel((model) => model.settings.themeSyncError);
+  const themeSyncError = appStore((state) => state.settings.themeSyncError);
 
   return (
     <div class="default-page">

@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Link } from "./Link";
-import * as Model from "./model";
+import * as Store from "./store";
 
 const testUser = {
   displayName: "User One",
@@ -12,29 +12,29 @@ const testUser = {
 const resetLocation = (path: string) => {
   window.history.replaceState({}, "", path);
   window.localStorage.clear();
-  Model.resetForTest();
-  const restoreRunCmd = Model.setRunCmdForTest(() => {});
-  Model.start(testUser);
+  Store.resetForTest();
+  const restoreRunCmd = Store.setRunCmdForTest(() => {});
+  Store.start(testUser);
   restoreRunCmd();
 };
 
 // NOTE: I am not 100% about these, testing patterns but once we are using the commands
 // more, I will probably want to refactor them.
 const collectCommands = () => {
-  const cmds: Model.Cmd[] = [];
-  Model.setRunCmdForTest((cmd) => {
+  const cmds: Store.Cmd[] = [];
+  Store.setRunCmdForTest((cmd) => {
     cmds.push(cmd);
   });
   return cmds;
 };
 
 const runCommandsAsNavigation = () => {
-  const cmds: Model.Cmd[] = [];
-  Model.setRunCmdForTest((cmd) => {
+  const cmds: Store.Cmd[] = [];
+  Store.setRunCmdForTest((cmd) => {
     cmds.push(cmd);
     switch (cmd.kind) {
       case "Navigate":
-        Model.send({ kind: "RouteChanged", route: cmd.route });
+        Store.send({ kind: "RouteChanged", route: cmd.route });
         return;
     }
   });
@@ -55,7 +55,7 @@ const clickWithoutNativeNavigation = (element: HTMLElement, eventInit?: MouseEve
 };
 
 const CurrentRoute = () => {
-  const route = Model.useModel((model) => model.route);
+  const route = Store.appStore((state) => state.route);
   return <div>Route is {route().name}</div>;
 };
 

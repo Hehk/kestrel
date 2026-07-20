@@ -1,5 +1,5 @@
 import { Link } from "./Link";
-import { useModel } from "./model";
+import { appStore } from "./store";
 import * as Session from "./session";
 
 const DefaultHeader = () => {
@@ -26,8 +26,9 @@ const DefaultHeader = () => {
 };
 
 const AuthNav = () => {
-  const displayName = useModel((model) => model.user.displayName);
-  // TODO: just doing styling/refactoring now, but this should part of a model message not the session stuff
+  const displayName = appStore((state) => state.user.displayName);
+  // TODO: just doing styling/refactoring now, but this should be part of an application message
+  // rather than the session logic.
   const onLogout = () => Session.send({ kind: "LogoutRequested" });
 
   return (
