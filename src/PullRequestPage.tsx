@@ -173,7 +173,7 @@ const PullRequestMessage = ({ children, title }: ParentProps<{ title: string }>)
 const PullRequestActions = (props: { data: Accessor<PullRequestPageData> }) => {
   return (
     <nav aria-label="Pull request actions" class="pr-sidebar-actions">
-      <Tooltip closeDelay={150} gutter={8} openDelay={0}>
+      <Tooltip closeDelay={150} gutter={8} ignoreSafeArea openDelay={0}>
         <Tooltip.Trigger
           as={Link}
           aria-label="Back to home"
@@ -184,7 +184,7 @@ const PullRequestActions = (props: { data: Accessor<PullRequestPageData> }) => {
         </Tooltip.Trigger>
         <PullRequestTooltip>Back to tracked repositories</PullRequestTooltip>
       </Tooltip>
-      <Tooltip closeDelay={150} gutter={8} openDelay={0}>
+      <Tooltip closeDelay={150} gutter={8} ignoreSafeArea openDelay={0}>
         <Tooltip.Trigger
           as="a"
           aria-label="Open on GitHub"
@@ -195,7 +195,7 @@ const PullRequestActions = (props: { data: Accessor<PullRequestPageData> }) => {
         </Tooltip.Trigger>
         <PullRequestTooltip>Open this pull request on GitHub</PullRequestTooltip>
       </Tooltip>
-      <Tooltip closeDelay={150} gutter={8} openDelay={0}>
+      <Tooltip closeDelay={150} gutter={8} ignoreSafeArea openDelay={0}>
         <Tooltip.Trigger
           aria-busy={props.data().pullRequestDetail?.status === "syncing"}
           aria-label="Sync pull request from GitHub"
@@ -744,7 +744,7 @@ const PullRequestStatusIcon = ({
   const detail = description ?? summary;
 
   return (
-    <Tooltip closeDelay={150} gutter={8} openDelay={0} placement="right">
+    <Tooltip closeDelay={150} gutter={8} ignoreSafeArea openDelay={0} placement="right">
       <Tooltip.Trigger
         aria-label={`${label}: ${accessibleState}`}
         class="pr-status-trigger"

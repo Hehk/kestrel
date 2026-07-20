@@ -846,18 +846,14 @@ describe("App", () => {
     expect(
       within(tooltip).getByText("All test suites completed successfully."),
     ).toBeInTheDocument();
-    expect(within(tooltip).getByRole("link", { name: "View run" })).toHaveAttribute(
-      "href",
-      "https://ci.example.test/runs/42",
-    );
-    expect(within(tooltip).getByRole("link", { name: "View run" })).toHaveAttribute(
-      "target",
-      "_blank",
-    );
-    expect(within(tooltip).getByRole("link", { name: "View run" })).toHaveAttribute(
-      "rel",
-      "noreferrer",
-    );
+    const runLink = within(tooltip).getByRole("link", { name: "View run" });
+    expect(runLink).toHaveAttribute("href", "https://ci.example.test/runs/42");
+    expect(runLink).toHaveAttribute("target", "_blank");
+    expect(runLink).toHaveAttribute("rel", "noreferrer");
+
+    await user.hover(runLink);
+    await new Promise((resolve) => window.setTimeout(resolve, 200));
+    expect(tooltip).toBeInTheDocument();
 
     await user.click(trigger);
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
