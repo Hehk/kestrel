@@ -1,5 +1,5 @@
-import { Record } from "immutable";
-import { useSyncExternalStore } from "react";
+import { batch, createMemo } from "solid-js";
+import { createStore, unwrap } from "solid-js/store";
 import * as Mvu from "./mvu";
 import * as Repositories from "./repositoriesSlice";
 import * as Router from "./router";
@@ -11,13 +11,13 @@ export type User = {
   avatarUrl?: string | null;
 };
 
-export type Model = Record<{
+export type State = {
   count: number;
   repositories: Repositories.State;
   route: Router.AuthenticatedRoute;
   settings: Settings.State;
   user: User;
-}>;
+};
 
 export type Cmd =
   | {
@@ -48,44 +48,42 @@ export type Msg =
   | { kind: "Settings"; msg: Settings.Msg }
   | { kind: "UserRefreshed"; user: User };
 
-const createModel = (user: User, route: Router.AuthenticatedRoute): Model => {
-  return Record({
+const createInitialState = (user: User, route: Router.AuthenticatedRoute): State => {
+  return {
     count: 0,
     repositories: Repositories.initialState(),
     route,
     settings: Settings.fromCache(user.id),
     user,
-  })();
+  };
 };
 
 const settingsCmd = (cmd: Settings.Cmd): Cmd => ({ kind: "Settings", cmd });
 const repositoriesCmd = (cmd: Repositories.Cmd): Cmd => ({ kind: "Repositories", cmd });
 
-export const update = (msg: Msg, model: Model): Mvu.Transition<Model, Cmd> => {
+export const update = (msg: Msg, state: State): Mvu.Transition<State, Cmd> => {
   switch (msg.kind) {
     case "Started": {
       return [
-        model,
+        state,
         Mvu.Cmd.batch(
-          Mvu.Cmd.map(settingsCmd, Settings.initialCommands(model.get("settings"))),
+          Mvu.Cmd.map(settingsCmd, Settings.initialCommands(state.settings)),
           Mvu.Cmd.of(repositoriesCmd({ kind: "Load" })),
         ),
       ];
     }
     case "CountIncrement": {
-      const oldCount = model.get("count");
-      return [model.set("count", oldCount + 1), Mvu.Cmd.none()];
+      return [{ ...state, count: state.count + 1 }, Mvu.Cmd.none()];
     }
     case "CountDecrement": {
-      const oldCount = model.get("count");
-      return [model.set("count", oldCount - 1), Mvu.Cmd.none()];
+      return [{ ...state, count: state.count - 1 }, Mvu.Cmd.none()];
     }
     case "RouteRequested": {
-      if (Router.equal(model.get("route"), msg.route)) {
-        return [model, Mvu.Cmd.none()];
+      if (Router.equal(state.route, msg.route)) {
+        return [state, Mvu.Cmd.none()];
       }
 
-      return [model, Mvu.Cmd.of({ kind: "Navigate", route: msg.route, replace: msg.replace })];
+      return [state, Mvu.Cmd.of({ kind: "Navigate", route: msg.route, replace: msg.replace })];
     }
     case "RouteChanged": {
       const commands: Cmd[] = [];
@@ -95,19 +93,16 @@ export const update = (msg: Msg, model: Model): Mvu.Transition<Model, Cmd> => {
         ctx.runCmd({ kind: "Navigate", route: { name: "Home" }, replace: true });
       }
 
-      if (Router.equal(model.get("route"), route)) {
-        return [model, commands];
+      if (Router.equal(state.route, route)) {
+        return [state, commands];
       }
 
-      return [
-        queuePullRequestRouteWork(ctx, model.set("route", route), { syncMissing: true }),
-        commands,
-      ];
+      return [queuePullRequestRouteWork(ctx, { ...state, route }, { syncMissing: true }), commands];
     }
     case "Settings": {
-      const [settings, commands] = Settings.update(msg.msg, model.get("settings"));
+      const [settings, commands] = Settings.update(msg.msg, state.settings);
 
-      return [model.set("settings", settings), Mvu.Cmd.map(settingsCmd, commands)];
+      return [{ ...state, settings }, Mvu.Cmd.map(settingsCmd, commands)];
     }
     case "Repositories": {
       const commands: Cmd[] = [];
@@ -117,26 +112,30 @@ export const update = (msg: Msg, model: Model): Mvu.Transition<Model, Cmd> => {
           runCmd: (cmd) => ctx.runCmd(repositoriesCmd(cmd)),
         },
         msg.msg,
-        model.get("repositories"),
+        state.repositories,
       );
 
       return [
-        queuePullRequestRouteWork(ctx, model.set("repositories", repositories), {
-          syncMissing: msg.msg.kind === "PullRequestsLoaded",
-        }),
+        queuePullRequestRouteWork(
+          ctx,
+          { ...state, repositories },
+          {
+            syncMissing: msg.msg.kind === "PullRequestsLoaded",
+          },
+        ),
         commands,
       ];
     }
     case "UserRefreshed": {
-      if (model.get("user").id === msg.user.id) {
-        return [model.set("user", msg.user), Mvu.Cmd.none()];
+      if (state.user.id === msg.user.id) {
+        return [{ ...state, user: msg.user }, Mvu.Cmd.none()];
       }
 
-      const nextModel = createModel(msg.user, model.get("route"));
+      const nextState = createInitialState(msg.user, state.route);
       return [
-        nextModel,
+        nextState,
         Mvu.Cmd.batch(
-          Mvu.Cmd.map(settingsCmd, Settings.initialCommands(nextModel.get("settings"))),
+          Mvu.Cmd.map(settingsCmd, Settings.initialCommands(nextState.settings)),
           Mvu.Cmd.of(repositoriesCmd({ kind: "Load" })),
         ),
       ];
@@ -146,35 +145,35 @@ export const update = (msg: Msg, model: Model): Mvu.Transition<Model, Cmd> => {
 
 const queuePullRequestRouteWork = (
   ctx: RepositoryUpdateContext,
-  model: Model,
+  state: State,
   options: { syncMissing: boolean },
-): Model => {
-  const route = model.get("route");
+): State => {
+  const route = state.route;
   if (route.name !== "PullRequest") {
-    return model;
+    return state;
   }
 
-  const repositories = model.get("repositories");
+  const repositories = state.repositories;
   if (repositories.status !== "loaded") {
-    return model;
+    return state;
   }
 
   const repository = repositories.repositories.find(
     (candidate) => candidate.fullName === route.repo.toLowerCase(),
   );
   if (repository === undefined) {
-    return model;
+    return state;
   }
 
-  const pullRequests = repositories.pullRequests.get(repository.fullName);
+  const pullRequests = repositories.pullRequests[repository.fullName];
   if (pullRequests === undefined) {
     ctx.runCmd({ kind: "Repositories", cmd: { kind: "LoadPullRequests", repository } });
-    return model;
+    return state;
   }
 
   const number = Number(route.id);
   if (!Number.isInteger(number) || number <= 0 || pullRequests.status !== "loaded") {
-    return model;
+    return state;
   }
 
   const hasPullRequest = pullRequests.pullRequests.some(
@@ -182,23 +181,22 @@ const queuePullRequestRouteWork = (
   );
   if (!hasPullRequest) {
     if (!options.syncMissing || pullRequests.complete) {
-      return model;
+      return state;
     }
 
     ctx.runCmd({ kind: "Repositories", cmd: { kind: "SyncPullRequests", repository } });
-    return model;
+    return state;
   }
 
-  if (repositories.pullRequestDetails.has(Repositories.pullRequestDetailKey(repository, number))) {
-    return model;
+  if (Repositories.pullRequestDetailKey(repository, number) in repositories.pullRequestDetails) {
+    return state;
   }
 
   ctx.runCmd({ kind: "Repositories", cmd: { kind: "LoadPullRequestDetail", number, repository } });
-  return model;
+  return state;
 };
 
-let model: Model | null = null;
-let subs: Set<() => void> = new Set();
+const [store, setStore] = createStore<{ value: State | null }>({ value: null });
 let messageQueue: Msg[] = [];
 let processingMessages = false;
 
@@ -222,26 +220,31 @@ const defaultRunCmd = (cmd: Cmd) => {
 
 let runCmd = defaultRunCmd;
 
+const replaceState = (nextState: State) => {
+  batch(() => {
+    setStore("value", null);
+    setStore("value", nextState);
+  });
+};
+
 export const start = (
   user: User,
   route: Router.AuthenticatedRoute = Router.toAuthenticatedRoute(Router.getRoute()),
 ) => {
-  model = createModel(user, route);
-  subs.forEach((sub) => sub());
+  replaceState(createInitialState(user, route));
   send({ kind: "Started" });
 };
 
 export const stop = () => {
   Settings.applyTheme("system");
-  model = null;
+  setStore("value", null);
   messageQueue = [];
   processingMessages = false;
-  subs.forEach((sub) => sub());
 };
 
 export const send = (msg: Msg) => {
-  if (model === null) {
-    throw new Error("Authenticated model was updated before a user was available");
+  if (store.value === null) {
+    throw new Error("Authenticated store was updated before a user was available");
   }
 
   messageQueue.push(msg);
@@ -253,13 +256,15 @@ export const send = (msg: Msg) => {
   try {
     while (messageQueue.length > 0) {
       const nextMsg = messageQueue.shift();
-      if (nextMsg === undefined || model === null) {
+      if (nextMsg === undefined || store.value === null) {
         continue;
       }
 
-      const [nextModel, commands] = update(nextMsg, model);
-      model = nextModel;
-      subs.forEach((sub) => sub());
+      const state = unwrap(store.value);
+      const [nextState, commands] = update(nextMsg, state);
+      if (nextState !== state) {
+        replaceState(nextState);
+      }
       commands.forEach((cmd) => runCmd(cmd));
     }
   } finally {
@@ -268,32 +273,27 @@ export const send = (msg: Msg) => {
 };
 
 Router.onStateChange((route) => {
-  if (model !== null) {
+  if (store.value !== null) {
     send({ kind: "RouteChanged", route });
   }
 });
 
-const subscribe = (onStoreChange: () => void) => {
-  subs.add(onStoreChange);
-  return () => subs.delete(onStoreChange);
-};
-
-export const useModel = <A>(selector: (model: Model) => A) => {
-  return useSyncExternalStore(subscribe, () => {
-    if (model === null) {
-      throw new Error("Authenticated model was read before a user was available");
+export const appStore = <A>(selector: (state: State) => A) => {
+  return createMemo(() => {
+    if (store.value === null) {
+      throw new Error("Authenticated store was read before a user was available");
     }
 
-    return selector(model);
+    return selector(store.value);
   });
 };
 
-export const get = (): Model => {
-  if (model === null) {
-    throw new Error("Authenticated model was read before a user was available");
+export const get = (): State => {
+  if (store.value === null) {
+    throw new Error("Authenticated store was read before a user was available");
   }
 
-  return model;
+  return store.value;
 };
 
 // NOTE: I am not 100% about these, testing patterns but once we are using the commands
@@ -308,8 +308,7 @@ export const setRunCmdForTest = (nextRunCmd: (cmd: Cmd) => void) => {
 // NOTE: I am not 100% about these, testing patterns but once we are using the commands
 // more, I will probably want to refactor them.
 export const resetForTest = () => {
-  model = null;
-  subs = new Set();
+  setStore("value", null);
   messageQueue = [];
   processingMessages = false;
   runCmd = defaultRunCmd;

@@ -1,8 +1,8 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
-import { resetForTest } from "./model";
+import { resetForTest } from "./store";
 import type { PullRequestDetail } from "./repositoriesSlice";
 import * as Session from "./session";
 
@@ -314,7 +314,7 @@ const repositoryFromInput = (input: string) => {
 
 const renderApp = () => {
   Session.start();
-  return render(<App />);
+  return render(() => <App />);
 };
 
 const clearCache = () => {
@@ -330,7 +330,7 @@ const readCachedUser = () => {
 };
 
 const selectTheme = async (user: ReturnType<typeof userEvent.setup>, theme: string) => {
-  await user.click(screen.getByRole("combobox", { name: "Theme" }));
+  await user.click(screen.getByRole("button", { name: /^Theme / }));
   await user.click(await screen.findByRole("option", { name: theme }));
 };
 
@@ -410,7 +410,7 @@ describe("App", () => {
 
     await user.click(screen.getByRole("link", { name: "Settings" }));
     expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
-    expect(await screen.findByRole("combobox", { name: "Theme" })).toHaveTextContent("System");
+    expect(await screen.findByRole("button", { name: /^Theme / })).toHaveTextContent("System");
 
     await user.click(screen.getByRole("link", { name: "Sample PR" }));
     expect(screen.getByRole("heading", { name: "kestrel" })).toBeInTheDocument();
@@ -602,8 +602,9 @@ describe("App", () => {
 
     const button = await screen.findByRole("button", { name: "Load older activity" });
     await user.click(button);
-    expect(button).toBeDisabled();
-    expect(button).toHaveAttribute("aria-busy", "true");
+    const loadingButton = screen.getByRole("button", { name: "Loading older activity..." });
+    expect(loadingButton).toBeDisabled();
+    expect(loadingButton).toHaveAttribute("aria-busy", "true");
     expect(screen.getByRole("button", { name: "Sync pull request from GitHub" })).toBeDisabled();
 
     olderRequest.resolve(
@@ -654,9 +655,10 @@ describe("App", () => {
     const syncButton = screen.getByRole("button", { name: "Sync pull request from GitHub" });
     await user.click(syncButton);
 
-    expect(syncButton).toBeDisabled();
-    expect(syncButton).toHaveAttribute("aria-busy", "true");
-    expect(syncButton.querySelector("svg")).toHaveClass("pr-sidebar-sync-icon");
+    const syncingButton = screen.getByRole("button", { name: "Sync pull request from GitHub" });
+    expect(syncingButton).toBeDisabled();
+    expect(syncingButton).toHaveAttribute("aria-busy", "true");
+    expect(syncingButton.querySelector("svg")).toHaveClass("pr-sidebar-sync-icon");
 
     if (finishSync === undefined) {
       throw new Error("sync request did not start");
@@ -677,8 +679,11 @@ describe("App", () => {
     const metadata = screen.getByRole("complementary", { name: "Pull request metadata" });
     expect(within(metadata).getByText("closed")).toBeInTheDocument();
     expect(within(metadata).getByText("hubot")).toBeInTheDocument();
-    expect(syncButton).toHaveAttribute("aria-busy", "false");
-    expect(syncButton.querySelector("svg")).not.toHaveClass("pr-sidebar-sync-icon");
+    const completedSyncButton = screen.getByRole("button", {
+      name: "Sync pull request from GitHub",
+    });
+    expect(completedSyncButton).toHaveAttribute("aria-busy", "false");
+    expect(completedSyncButton.querySelector("svg")).not.toHaveClass("pr-sidebar-sync-icon");
   });
 
   it("renders actions and review status above checks in the left sidebar", async () => {
@@ -702,7 +707,8 @@ describe("App", () => {
 
     renderApp();
 
-    const sidebar = await screen.findByRole("complementary", { name: "Pull request status" });
+    await screen.findByRole("heading", { name: "Checks" });
+    const sidebar = screen.getByRole("complementary", { name: "Pull request status" });
     const actions = within(sidebar).getByRole("navigation", { name: "Pull request actions" });
     const reviewHeading = within(sidebar).getByRole("heading", { name: "Review status" });
     const checksHeading = within(sidebar).getByRole("heading", { name: "Checks" });
@@ -815,7 +821,7 @@ describe("App", () => {
     );
   });
 
-  it("shows check run details on hover without click toggling", async () => {
+  it("shows check run details on hover and closes on activation", async () => {
     const user = userEvent.setup();
     window.history.replaceState({}, "", "/pull/kestrel%2Fapp/42");
     mockAuth(
@@ -840,21 +846,17 @@ describe("App", () => {
     expect(
       within(tooltip).getByText("All test suites completed successfully."),
     ).toBeInTheDocument();
-    expect(within(tooltip).getByRole("link", { name: "View run" })).toHaveAttribute(
-      "href",
-      "https://ci.example.test/runs/42",
-    );
-    expect(within(tooltip).getByRole("link", { name: "View run" })).toHaveAttribute(
-      "target",
-      "_blank",
-    );
-    expect(within(tooltip).getByRole("link", { name: "View run" })).toHaveAttribute(
-      "rel",
-      "noreferrer",
-    );
+    const runLink = within(tooltip).getByRole("link", { name: "View run" });
+    expect(runLink).toHaveAttribute("href", "https://ci.example.test/runs/42");
+    expect(runLink).toHaveAttribute("target", "_blank");
+    expect(runLink).toHaveAttribute("rel", "noreferrer");
+
+    await user.hover(runLink);
+    await new Promise((resolve) => window.setTimeout(resolve, 200));
+    expect(tooltip).toBeInTheDocument();
 
     await user.click(trigger);
-    expect(screen.getByRole("tooltip")).toBeInTheDocument();
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   });
 
   it("shows status details on hover and handles missing run links", async () => {
@@ -1009,8 +1011,10 @@ describe("App", () => {
 
     renderApp();
 
+    await screen.findByText("No repositories tracked yet.");
     const input = await screen.findByRole("textbox", { name: "Add GitHub repository" });
     await user.type(input, "https://github.com/Kestrel/App.git");
+    expect(input).toHaveValue("https://github.com/Kestrel/App.git");
     await user.click(screen.getByRole("button", { name: "Track repo" }));
 
     expect(await screen.findByRole("link", { name: "kestrel/app" })).toBeInTheDocument();
@@ -1141,6 +1145,19 @@ describe("App", () => {
     expect(readCachedUser()).toEqual({ version: 1, user: signedInResponse.user });
   });
 
+  it("navigates a newly authenticated session away from login", async () => {
+    window.history.replaceState({}, "", "/login");
+    clearCache();
+    resetForTest();
+    Session.resetForTest();
+
+    renderApp();
+
+    await screen.findByRole("button", { name: "Sign out" });
+    expect(window.location.pathname).toBe("/");
+    expect(screen.getByRole("heading", { name: "Tracked repositories" })).toBeInTheDocument();
+  });
+
   it("logs out", async () => {
     const user = userEvent.setup();
 
@@ -1170,7 +1187,7 @@ describe("App", () => {
     await user.click(screen.getByRole("link", { name: "Settings" }));
     await selectTheme(user, "Dark");
 
-    expect(screen.getByRole("combobox", { name: "Theme" })).toHaveTextContent("Dark");
+    expect(screen.getByRole("button", { name: /^Theme / })).toHaveTextContent("Dark");
     expect(document.documentElement).toHaveAttribute("data-theme", "dark");
     await waitFor(() =>
       expect(
@@ -1197,7 +1214,7 @@ describe("App", () => {
     await user.click(screen.getByRole("link", { name: "Settings" }));
     await selectTheme(user, "Dark");
 
-    expect(screen.getByRole("combobox", { name: "Theme" })).toHaveTextContent("Dark");
+    expect(screen.getByRole("button", { name: /^Theme / })).toHaveTextContent("Dark");
     expect(document.documentElement).toHaveAttribute("data-theme", "dark");
 
     save.resolve(new Response(null, { status: 500 }));
@@ -1207,7 +1224,7 @@ describe("App", () => {
       await screen.findByText(/Theme is saved on this device but has not synced/),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Theme" })).toHaveTextContent("Dark");
+    expect(screen.getByRole("button", { name: /^Theme / })).toHaveTextContent("Dark");
     expect(document.documentElement).toHaveAttribute("data-theme", "dark");
   });
 
@@ -1245,10 +1262,10 @@ describe("App", () => {
     secondSave.resolve(jsonResponse({ theme: "light" }));
     await secondSave.promise;
     await waitFor(() =>
-      expect(screen.getByRole("combobox", { name: "Theme" })).toHaveTextContent("Light"),
+      expect(screen.getByRole("button", { name: /^Theme / })).toHaveTextContent("Light"),
     );
 
-    expect(screen.getByRole("combobox", { name: "Theme" })).toHaveTextContent("Light");
+    expect(screen.getByRole("button", { name: /^Theme / })).toHaveTextContent("Light");
     expect(document.documentElement).toHaveAttribute("data-theme", "light");
     expect(
       screen.queryByText(/Theme is saved on this device but has not synced/),

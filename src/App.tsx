@@ -1,8 +1,8 @@
-import { useId, useRef } from "react";
+import { createMemo, createSignal, createUniqueId, For, Match, Switch } from "solid-js";
 import "./App.css";
 import { Link } from "./Link";
 import { LoggedOut } from "./LoggedOut";
-import { send, useModel } from "./model";
+import { appStore, send } from "./store";
 import * as Repositories from "./repositoriesSlice";
 import type * as Router from "./router";
 import * as Session from "./session";
@@ -11,25 +11,28 @@ import DefaultHeader from "./DefaultHeader";
 import PullRequestPage from "./PullRequestPage";
 import PullRequestsError from "./PullRequestError";
 
-const Page = ({ route }: { route: Router.AuthenticatedRoute }) => {
-  switch (route.name) {
-    case "Home":
-      return <HomePage />;
-    case "Settings":
-      return <SettingsPage />;
-    case "PullRequest":
-      return <PullRequestPage repo={route.repo} id={route.id} />;
-    case "NotFound":
-      return <NotFoundPage path={route.path} />;
-  }
+const Page = (props: { route: Router.AuthenticatedRoute }) => {
+  const view = createMemo(() => {
+    switch (props.route.name) {
+      case "Home":
+        return <HomePage />;
+      case "Settings":
+        return <SettingsPage />;
+      case "PullRequest":
+        return <PullRequestPage repo={props.route.repo} id={props.route.id} />;
+      case "NotFound":
+        return <NotFoundPage path={props.route.path} />;
+    }
+  });
+  return <>{view}</>;
 };
 
 const HomePage = () => {
   return (
-    <div className="default-page">
+    <div class="default-page">
       <DefaultHeader />
-      <section className="page-card">
-        <p className="eyebrow">Repositories</p>
+      <section class="page-card">
+        <p class="eyebrow">Repositories</p>
         <h1>Tracked repositories</h1>
         <RepositoryList />
         <AddRepositoryForm />
@@ -39,71 +42,76 @@ const HomePage = () => {
 };
 
 const RepositoryList = () => {
-  const repositories = useModel((model) => model.get("repositories"));
-  if (repositories.status === "loading") {
-    return <p className="repo-status">Loading repositories...</p>;
-  }
-
-  if (repositories.status === "error") {
-    return <p className="repo-status">Repositories could not be loaded.</p>;
-  }
-
-  if (repositories.repositories.isEmpty()) {
-    return <p className="repo-status">No repositories tracked yet.</p>;
-  }
-
+  const repositories = appStore((state) => state.repositories);
   return (
-    <ul className="repo-list" aria-label="Tracked repositories">
-      {repositories.repositories.toArray().map((repository) => (
-        <RepositoryRow
-          key={repository.fullName}
-          pullRequests={repositories.pullRequests.get(repository.fullName)}
-          repository={repository}
-        />
-      ))}
-    </ul>
+    <Switch>
+      <Match when={repositories().status === "loading"}>
+        <p class="repo-status">Loading repositories...</p>
+      </Match>
+      <Match when={repositories().status === "error"}>
+        <p class="repo-status">Repositories could not be loaded.</p>
+      </Match>
+      <Match when={repositories().repositories.length === 0}>
+        <p class="repo-status">No repositories tracked yet.</p>
+      </Match>
+      <Match when={repositories().status === "loaded"}>
+        <ul class="repo-list" aria-label="Tracked repositories">
+          <For each={repositories().repositories}>
+            {(repository) => (
+              <RepositoryRow
+                pullRequests={repositories().pullRequests[repository.fullName]}
+                repository={repository}
+              />
+            )}
+          </For>
+        </ul>
+      </Match>
+    </Switch>
   );
 };
 
-const RepositoryRow = ({
-  pullRequests,
-  repository,
-}: {
+const RepositoryRow = (props: {
   pullRequests: Repositories.PullRequestsState | undefined;
   repository: Repositories.Repository;
 }) => {
-  const busy = pullRequests?.status === "loading" || pullRequests?.status === "syncing";
-
   return (
-    <li className="repo-row">
-      <div className="repo-row-header">
-        <a href={repository.htmlUrl}>{repository.fullName}</a>
-        <span className="repo-provider">GitHub</span>
+    <li class="repo-row">
+      <div class="repo-row-header">
+        <a href={props.repository.htmlUrl}>{props.repository.fullName}</a>
+        <span class="repo-provider">GitHub</span>
       </div>
-      <div className="repo-actions">
+      <div class="repo-actions">
         <button
-          aria-label={`Load PRs for ${repository.fullName}`}
-          disabled={busy}
+          aria-label={`Load PRs for ${props.repository.fullName}`}
+          disabled={
+            props.pullRequests?.status === "loading" || props.pullRequests?.status === "syncing"
+          }
           onClick={() =>
-            send({ kind: "Repositories", msg: { kind: "PullRequestsLoadRequested", repository } })
+            send({
+              kind: "Repositories",
+              msg: { kind: "PullRequestsLoadRequested", repository: props.repository },
+            })
           }
           type="button"
         >
           Load PRs
         </button>
         <button
-          aria-label={`Sync PRs for ${repository.fullName}`}
-          disabled={pullRequests?.status === "syncing"}
+          aria-label={`Sync PRs for ${props.repository.fullName}`}
+          disabled={props.pullRequests?.status === "syncing"}
           onClick={() =>
-            send({ kind: "Repositories", msg: { kind: "PullRequestsSyncRequested", repository } })
+            send({
+              kind: "Repositories",
+              msg: { kind: "PullRequestsSyncRequested", repository: props.repository },
+            })
           }
           type="button"
         >
-          {pullRequests?.status === "syncing" ? "Syncing..." : "Sync PRs"}
+          {props.pullRequests?.status === "syncing" ? "Syncing..." : "Sync PRs"}
         </button>
       </div>
-      <RepositorySyncStatus repository={repository} />
-      <PullRequestsSummary pullRequests={pullRequests} repository={repository} />
+      <RepositorySyncStatus repository={props.repository} />
+      <PullRequestsSummary pullRequests={props.pullRequests} repository={props.repository} />
     </li>
   );
 };
@@ -111,14 +119,14 @@ const RepositoryRow = ({
 const RepositorySyncStatus = ({ repository }: { repository: Repositories.Repository }) => {
   if (repository.pullRequestsSyncError) {
     return (
-      <p className="repo-pr-status">
+      <p class="repo-pr-status">
         Last PR sync failed: {repositorySyncErrorText(repository.pullRequestsSyncError)}
       </p>
     );
   }
 
   if (repository.pullRequestsSyncedAt) {
-    return <p className="repo-pr-status">Last PR sync: {repository.pullRequestsSyncedAt}</p>;
+    return <p class="repo-pr-status">Last PR sync: {repository.pullRequestsSyncedAt}</p>;
   }
 
   return null;
@@ -135,94 +143,109 @@ const repositorySyncErrorText = (error: string) => {
   }
 };
 
-const PullRequestsSummary = ({
-  pullRequests,
-  repository,
-}: {
+const PullRequestsSummary = (props: {
   pullRequests: Repositories.PullRequestsState | undefined;
   repository: Repositories.Repository;
 }) => {
-  if (pullRequests === undefined) {
-    return <p className="repo-pr-status">Pull requests not loaded.</p>;
-  }
-
-  switch (pullRequests.status) {
-    case "loading":
-      return <p className="repo-pr-status">Loading pull requests...</p>;
-    case "syncing":
-      return <p className="repo-pr-status">Syncing pull requests...</p>;
-    case "error":
-      return <PullRequestsError error={pullRequests.error} />;
-    case "loaded":
-      if (pullRequests.pullRequests.isEmpty()) {
-        return <p className="repo-pr-status">No pull requests stored yet.</p>;
-      }
-
-      return (
-        <ul className="repo-pr-list" aria-label={`Pull requests for ${repository.fullName}`}>
-          {pullRequests.pullRequests.toArray().map((pullRequest) => (
-            <li key={pullRequest.number}>
-              <Link
-                to={{
-                  name: "PullRequest",
-                  repo: repository.fullName,
-                  id: String(pullRequest.number),
-                }}
-              >
-                #{pullRequest.number} {pullRequest.title}
-              </Link>
-              <span className="repo-pr-meta">{pullRequest.state}</span>
-            </li>
-          ))}
+  return (
+    <Switch fallback={<p class="repo-pr-status">Pull requests not loaded.</p>}>
+      <Match when={props.pullRequests?.status === "loading"}>
+        <p class="repo-pr-status">Loading pull requests...</p>
+      </Match>
+      <Match when={props.pullRequests?.status === "syncing"}>
+        <p class="repo-pr-status">Syncing pull requests...</p>
+      </Match>
+      <Match when={props.pullRequests?.status === "error"}>
+        <PullRequestsError
+          error={
+            (props.pullRequests as Extract<Repositories.PullRequestsState, { status: "error" }>)
+              .error
+          }
+        />
+      </Match>
+      <Match
+        when={
+          props.pullRequests?.status === "loaded" && props.pullRequests.pullRequests.length === 0
+        }
+      >
+        <p class="repo-pr-status">No pull requests stored yet.</p>
+      </Match>
+      <Match when={props.pullRequests?.status === "loaded"}>
+        <ul class="repo-pr-list" aria-label={`Pull requests for ${props.repository.fullName}`}>
+          <For each={props.pullRequests?.pullRequests}>
+            {(pullRequest) => (
+              <li>
+                <Link
+                  to={{
+                    name: "PullRequest",
+                    repo: props.repository.fullName,
+                    id: String(pullRequest.number),
+                  }}
+                >
+                  #{pullRequest.number} {pullRequest.title}
+                </Link>
+                <span class="repo-pr-meta">{pullRequest.state}</span>
+              </li>
+            )}
+          </For>
         </ul>
-      );
-  }
+      </Match>
+    </Switch>
+  );
 };
 
 const AddRepositoryForm = () => {
-  const errorId = useId();
-  const inputRef = useRef<HTMLInputElement>(null);
+  const errorId = createUniqueId();
+  const [repositoryInput, setRepositoryInput] = createSignal("");
 
-  const repositories = useModel((model) => model.get("repositories"));
-  const currentAddStatus = addStatus(repositories);
-  const saving = currentAddStatus === "saving";
-  const error = repositories.status === "loaded" ? addErrorText(repositories.addError) : undefined;
+  const repositories = appStore((state) => state.repositories);
+  const saving = () => addStatus(repositories()) === "saving";
+  const error = () => {
+    const state = repositories();
+    return state.status === "loaded" ? addErrorText(state.addError) : undefined;
+  };
 
   return (
     <form
-      className="repo-add-form"
+      class="repo-add-form"
       onSubmit={(event) => {
         event.preventDefault();
-        if (repositories.status !== "loaded" || saving) {
+        if (repositories().status !== "loaded" || saving()) {
           return;
         }
 
         send({
           kind: "Repositories",
-          msg: { kind: "AddRequested", repository: inputRef.current?.value ?? "" },
+          msg: {
+            kind: "AddRequested",
+            repository: repositoryInput(),
+          },
         });
         event.currentTarget.reset();
+        setRepositoryInput("");
       }}
     >
-      <label className="repo-add-label" htmlFor="repository-input">
+      <label class="repo-add-label" for="repository-input">
         Add GitHub repository
       </label>
-      <div className="repo-add-controls">
+      <div class="repo-add-controls">
         <input
-          aria-describedby={error ? errorId : undefined}
-          disabled={repositories.status !== "loaded" || saving}
+          aria-describedby={error() ? errorId : undefined}
+          disabled={repositories().status !== "loaded" || saving()}
           id="repository-input"
+          name="repository"
+          onInput={(event) => setRepositoryInput(event.currentTarget.value)}
           placeholder="owner/name or GitHub URL"
-          ref={inputRef}
           type="text"
+          value={repositoryInput()}
         />
-        <button disabled={repositories.status !== "loaded" || saving} type="submit">
-          {saving ? "Tracking..." : "Track repo"}
+        <button disabled={repositories().status !== "loaded" || saving()} type="submit">
+          {saving() ? "Tracking..." : "Track repo"}
         </button>
       </div>
-      {error ? (
-        <p className="repo-add-error" id={errorId}>
-          {error}
+      {error() ? (
+        <p class="repo-add-error" id={errorId}>
+          {error()}
         </p>
       ) : null}
     </form>
@@ -248,10 +271,10 @@ const addErrorText = (error: Repositories.AddError | null) => {
 
 const NotFoundPage = ({ path }: { path: string }) => {
   return (
-    <div className="default-page">
+    <div class="default-page">
       <DefaultHeader />
-      <section className="page-card">
-        <p className="eyebrow">Not Found</p>
+      <section class="page-card">
+        <p class="eyebrow">Not Found</p>
         <h1>Route not found</h1>
         <p>No page exists for {path}.</p>
       </section>
@@ -260,23 +283,30 @@ const NotFoundPage = ({ path }: { path: string }) => {
 };
 
 const AuthenticatedApp = () => {
-  const route = useModel((model) => model.get("route"));
+  const route = appStore((state) => state.route);
 
   return (
     <main>
-      <Page route={route} />
+      <Page route={route()} />
     </main>
   );
 };
 
 function App() {
-  const session = Session.useSession((state) => state);
+  const status = Session.useSession((state) => state.status);
+  const publicRoute = Session.useSession((state) =>
+    state.status === "loggedOut" ? state.route : null,
+  );
 
-  if (session.status === "loggedOut") {
-    return <LoggedOut route={session.route} />;
-  }
-
-  return <AuthenticatedApp />;
+  const view = createMemo(() => {
+    const route = publicRoute();
+    return status() === "loggedOut" && route !== null ? (
+      <LoggedOut route={route} />
+    ) : (
+      <AuthenticatedApp />
+    );
+  });
+  return <>{view}</>;
 }
 
 export default App;

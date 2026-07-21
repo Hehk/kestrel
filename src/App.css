@@ -630,7 +630,7 @@
 }
 
 .select-popup {
-  min-width: var(--anchor-width);
+  min-width: var(--kb-popper-anchor-width);
   padding: 0.25rem;
   color: var(--text);
   background: var(--bg);

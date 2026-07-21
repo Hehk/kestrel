@@ -1,9 +1,9 @@
-import react from "@vitejs/plugin-react";
+import solid from "vite-plugin-solid";
 import { defineConfig } from "vitest/config";
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [solid()],
   server: {
     proxy: {
       "/api": "http://localhost:3000",

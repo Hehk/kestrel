@@ -1,5 +1,4 @@
-import { waitFor } from "@testing-library/react";
-import { List } from "immutable";
+import { waitFor } from "@solidjs/testing-library";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as Repositories from "./repositoriesSlice";
 
@@ -78,7 +77,7 @@ const loadedState = (repositories: Repositories.Repository[] = []): LoadedState 
     addStatus: "idle",
     pullRequestDetails: Repositories.initialState().pullRequestDetails,
     pullRequests: Repositories.initialState().pullRequests,
-    repositories: List(repositories),
+    repositories,
     status: "loaded",
   };
 };
@@ -96,7 +95,7 @@ describe("repositoriesSlice", () => {
     expect(result.state.status).toBe("loaded");
     if (result.state.status === "loaded") {
       expect(result.state.addStatus).toBe("idle");
-      expect(result.state.repositories.toArray()).toEqual(repositories);
+      expect(result.state.repositories).toEqual(repositories);
     }
     expect(result.cmds).toEqual([]);
   });
@@ -109,7 +108,7 @@ describe("repositoriesSlice", () => {
       },
     );
 
-    expect(result.state.repositories.toArray()).toEqual([]);
+    expect(result.state.repositories).toEqual([]);
     expect(result.state.status).toBe("loading");
     expect(result.cmds).toEqual([{ kind: "Load" }]);
   });
@@ -127,7 +126,7 @@ describe("repositoriesSlice", () => {
     if (result.state.status === "loaded") {
       expect(result.state.addError).toBe(null);
       expect(result.state.addStatus).toBe("saving");
-      expect(result.state.repositories.toArray()).toEqual([]);
+      expect(result.state.repositories).toEqual([]);
     }
     expect(result.cmds).toEqual([{ kind: "Add", repository: "Kestrel/App" }]);
   });
@@ -151,7 +150,7 @@ describe("repositoriesSlice", () => {
     expect(result.state.status).toBe("loaded");
     if (result.state.status === "loaded") {
       expect(result.state.addStatus).toBe("idle");
-      expect(result.state.repositories.toArray()).toEqual([existing, added]);
+      expect(result.state.repositories).toEqual([existing, added]);
     }
   });
 
@@ -165,7 +164,7 @@ describe("repositoriesSlice", () => {
     if (result.state.status === "loaded") {
       expect(result.state.addError).toBe("duplicate");
       expect(result.state.addStatus).toBe("error");
-      expect(result.state.repositories.toArray()).toEqual(repositories);
+      expect(result.state.repositories).toEqual(repositories);
     }
   });
 
@@ -174,14 +173,14 @@ describe("repositoriesSlice", () => {
     const state = loadedState([repo]);
 
     const result = update(state, { kind: "PullRequestsLoadRequested", repository: repo });
-    const pullRequests = result.state.pullRequests.get("kestrel/app");
+    const pullRequests = result.state.pullRequests["kestrel/app"];
 
     expect(result.state.status).toBe("loaded");
     if (result.state.status === "loaded") {
       expect(result.state.addStatus).toBe("idle");
-      expect(result.state.repositories.toArray()).toEqual([repo]);
+      expect(result.state.repositories).toEqual([repo]);
     }
-    expect(pullRequests?.pullRequests.toArray()).toEqual([]);
+    expect(pullRequests?.pullRequests).toEqual([]);
     expect(pullRequests?.status).toBe("loading");
     expect(result.cmds).toEqual([{ kind: "LoadPullRequests", repository: repo }]);
   });
@@ -205,11 +204,11 @@ describe("repositoriesSlice", () => {
       repository: repo,
     });
 
-    const pullRequests = result.state.pullRequests.get("kestrel/app");
+    const pullRequests = result.state.pullRequests["kestrel/app"];
 
     expect(pullRequests?.complete).toBe(false);
     expect(pullRequests?.nextPage).toBe(2);
-    expect(pullRequests?.pullRequests.toArray()).toEqual([newPullRequest, updatedPullRequest]);
+    expect(pullRequests?.pullRequests).toEqual([newPullRequest, updatedPullRequest]);
     expect(pullRequests?.status).toBe("loaded");
     expect(result.cmds).toEqual([]);
   });
@@ -232,12 +231,12 @@ describe("repositoriesSlice", () => {
       repository: repo,
     });
 
-    expect(result.state.pullRequests.get(repo.fullName)?.pullRequests.toArray()).toEqual([
-      updatedPullRequest,
-    ]);
-    expect(
-      result.state.pullRequestDetails.get(Repositories.pullRequestDetailKey(repo, 42)),
-    ).toEqual({ detail: pullRequestDetail(), error: null, status: "loaded" });
+    expect(result.state.pullRequests[repo.fullName]?.pullRequests).toEqual([updatedPullRequest]);
+    expect(result.state.pullRequestDetails[Repositories.pullRequestDetailKey(repo, 42)]).toEqual({
+      detail: pullRequestDetail(),
+      error: null,
+      status: "loaded",
+    });
   });
 
   it("loads older timeline activity without discarding the current detail", () => {
@@ -259,13 +258,13 @@ describe("repositoriesSlice", () => {
     expect(requested.cmds).toEqual([
       { kind: "LoadOlderPullRequestTimeline", number: 42, repository: repo },
     ]);
-    expect(
-      requested.state.pullRequestDetails.get(Repositories.pullRequestDetailKey(repo, 42)),
-    ).toEqual({
-      detail,
-      error: null,
-      status: "loadingTimeline",
-    });
+    expect(requested.state.pullRequestDetails[Repositories.pullRequestDetailKey(repo, 42)]).toEqual(
+      {
+        detail,
+        error: null,
+        status: "loadingTimeline",
+      },
+    );
 
     const failed = update(requested.state, {
       error: "syncFailed",
@@ -273,9 +272,7 @@ describe("repositoriesSlice", () => {
       number: 42,
       repository: repo,
     });
-    expect(
-      failed.state.pullRequestDetails.get(Repositories.pullRequestDetailKey(repo, 42)),
-    ).toEqual({
+    expect(failed.state.pullRequestDetails[Repositories.pullRequestDetailKey(repo, 42)]).toEqual({
       detail,
       error: "syncFailed",
       status: "timelineError",
