@@ -1,0 +1,10 @@
+diff --git a/src/greeting.rs b/src/greeting.rs
+new file mode 100644
+index 0000000..8c7c4f1
+--- /dev/null
++++ b/src/greeting.rs
+@@ -0,0 +1,4 @@
++pub fn greeting(name: &str) -> String {
++    format!("Hello, {name}!")
++}
++

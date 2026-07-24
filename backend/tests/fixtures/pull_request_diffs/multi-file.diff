@@ -1,0 +1,24 @@
+diff --git a/src/math.rs b/src/math.rs
+index 0f1e2d3..4a5b6c7 100644
+--- a/src/math.rs
++++ b/src/math.rs
+@@ -1,3 +1,4 @@ pub fn add(left: u32, right: u32) -> u32 {
+ pub fn add(left: u32, right: u32) -> u32 {
+-    left + right
++    left.saturating_add(right)
+ }
++
+@@ -5,3 +6,3 @@ pub fn subtract(left: u32, right: u32) -> u32 {
+ pub fn subtract(left: u32, right: u32) -> u32 {
+-    left - right
++    left.saturating_sub(right)
+ }
+diff --git a/README.md b/README.md
+index 1111111..2222222 100644
+--- a/README.md
++++ b/README.md
+@@ -1,3 +1,3 @@
+ # Kestrel
+ 
+-A work in progress.
++A pull request dashboard.
