@@ -24,7 +24,7 @@ sqlx = { version = "0.8", default-features = false, features = [
 ] }
 time = { version = "0.3", features = ["formatting", "parsing"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
-tower-http = { version = "0.6", features = ["cors", "trace"] }
+tower-http = { version = "0.6", features = ["compression-gzip", "cors", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 utoipa = { version = "5", features = ["axum_extras"] }
@@ -32,4 +32,6 @@ utoipa-swagger-ui = { version = "9", features = ["axum"] }
 url = "2"
 
 [dev-dependencies]
+flate2 = "1"
+futures-util = "0.3"
 tower = { version = "0.5", features = ["util"] }

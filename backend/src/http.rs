@@ -9,7 +9,7 @@ use axum::{
 use reqwest::Client;
 use serde::Serialize;
 use sqlx::SqlitePool;
-use tower_http::{cors::CorsLayer, trace::TraceLayer};
+use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
 use utoipa::{OpenApi, ToSchema};
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -155,6 +155,7 @@ pub fn app(config: &Config, state: AppState) -> Router {
     let router = Router::new()
         .nest("/api", api)
         .layer(TraceLayer::new_for_http())
+        .layer(CompressionLayer::new())
         .layer(CorsLayer::permissive())
         .layer(middleware::from_fn(private_diff_responses))
         .with_state(state);

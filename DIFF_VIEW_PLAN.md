@@ -864,18 +864,18 @@ npm run typecheck
 
 **Todos:**
 
-- [ ] Remove `diff` from `PullRequestDetailDto`.
-- [ ] Stop returning diff content from detail loading, pull request synchronization, and timeline pagination.
-- [ ] Keep raw diff fetching and SQLite persistence inside pull request synchronization.
-- [ ] Bound the GitHub raw-diff download to the parser byte budget while preserving accepted bytes exactly, and test an oversized response.
-- [ ] Update backend construction, storage-loading, and tests for the revised detail DTO.
-- [ ] Update frontend fixtures that currently set `detail.diff`.
-- [ ] Enable an appropriate `tower-http` compression feature.
-- [ ] Add `CompressionLayer` to the backend router.
-- [ ] Add an endpoint test sending `Accept-Encoding` and asserting compressed response behavior.
-- [ ] Regenerate `src/api/schema.ts` after the DTO removal.
-- [ ] Confirm API schema generation has no uncommitted drift.
-- [ ] Run the two-agent review gate, resolve accepted findings, and rerun this stage's verification.
+- [x] Remove `diff` from `PullRequestDetailDto`.
+- [x] Stop returning diff content from detail loading, pull request synchronization, and timeline pagination.
+- [x] Keep raw diff fetching and SQLite persistence inside pull request synchronization.
+- [x] Bound the GitHub raw-diff download to the parser byte budget while preserving accepted bytes exactly, and test an oversized response.
+- [x] Update backend construction, storage-loading, and tests for the revised detail DTO.
+- [x] Update frontend fixtures that currently set `detail.diff`.
+- [x] Enable an appropriate `tower-http` compression feature.
+- [x] Add `CompressionLayer` to the backend router.
+- [x] Add an endpoint test sending `Accept-Encoding` and asserting compressed response behavior.
+- [x] Regenerate `src/api/schema.ts` after the DTO removal.
+- [x] Confirm API schema generation has no uncommitted drift.
+- [x] Run the two-agent review gate, resolve accepted findings, and rerun this stage's verification.
 
 **Focused Tests:**
 
@@ -906,6 +906,17 @@ npm run check
 - The dedicated Diff endpoint is the only frontend API source for diff content.
 - Compressed responses are covered by an automated test.
 - Frontend and generated API types are green after the contract change.
+
+**Stage Record (2026-07-24):**
+
+- Removed `diff` from `PullRequestDetailDto`, its ordinary SQLite loader, and detail/sync/timeline responses. Overview requests no longer hydrate or serialize the raw diff.
+- Kept the internal synchronization snapshot, SQLite `diff` column, upsert binding, and dedicated semantic Diff loader unchanged. Tests verify detail and timeline responses omit the field while stored bytes remain exact.
+- Replaced the unbounded lossy `Response::text` download with a 64 MiB streaming collector. Exactly-at-limit valid UTF-8 is preserved byte-for-byte; cumulative overflow, invalid UTF-8, and non-identity content codings are rejected.
+- GitHub raw-diff requests explicitly send `Accept-Encoding: identity`; tests cover multi-chunk bodies and repeated and comma-separated `Content-Encoding` fields.
+- Enabled `tower-http` gzip compression globally and added a Diff endpoint test proving negotiation, headers, smaller transfer size, and byte-identical decompression.
+- Removed obsolete frontend fixture fields and regenerated `src/api/schema.ts`; the dedicated semantic Diff contract remains unchanged.
+- `cargo fmt --manifest-path backend/Cargo.toml -- --check`, 118 locked backend tests, locked all-target Clippy with warnings denied, `npm run check` with 86 frontend tests, `npm run build`, and `npm run api:check` against a fresh backend passed.
+- Both final Stage 3 reviewers reported no findings. Live GitHub encoding behavior and large concurrent compression remain explicit telemetry/profiling risks.
 
 ### Stage 4: Routes And Shared Pull Request Shell
 

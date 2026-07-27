@@ -99,7 +99,6 @@ const pullRequestDetail = (): PullRequestDetail => {
       { name: "mystery", state: "new_state" },
     ],
     commits: [{ message: "Add syncing", sha: "abcdef123456" }],
-    diff: "diff --git a/app.rs b/app.rs",
     files: [{ filename: "app.rs", status: "modified" }],
     issueComments: [{ authorLogin: "octocat", body: "looks good" }],
     reviewComments: [{ authorLogin: "reviewer", body: "nit" }],

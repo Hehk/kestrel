@@ -235,7 +235,6 @@ pub struct PullRequestDetailDto {
     pub body: Option<String>,
     pub check_runs: Vec<PullRequestCheckRunDto>,
     pub commits: Vec<PullRequestCommitDto>,
-    pub diff: Option<String>,
     pub files: Vec<PullRequestFileDto>,
     pub issue_comments: Vec<PullRequestCommentDto>,
     pub review_comments: Vec<PullRequestCommentDto>,
@@ -1320,7 +1319,7 @@ async fn load_pull_request_detail(
     number: i64,
 ) -> Result<Option<PullRequestDetailDto>, PullRequestDataError> {
     let row = sqlx::query_as::<_, PullRequestDetailRow>(
-        "SELECT body, files_json, commits_json, reviews_json, review_comments_json, review_decision, issue_comments_json, timeline_json, timeline_has_older, check_runs_json, statuses_json, diff, synced_at FROM tracked_repository_pull_request_details WHERE user_id = ? AND provider = ? AND owner = ? AND name = ? AND number = ?",
+        "SELECT body, files_json, commits_json, reviews_json, review_comments_json, review_decision, issue_comments_json, timeline_json, timeline_has_older, check_runs_json, statuses_json, synced_at FROM tracked_repository_pull_request_details WHERE user_id = ? AND provider = ? AND owner = ? AND name = ? AND number = ?",
     )
     .bind(&repository.user_id)
     .bind(GITHUB_PROVIDER)
@@ -1571,13 +1570,7 @@ async fn fetch_github_pull_request_detail(
         ),
     )
     .await?;
-    let diff = fetch_github_text(
-        state,
-        token,
-        &pull_request_url,
-        "application/vnd.github.v3.diff",
-    )
-    .await?;
+    let diff = fetch_github_diff(state, token, &pull_request_url).await?;
 
     Ok(PullRequestSyncSnapshot {
         detail: PullRequestDetailSnapshot {
@@ -1710,17 +1703,17 @@ async fn fetch_github_json<T: DeserializeOwned>(
     Ok(response.error_for_status()?.json::<T>().await?)
 }
 
-async fn fetch_github_text(
+async fn fetch_github_diff(
     state: &AppState,
     token: &str,
     url: &str,
-    accept: &str,
 ) -> Result<String, PullRequestDataError> {
     let response = state
         .http_client
         .get(url)
         .bearer_auth(token)
-        .header("Accept", accept)
+        .header("Accept", "application/vnd.github.v3.diff")
+        .header("Accept-Encoding", "identity")
         .header("User-Agent", USER_AGENT)
         .send()
         .await?;
@@ -1730,7 +1723,47 @@ async fn fetch_github_text(
         return Err(PullRequestDataError::GitHubAccessDenied);
     }
 
-    Ok(response.error_for_status()?.text().await?)
+    collect_github_diff(response.error_for_status()?, MAX_DIFF_BYTES).await
+}
+
+async fn collect_github_diff(
+    mut response: reqwest::Response,
+    limit: usize,
+) -> Result<String, PullRequestDataError> {
+    if response
+        .headers()
+        .get_all(reqwest::header::CONTENT_ENCODING)
+        .iter()
+        .any(|encoding| {
+            encoding.to_str().map_or(true, |encoding| {
+                encoding
+                    .split(',')
+                    .any(|coding| !coding.trim().eq_ignore_ascii_case("identity"))
+            })
+        })
+    {
+        return Err(PullRequestDataError::GitHubDiffUnsupportedEncoding);
+    }
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err(PullRequestDataError::GitHubDiffTooLarge);
+    }
+
+    let capacity = response
+        .content_length()
+        .and_then(|length| usize::try_from(length).ok())
+        .unwrap_or(0);
+    let mut bytes = Vec::with_capacity(capacity);
+    while let Some(chunk) = response.chunk().await? {
+        if chunk.len() > limit.saturating_sub(bytes.len()) {
+            return Err(PullRequestDataError::GitHubDiffTooLarge);
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+
+    String::from_utf8(bytes).map_err(PullRequestDataError::GitHubDiffInvalidUtf8)
 }
 
 async fn upsert_pull_requests(
@@ -1842,7 +1875,6 @@ where
         body: detail.body.clone(),
         check_runs: detail.check_runs.clone(),
         commits: detail.commits.clone(),
-        diff: detail.diff.clone(),
         files: detail.files.clone(),
         issue_comments: detail.issue_comments.clone(),
         review_comments: detail.review_comments.clone(),
@@ -1916,6 +1948,9 @@ enum PullRequestSyncError {
 enum PullRequestDataError {
     GitHubAccessDenied,
     GitHubApp(github_app::GitHubAppError),
+    GitHubDiffInvalidUtf8(std::string::FromUtf8Error),
+    GitHubDiffTooLarge,
+    GitHubDiffUnsupportedEncoding,
     GitHubGraphQl(String),
     Reqwest(reqwest::Error),
     Serde(serde_json::Error),
@@ -1958,6 +1993,16 @@ impl std::fmt::Display for PullRequestDataError {
         match self {
             Self::GitHubAccessDenied => write!(f, "GitHub App cannot access repository"),
             Self::GitHubApp(error) => write!(f, "GitHub App operation failed: {error}"),
+            Self::GitHubDiffInvalidUtf8(error) => {
+                write!(f, "GitHub pull request diff is not valid UTF-8: {error}")
+            }
+            Self::GitHubDiffTooLarge => write!(f, "GitHub pull request diff exceeds byte limit"),
+            Self::GitHubDiffUnsupportedEncoding => {
+                write!(
+                    f,
+                    "GitHub pull request diff uses unsupported content encoding"
+                )
+            }
             Self::GitHubGraphQl(error) => write!(f, "GitHub GraphQL operation failed: {error}"),
             Self::Reqwest(error) => write!(f, "GitHub pull request HTTP request failed: {error}"),
             Self::Serde(error) => write!(f, "pull request JSON operation failed: {error}"),
@@ -2019,7 +2064,6 @@ struct PullRequestDetailRow {
     body: Option<String>,
     check_runs_json: String,
     commits_json: String,
-    diff: Option<String>,
     files_json: String,
     issue_comments_json: String,
     review_comments_json: String,
@@ -2044,7 +2088,6 @@ impl PullRequestDetailRow {
             body: self.body,
             check_runs: serde_json::from_str(&self.check_runs_json)?,
             commits: serde_json::from_str(&self.commits_json)?,
-            diff: self.diff,
             files: serde_json::from_str(&self.files_json)?,
             issue_comments: serde_json::from_str(&self.issue_comments_json)?,
             review_comments: serde_json::from_str(&self.review_comments_json)?,
@@ -2356,19 +2399,21 @@ mod tests {
         Json, Router,
     };
     use base64::{engine::general_purpose::STANDARD, Engine};
+    use flate2::read::GzDecoder;
     use serde_json::Value;
     use sqlx::SqlitePool;
-    use std::{collections::HashMap, fmt::Write};
+    use std::{collections::HashMap, fmt::Write, io::Read};
     use tokio::net::TcpListener;
     use tower::ServiceExt;
 
     use super::{
-        fetch_github_pull_request_detail, fetch_github_pull_requests, load_pull_request_detail,
-        load_pull_requests, load_tracked_repository, update_pull_request_timeline_if_current,
-        update_sync_error, update_sync_state, upsert_pull_request_detail, upsert_pull_requests,
-        GitHubPullRequest, GitHubUser, PullRequestCheckRunDto, PullRequestCommentDto,
-        PullRequestCommitDto, PullRequestDetailSnapshot, PullRequestFileDto, PullRequestReviewDto,
-        PullRequestStatusDto, PullRequestTimelineEventDto, TrackedRepository,
+        collect_github_diff, fetch_github_pull_request_detail, fetch_github_pull_requests,
+        load_pull_request_detail, load_pull_requests, load_tracked_repository,
+        update_pull_request_timeline_if_current, update_sync_error, update_sync_state,
+        upsert_pull_request_detail, upsert_pull_requests, GitHubPullRequest, GitHubUser,
+        PullRequestCheckRunDto, PullRequestCommentDto, PullRequestCommitDto, PullRequestDataError,
+        PullRequestDetailSnapshot, PullRequestFileDto, PullRequestReviewDto, PullRequestStatusDto,
+        PullRequestTimelineEventDto, TrackedRepository,
     };
     use crate::{
         config::{Config, Environment, SessionConfig, TokenEncryptionKey},
@@ -2510,6 +2555,12 @@ mod tests {
                 .and_then(|value| value.to_str().ok())
                 .is_some_and(|value| value.contains("application/vnd.github.v3.diff"))
             {
+                assert_eq!(
+                    headers
+                        .get(header::ACCEPT_ENCODING)
+                        .and_then(|value| value.to_str().ok()),
+                    Some("identity")
+                );
                 return "diff --git a/app.rs b/app.rs".into_response();
             }
 
@@ -2615,6 +2666,114 @@ mod tests {
         });
 
         (format!("http://{address}"), handle)
+    }
+
+    async fn mock_diff_response(
+        body: Vec<u8>,
+        content_encodings: &[&str],
+        chunked: bool,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        let content_encodings = content_encodings
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        let app = Router::new().route(
+            "/diff",
+            get(move || {
+                let body = body.clone();
+                let content_encodings = content_encodings.clone();
+                async move {
+                    let body = if chunked {
+                        let midpoint = body.len() / 2;
+                        Body::from_stream(futures_util::stream::iter([
+                            Ok::<_, std::convert::Infallible>(body[..midpoint].to_vec()),
+                            Ok::<_, std::convert::Infallible>(body[midpoint..].to_vec()),
+                        ]))
+                    } else {
+                        Body::from(body)
+                    };
+                    let mut response = axum::response::Response::new(body);
+                    for content_encoding in content_encodings {
+                        response.headers_mut().append(
+                            header::CONTENT_ENCODING,
+                            content_encoding
+                                .parse()
+                                .expect("content encoding should be valid"),
+                        );
+                    }
+                    response
+                }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("mock diff listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("mock diff address should load");
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("mock diff server should run");
+        });
+        (format!("http://{address}/diff"), handle)
+    }
+
+    #[tokio::test]
+    async fn collect_github_diff_preserves_bytes_and_enforces_chunked_limit() {
+        let raw = "diff --git a/café.txt b/café.txt\n-no\n+yes";
+        let (url, server) = mock_diff_response(raw.as_bytes().to_vec(), &[], true).await;
+        let response = reqwest::Client::new()
+            .get(&url)
+            .send()
+            .await
+            .expect("mock diff request should complete");
+        let collected = collect_github_diff(response, raw.len())
+            .await
+            .expect("boundary-sized diff should collect");
+        assert_eq!(collected.as_bytes(), raw.as_bytes());
+        server.abort();
+
+        let (url, server) = mock_diff_response(raw.as_bytes().to_vec(), &[], true).await;
+        let response = reqwest::Client::new()
+            .get(&url)
+            .send()
+            .await
+            .expect("mock diff request should complete");
+        assert!(matches!(
+            collect_github_diff(response, raw.len() - 1).await,
+            Err(PullRequestDataError::GitHubDiffTooLarge)
+        ));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn collect_github_diff_rejects_invalid_utf8_and_content_encoding() {
+        let (url, server) = mock_diff_response(vec![0xff], &[], false).await;
+        let response = reqwest::Client::new()
+            .get(&url)
+            .send()
+            .await
+            .expect("mock diff request should complete");
+        assert!(matches!(
+            collect_github_diff(response, 1).await,
+            Err(PullRequestDataError::GitHubDiffInvalidUtf8(_))
+        ));
+        server.abort();
+
+        for encodings in [&["identity", "gzip"][..], &["identity, gzip"][..]] {
+            let (url, server) = mock_diff_response(b"diff".to_vec(), encodings, false).await;
+            let response = reqwest::Client::new()
+                .get(&url)
+                .send()
+                .await
+                .expect("mock diff request should complete");
+            assert!(matches!(
+                collect_github_diff(response, 4).await,
+                Err(PullRequestDataError::GitHubDiffUnsupportedEncoding)
+            ));
+            server.abort();
+        }
     }
 
     async fn test_db() -> SqlitePool {
@@ -2806,6 +2965,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pull_request_detail_response_omits_the_stored_diff() {
+        let config = test_config();
+        let db = test_db().await;
+        insert_tracked_repository(&db).await;
+        let raw = "diff --git a/private.txt b/private.txt\n";
+        insert_pull_request_diff_snapshot(&db, Some(raw)).await;
+        let cookie = session_cookie(&db, &config).await;
+        let response = app(&config, AppState::new(db.clone(), config.clone()))
+            .oneshot(
+                Request::builder()
+                    .uri("/api/repositories/kestrel/app/pull-requests/42")
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = response_json(response).await;
+        assert!(json["pullRequestDetail"].get("diff").is_none());
+        let stored: String = sqlx::query_scalar(
+            "SELECT diff FROM tracked_repository_pull_request_details WHERE user_id = 'user_1' AND provider = 'github' AND owner = 'kestrel' AND name = 'app' AND number = 42",
+        )
+        .fetch_one(&db)
+        .await
+        .expect("stored diff should load");
+        assert_eq!(stored.as_bytes(), raw.as_bytes());
+    }
+
+    #[tokio::test]
     async fn pull_request_diff_is_scoped_to_the_authenticated_user() {
         let config = test_config();
         let db = test_db().await;
@@ -2959,6 +3149,76 @@ mod tests {
             })
         );
         assert_eq!(body["files"][1]["newPath"], "README.md");
+    }
+
+    #[tokio::test]
+    async fn pull_request_diff_supports_gzip_compression() {
+        let config = test_config();
+        let db = test_db().await;
+        insert_tracked_repository(&db).await;
+        insert_pull_request_diff_snapshot(&db, Some(MULTI_FILE_DIFF)).await;
+        let cookie = session_cookie(&db, &config).await;
+        let router = app(&config, AppState::new(db, config.clone()));
+
+        let identity = router
+            .clone()
+            .oneshot(pull_request_diff_request(
+                &cookie,
+                "/api/repositories/kestrel/app/pull-requests/42/diff",
+            ))
+            .await
+            .expect("identity request should complete");
+        assert_eq!(identity.status(), StatusCode::OK);
+        assert!(identity.headers().get(header::CONTENT_ENCODING).is_none());
+        let identity_body = to_bytes(identity.into_body(), 1024 * 1024)
+            .await
+            .expect("identity response should collect");
+
+        let compressed = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/repositories/kestrel/app/pull-requests/42/diff")
+                    .header(header::COOKIE, &cookie)
+                    .header(header::ACCEPT_ENCODING, "gzip")
+                    .body(Body::empty())
+                    .expect("compressed request should build"),
+            )
+            .await
+            .expect("compressed request should complete");
+        assert_eq!(compressed.status(), StatusCode::OK);
+        assert_eq!(
+            compressed
+                .headers()
+                .get(header::CONTENT_ENCODING)
+                .and_then(|value| value.to_str().ok()),
+            Some("gzip")
+        );
+        assert_eq!(
+            compressed
+                .headers()
+                .get(header::CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok()),
+            Some("private, no-store")
+        );
+        assert!(compressed.headers().get(header::CONTENT_LENGTH).is_none());
+        assert!(compressed
+            .headers()
+            .get_all(header::VARY)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .any(|value| value
+                .split(',')
+                .any(|part| part.trim().eq_ignore_ascii_case("accept-encoding"))));
+        let compressed_body = to_bytes(compressed.into_body(), 1024 * 1024)
+            .await
+            .expect("compressed response should collect");
+        assert!(compressed_body.len() < identity_body.len());
+        let mut decoder = GzDecoder::new(compressed_body.as_ref());
+        let mut decoded = Vec::new();
+        decoder
+            .read_to_end(&mut decoded)
+            .expect("gzip response should decode");
+        assert_eq!(decoded, identity_body);
     }
 
     #[tokio::test]
@@ -3170,8 +3430,9 @@ mod tests {
         let config = test_config();
         let db = test_db().await;
         insert_tracked_repository(&db).await;
+        let raw = "diff --git a/timeline.txt b/timeline.txt\n";
         sqlx::query(
-            "INSERT INTO tracked_repository_pull_request_details (user_id, provider, owner, name, number, body, files_json, commits_json, reviews_json, review_comments_json, review_decision, issue_comments_json, timeline_json, timeline_cursor, timeline_has_older, check_runs_json, statuses_json, diff, synced_at) VALUES (?, ?, ?, ?, ?, ?, '[]', '[]', '[]', '[]', NULL, '[]', '[]', NULL, 0, '[]', '[]', NULL, ?)",
+            "INSERT INTO tracked_repository_pull_request_details (user_id, provider, owner, name, number, body, files_json, commits_json, reviews_json, review_comments_json, review_decision, issue_comments_json, timeline_json, timeline_cursor, timeline_has_older, check_runs_json, statuses_json, diff, synced_at) VALUES (?, ?, ?, ?, ?, ?, '[]', '[]', '[]', '[]', NULL, '[]', '[]', NULL, 0, '[]', '[]', ?, ?)",
         )
         .bind("user_1")
         .bind("github")
@@ -3179,12 +3440,13 @@ mod tests {
         .bind("app")
         .bind(42_i64)
         .bind("Stored description")
+        .bind(raw)
         .bind("2026-01-03T00:00:00Z")
         .execute(&db)
         .await
         .expect("pull request detail should insert");
         let cookie = session_cookie(&db, &config).await;
-        let response = app(&config, AppState::new(db, config.clone()))
+        let response = app(&config, AppState::new(db.clone(), config.clone()))
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -3200,6 +3462,14 @@ mod tests {
         let json = response_json(response).await;
         assert_eq!(json["pullRequestDetail"]["body"], "Stored description");
         assert_eq!(json["pullRequestDetail"]["timelineHasOlder"], false);
+        assert!(json["pullRequestDetail"].get("diff").is_none());
+        let stored: String = sqlx::query_scalar(
+            "SELECT diff FROM tracked_repository_pull_request_details WHERE user_id = 'user_1' AND provider = 'github' AND owner = 'kestrel' AND name = 'app' AND number = 42",
+        )
+        .fetch_one(&db)
+        .await
+        .expect("stored diff should load");
+        assert_eq!(stored.as_bytes(), raw.as_bytes());
     }
 
     #[tokio::test]
@@ -3652,7 +3922,29 @@ mod tests {
             loaded.statuses[0].url.as_deref(),
             Some("https://ci.example.test/builds/42")
         );
-        assert_eq!(loaded.diff.as_deref(), Some("diff --git a/app.rs b/app.rs"));
+        let stored_diff: Option<String> = sqlx::query_scalar(
+            "SELECT diff FROM tracked_repository_pull_request_details WHERE user_id = ? AND provider = ? AND owner = ? AND name = ? AND number = ?",
+        )
+        .bind("user_1")
+        .bind("github")
+        .bind("kestrel")
+        .bind("app")
+        .bind(42_i64)
+        .fetch_one(&db)
+        .await
+        .expect("stored diff should load");
+        assert_eq!(
+            stored_diff.as_deref().map(str::as_bytes),
+            Some("diff --git a/app.rs b/app.rs".as_bytes())
+        );
+        assert!(serde_json::to_value(&saved)
+            .expect("saved detail should serialize")
+            .get("diff")
+            .is_none());
+        assert!(serde_json::to_value(&loaded)
+            .expect("loaded detail should serialize")
+            .get("diff")
+            .is_none());
         assert!(loaded.timeline_has_older);
         assert_eq!(loaded.timeline[0].id.as_deref(), Some("timeline-1"));
         assert_eq!(

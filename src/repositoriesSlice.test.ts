@@ -37,7 +37,6 @@ const pullRequestDetail = (): Repositories.PullRequestDetail => ({
   body: "Adds syncing.",
   checkRuns: [],
   commits: [],
-  diff: null,
   files: [],
   issueComments: [],
   reviewComments: [],

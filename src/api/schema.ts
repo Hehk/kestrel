@@ -288,7 +288,6 @@ export interface components {
       body?: string | null;
       checkRuns: components["schemas"]["PullRequestCheckRunDto"][];
       commits: components["schemas"]["PullRequestCommitDto"][];
-      diff?: string | null;
       files: components["schemas"]["PullRequestFileDto"][];
       issueComments: components["schemas"]["PullRequestCommentDto"][];
       reviewComments: components["schemas"]["PullRequestCommentDto"][];
