@@ -1,4 +1,11 @@
-use axum::{extract::State, http::StatusCode, routing::get, Json, Router};
+use axum::{
+    extract::{Request, State},
+    http::{header, HeaderValue, StatusCode},
+    middleware::{self, Next},
+    response::Response,
+    routing::get,
+    Json, Router,
+};
 use reqwest::Client;
 use serde::Serialize;
 use sqlx::SqlitePool;
@@ -64,6 +71,44 @@ pub(crate) async fn health(
     }))
 }
 
+async fn private_diff_responses(request: Request, next: Next) -> Response {
+    let is_diff_request = is_pull_request_diff_path(request.uri().path());
+    let mut response = next.run(request).await;
+    if is_diff_request {
+        response.headers_mut().insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("private, no-store"),
+        );
+    }
+    response
+}
+
+fn is_pull_request_diff_path(path: &str) -> bool {
+    let mut segments = path.trim_matches('/').split('/');
+    matches!(
+        (
+            segments.next(),
+            segments.next(),
+            segments.next(),
+            segments.next(),
+            segments.next(),
+            segments.next(),
+            segments.next(),
+            segments.next(),
+        ),
+        (
+            Some("api"),
+            Some("repositories"),
+            Some(_),
+            Some(_),
+            Some("pull-requests"),
+            Some(_),
+            Some("diff"),
+            None
+        )
+    )
+}
+
 pub fn app(config: &Config, state: AppState) -> Router {
     let api = Router::new()
         .route("/auth/github/callback", get(github_oauth::callback))
@@ -95,6 +140,10 @@ pub fn app(config: &Config, state: AppState) -> Router {
         get(pull_requests::get_pull_request_detail),
     );
     let api = api.route(
+        "/repositories/{owner}/{name}/pull-requests/{number}/diff",
+        get(pull_requests::get_pull_request_diff),
+    );
+    let api = api.route(
         "/repositories/{owner}/{name}/pull-requests/{number}/sync",
         axum::routing::post(pull_requests::sync_pull_request_detail),
     );
@@ -107,6 +156,7 @@ pub fn app(config: &Config, state: AppState) -> Router {
         .nest("/api", api)
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
+        .layer(middleware::from_fn(private_diff_responses))
         .with_state(state);
 
     if config.environment.is_development() {
@@ -191,6 +241,32 @@ mod tests {
         assert_eq!(
             json,
             serde_json::json!({ "database": "ok", "status": "ok" })
+        );
+    }
+
+    #[tokio::test]
+    async fn pull_request_diff_preflight_is_private_and_not_stored() {
+        let response = test_app(Environment::Development)
+            .await
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/api/repositories/kestrel/app/pull-requests/42/diff")
+                    .header("origin", "http://127.0.0.1:5173")
+                    .header("access-control-request-method", "GET")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get("cache-control")
+                .and_then(|value| value.to_str().ok()),
+            Some("private, no-store")
         );
     }
 }

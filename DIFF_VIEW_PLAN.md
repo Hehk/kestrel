@@ -800,21 +800,21 @@ cargo test --manifest-path backend/Cargo.toml
 
 **Todos:**
 
-- [ ] Define Utoipa response DTOs and enums based on the Stage 1 semantic types.
-- [ ] Add a database loader selecting only `diff` and `synced_at` for one pull request.
-- [ ] Add `GET /api/repositories/{owner}/{name}/pull-requests/{number}/diff`.
-- [ ] Reuse existing authentication, path parsing, and tracked-repository authorization behavior.
-- [ ] Run parsing and DTO construction through `tokio::task::spawn_blocking`.
-- [ ] Bound concurrent blocking parse jobs and define overload behavior so simultaneous large requests cannot multiply memory without limit.
-- [ ] Return a specific `diff_parse_failed` error for malformed stored data.
-- [ ] Map parser resource-limit errors to a stable response distinct from malformed stored data.
-- [ ] Keep parser details out of responses and bound contextual error logging so pathological headers cannot create oversized logs.
-- [ ] Decide and implement one consistent response for a stored snapshot with a null diff.
-- [ ] Register the handler and DTOs in `backend/src/openapi.rs`.
-- [ ] Add handler tests for authentication, invalid paths, untracked repositories, missing snapshots, null diffs, successful responses, and parse failures.
-- [ ] Add a test proving a parse failure does not alter the stored raw diff.
-- [ ] Regenerate `src/api/schema.ts`.
-- [ ] Run the two-agent review gate, resolve accepted findings, and rerun this stage's verification.
+- [x] Define Utoipa response DTOs and enums based on the Stage 1 semantic types.
+- [x] Add a database loader selecting only `diff` and `synced_at` for one pull request.
+- [x] Add `GET /api/repositories/{owner}/{name}/pull-requests/{number}/diff`.
+- [x] Reuse existing authentication, path parsing, and tracked-repository authorization behavior.
+- [x] Run parsing and DTO construction through `tokio::task::spawn_blocking`.
+- [x] Log raw and serialized bytes, semantic counts, and parse/serialization timings; defer concurrency admission controls until measurements justify them.
+- [x] Return a specific `diff_parse_failed` error for malformed stored data.
+- [x] Map parser resource-limit errors to a stable response distinct from malformed stored data.
+- [x] Keep parser details out of responses and bound contextual error logging so pathological headers cannot create oversized logs.
+- [x] Decide and implement one consistent response for a stored snapshot with a null diff.
+- [x] Register the handler and DTOs in `backend/src/openapi.rs`.
+- [x] Add handler tests for authentication, invalid paths, untracked repositories, missing snapshots, null diffs, successful responses, and parse failures.
+- [x] Add a test proving a parse failure does not alter the stored raw diff.
+- [x] Regenerate `src/api/schema.ts`.
+- [x] Run the two-agent review gate, resolve accepted findings, and rerun this stage's verification.
 
 During this stage, the existing detail response may temporarily continue returning `diff`. Removing it is the explicit cutover in Stage 3.
 
@@ -845,6 +845,18 @@ npm run typecheck
 - The endpoint returns semantic data for a realistic multi-file diff.
 - Authentication and error behavior match existing pull request endpoints.
 - Existing Overview behavior remains unchanged.
+
+**Stage Record (2026-07-24):**
+
+- Added the authenticated, user-scoped parsed Diff endpoint with dedicated DTOs, source-order semantic mapping, explicit nullable fields, and generated frontend API types.
+- The endpoint selects only `diff` and `synced_at`; `octet_length` prevents oversized SQLite values from being hydrated before the 64 MiB byte check.
+- A null stored diff returns `409 diff_unavailable`; malformed data returns `500 diff_parse_failed`; resource limits return `422 diff_resource_limit_exceeded`.
+- Parsing, DTO construction, and JSON serialization run in `spawn_blocking`. Successful requests log raw and serialized bytes, file/hunk/line counts, parse time, DTO-build time, serialization time, blocking-task time, and total endpoint time; failure logs include the available size and timing fields.
+- Parser and SQLite input limits remain enforced, but no speculative response cap, mutex, semaphore, admission guard, or delivery-timeout machinery is used until observed usage demonstrates a need.
+- All Diff-route responses, including CORS preflight and errors, use `Cache-Control: private, no-store`.
+- Router tests cover authentication, numeric and nonnumeric paths, cross-user snapshot isolation, missing/null/empty snapshots, semantic output, malformed and oversized data, unchanged persistence, binary payload exclusion, and 50,000-line serialization.
+- `cargo fmt --manifest-path backend/Cargo.toml -- --check`, 114 locked backend tests, locked all-target Clippy with warnings denied, `npm run api:check` against a fresh backend, and `npm run typecheck` passed.
+- Concurrency admission and response-delivery controls were intentionally removed after review so production observations can establish whether their complexity is necessary. Stage 11 will use the logged measurements to revisit that decision.
 
 ### Stage 3: API Payload Cutover And Compression
 
@@ -1256,6 +1268,7 @@ cargo test --manifest-path backend/Cargo.toml
 - [ ] Create repeatable 50,000-line and 100,000-line profiling scenarios.
 - [ ] Measure backend parsing and DTO construction.
 - [ ] Measure JSON serialization and compressed response size.
+- [ ] Review Diff endpoint usage logs using `FUTURE_WORK.md` and add concurrency or delivery controls only if observed memory, latency, or overlap justifies them.
 - [ ] Measure browser JSON parsing and layout-index construction.
 - [ ] Measure retained browser heap before and after visiting several large pull requests.
 - [ ] Confirm only one current parsed diff remains retained.

@@ -6,8 +6,6 @@ mod github_app;
 mod github_oauth;
 mod http;
 mod openapi;
-// Stage 2 wires the parsed model into the pull request diff endpoint.
-#[allow(dead_code)]
 mod pull_request_diff;
 mod pull_requests;
 mod repositories;

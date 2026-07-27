@@ -9,7 +9,7 @@ use diffy::{
     Hunk, Line,
 };
 
-const MAX_DIFF_BYTES: usize = 64 * 1024 * 1024;
+pub(crate) const MAX_DIFF_BYTES: usize = 64 * 1024 * 1024;
 const MAX_PHYSICAL_LINES: usize = 300_000;
 const MAX_FILES: usize = 10_000;
 const MAX_HUNKS: usize = 100_000;

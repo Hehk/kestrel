@@ -1,16 +1,27 @@
 use axum::{
-    extract::{Path, State},
-    http::{HeaderMap, StatusCode},
+    body::Body,
+    extract::{rejection::PathRejection, Path, State},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
+    response::Response,
     Json,
 };
 use reqwest::StatusCode as ReqwestStatusCode;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sqlx::{Executor, Sqlite, SqlitePool};
-use std::collections::HashSet;
+use std::{collections::HashSet, time::Instant};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use utoipa::{IntoParams, ToSchema};
 
-use crate::{auth, github_app, http::AppState, repositories};
+use crate::{
+    auth, github_app,
+    http::AppState,
+    pull_request_diff::{
+        self, DiffParseError, PullRequestDiffContent, PullRequestDiffFile, PullRequestDiffFileMode,
+        PullRequestDiffFileOperation, PullRequestDiffHunk, PullRequestDiffLine,
+        PullRequestDiffLineKind, MAX_DIFF_BYTES,
+    },
+    repositories,
+};
 
 const GITHUB_PROVIDER: &str = "github";
 const PAGE_SIZE: u8 = 100;
@@ -251,6 +262,188 @@ pub struct SyncPullRequestResponse {
 
 #[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+pub struct PullRequestDiffResponse {
+    pub files: Vec<PullRequestDiffFileDto>,
+    pub synced_at: String,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestDiffFileDto {
+    pub additions: u64,
+    pub binary: bool,
+    pub deletions: u64,
+    pub hunks: Vec<PullRequestDiffHunkDto>,
+    #[schema(required)]
+    pub new_mode: Option<PullRequestDiffFileModeDto>,
+    #[schema(required)]
+    pub new_path: Option<String>,
+    #[schema(required)]
+    pub old_mode: Option<PullRequestDiffFileModeDto>,
+    #[schema(required)]
+    pub old_path: Option<String>,
+    pub operation: PullRequestDiffFileOperationDto,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PullRequestDiffFileOperationDto {
+    Added,
+    Deleted,
+    Modified,
+    Renamed,
+    Copied,
+}
+
+#[derive(Serialize, ToSchema)]
+pub enum PullRequestDiffFileModeDto {
+    #[serde(rename = "100644")]
+    Regular,
+    #[serde(rename = "100755")]
+    Executable,
+    #[serde(rename = "120000")]
+    Symlink,
+    #[serde(rename = "160000")]
+    Gitlink,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestDiffHunkDto {
+    #[schema(required)]
+    pub context: Option<String>,
+    pub lines: Vec<PullRequestDiffLineDto>,
+    pub new_count: u64,
+    pub new_start: u64,
+    pub old_count: u64,
+    pub old_start: u64,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestDiffLineDto {
+    pub content: String,
+    pub kind: PullRequestDiffLineKindDto,
+    pub missing_newline: bool,
+    #[schema(required)]
+    pub new_line: Option<u64>,
+    #[schema(required)]
+    pub old_line: Option<u64>,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PullRequestDiffLineKindDto {
+    Context,
+    Addition,
+    Deletion,
+}
+
+impl From<PullRequestDiffFile> for PullRequestDiffFileDto {
+    fn from(file: PullRequestDiffFile) -> Self {
+        let (binary, hunks) = match file.content {
+            PullRequestDiffContent::Binary => (true, Vec::new()),
+            PullRequestDiffContent::Text { hunks } => {
+                (false, hunks.into_iter().map(Into::into).collect())
+            }
+        };
+
+        Self {
+            additions: u64::from(file.additions),
+            binary,
+            deletions: u64::from(file.deletions),
+            hunks,
+            new_mode: file.new_mode.map(Into::into),
+            new_path: file.new_path,
+            old_mode: file.old_mode.map(Into::into),
+            old_path: file.old_path,
+            operation: file.operation.into(),
+        }
+    }
+}
+
+impl From<PullRequestDiffFileOperation> for PullRequestDiffFileOperationDto {
+    fn from(operation: PullRequestDiffFileOperation) -> Self {
+        match operation {
+            PullRequestDiffFileOperation::Added => Self::Added,
+            PullRequestDiffFileOperation::Deleted => Self::Deleted,
+            PullRequestDiffFileOperation::Modified => Self::Modified,
+            PullRequestDiffFileOperation::Renamed => Self::Renamed,
+            PullRequestDiffFileOperation::Copied => Self::Copied,
+        }
+    }
+}
+
+impl From<PullRequestDiffFileMode> for PullRequestDiffFileModeDto {
+    fn from(mode: PullRequestDiffFileMode) -> Self {
+        match mode {
+            PullRequestDiffFileMode::Regular => Self::Regular,
+            PullRequestDiffFileMode::Executable => Self::Executable,
+            PullRequestDiffFileMode::Symlink => Self::Symlink,
+            PullRequestDiffFileMode::Gitlink => Self::Gitlink,
+        }
+    }
+}
+
+impl From<PullRequestDiffHunk> for PullRequestDiffHunkDto {
+    fn from(hunk: PullRequestDiffHunk) -> Self {
+        Self {
+            context: hunk.context,
+            lines: hunk.lines.into_iter().map(Into::into).collect(),
+            new_count: u64::from(hunk.new_count),
+            new_start: u64::from(hunk.new_start),
+            old_count: u64::from(hunk.old_count),
+            old_start: u64::from(hunk.old_start),
+        }
+    }
+}
+
+impl From<PullRequestDiffLine> for PullRequestDiffLineDto {
+    fn from(line: PullRequestDiffLine) -> Self {
+        Self {
+            content: line.content,
+            kind: line.kind.into(),
+            missing_newline: line.missing_newline,
+            new_line: line.new_line.map(u64::from),
+            old_line: line.old_line.map(u64::from),
+        }
+    }
+}
+
+impl From<PullRequestDiffLineKind> for PullRequestDiffLineKindDto {
+    fn from(kind: PullRequestDiffLineKind) -> Self {
+        match kind {
+            PullRequestDiffLineKind::Context => Self::Context,
+            PullRequestDiffLineKind::Addition => Self::Addition,
+            PullRequestDiffLineKind::Deletion => Self::Deletion,
+        }
+    }
+}
+
+struct PullRequestDiffBuild {
+    body: Vec<u8>,
+    dto_millis: u64,
+    files: usize,
+    hunks: usize,
+    lines: usize,
+    parse_millis: u64,
+    serialize_millis: u64,
+}
+
+enum PullRequestDiffResponseError {
+    Parse {
+        error: DiffParseError,
+        parse_millis: u64,
+    },
+    Serialize,
+}
+
+fn elapsed_millis(started_at: Instant) -> u64 {
+    u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct PullRequestErrorResponse {
     pub error: PullRequestErrorCode,
 }
@@ -258,7 +451,11 @@ pub struct PullRequestErrorResponse {
 #[derive(Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PullRequestErrorCode {
+    AuthenticationRequired,
     AuthorizationRequired,
+    DiffParseFailed,
+    DiffResourceLimitExceeded,
+    DiffUnavailable,
     InvalidPullRequest,
     InvalidRepository,
     PullRequestNotFound,
@@ -269,7 +466,11 @@ pub enum PullRequestErrorCode {
 impl PullRequestErrorCode {
     fn as_str(&self) -> &'static str {
         match self {
+            Self::AuthenticationRequired => "authentication_required",
             Self::AuthorizationRequired => "authorization_required",
+            Self::DiffParseFailed => "diff_parse_failed",
+            Self::DiffResourceLimitExceeded => "diff_resource_limit_exceeded",
+            Self::DiffUnavailable => "diff_unavailable",
             Self::InvalidPullRequest => "invalid_pull_request",
             Self::InvalidRepository => "invalid_repository",
             Self::PullRequestNotFound => "pull_request_not_found",
@@ -479,6 +680,293 @@ pub(crate) async fn get_pull_request_detail(
     Ok(Json(PullRequestDetailResponse {
         pull_request_detail,
     }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/repositories/{owner}/{name}/pull-requests/{number}/diff",
+    params(PullRequestPath),
+    responses(
+        (status = 200, description = "Parsed pull request diff", body = PullRequestDiffResponse),
+        (status = 400, description = "Invalid repository or pull request", body = PullRequestErrorResponse),
+        (status = 401, description = "Authentication required", body = PullRequestErrorResponse),
+        (status = 404, description = "Repository or pull request detail is not stored", body = PullRequestErrorResponse),
+        (status = 409, description = "Stored pull request diff is unavailable", body = PullRequestErrorResponse),
+        (status = 422, description = "Stored pull request diff exceeds parser limits", body = PullRequestErrorResponse),
+        (status = 500, description = "Stored pull request diff could not be loaded or processed", body = PullRequestErrorResponse)
+    )
+)]
+pub(crate) async fn get_pull_request_diff(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    path: Result<Path<PullRequestPath>, PathRejection>,
+) -> Result<Response, (StatusCode, Json<PullRequestErrorResponse>)> {
+    let request_started_at = Instant::now();
+    let user_id = require_user_id(&state, &headers).await.map_err(|status| {
+        tracing::info!(
+            outcome = "authentication_failed",
+            status = status.as_u16(),
+            total_millis = elapsed_millis(request_started_at),
+            "pull request diff request completed"
+        );
+        let code = if status == StatusCode::UNAUTHORIZED {
+            PullRequestErrorCode::AuthenticationRequired
+        } else {
+            PullRequestErrorCode::SyncFailed
+        };
+        api_error(status, code)
+    })?;
+    let Path(path) = path.map_err(|_| {
+        tracing::info!(
+            outcome = "invalid_path",
+            total_millis = elapsed_millis(request_started_at),
+            "pull request diff request completed"
+        );
+        api_error(
+            StatusCode::BAD_REQUEST,
+            PullRequestErrorCode::InvalidPullRequest,
+        )
+    })?;
+    let (repository, number) = parse_pull_request_path(path).inspect_err(|_| {
+        tracing::info!(
+            outcome = "invalid_path",
+            total_millis = elapsed_millis(request_started_at),
+            "pull request diff request completed"
+        );
+    })?;
+    let tracked = load_tracked_repository(&state.db, &user_id, &repository)
+        .await
+        .map_err(|error| {
+            tracing::error!(
+                %error,
+                outcome = "repository_load_failed",
+                total_millis = elapsed_millis(request_started_at),
+                "pull request diff request completed"
+            );
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                PullRequestErrorCode::SyncFailed,
+            )
+        })?
+        .ok_or_else(|| {
+            tracing::info!(
+                owner = %repository.owner,
+                name = %repository.name,
+                number,
+                outcome = "repository_not_tracked",
+                total_millis = elapsed_millis(request_started_at),
+                "pull request diff request completed"
+            );
+            api_error(
+                StatusCode::NOT_FOUND,
+                PullRequestErrorCode::RepositoryNotTracked,
+            )
+        })?;
+    let snapshot = load_pull_request_diff(&state.db, &tracked, number)
+        .await
+        .map_err(|error| {
+            tracing::error!(
+                %error,
+                owner = %tracked.owner,
+                name = %tracked.name,
+                number,
+                outcome = "snapshot_load_failed",
+                total_millis = elapsed_millis(request_started_at),
+                "pull request diff request completed"
+            );
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                PullRequestErrorCode::SyncFailed,
+            )
+        })?
+        .ok_or_else(|| {
+            tracing::info!(
+                owner = %tracked.owner,
+                name = %tracked.name,
+                number,
+                outcome = "snapshot_not_found",
+                total_millis = elapsed_millis(request_started_at),
+                "pull request diff request completed"
+            );
+            api_error(
+                StatusCode::NOT_FOUND,
+                PullRequestErrorCode::PullRequestNotFound,
+            )
+        })?;
+    if snapshot
+        .diff_bytes
+        .is_some_and(|bytes| bytes > MAX_DIFF_BYTES as i64)
+    {
+        tracing::warn!(
+            owner = %tracked.owner,
+            name = %tracked.name,
+            number,
+            outcome = "storage_limit",
+            raw_bytes = snapshot.diff_bytes.unwrap_or_default(),
+            total_millis = elapsed_millis(request_started_at),
+            "stored pull request diff exceeded the byte limit"
+        );
+        return Err(api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            PullRequestErrorCode::DiffResourceLimitExceeded,
+        ));
+    }
+    let raw = snapshot.diff.ok_or_else(|| {
+        tracing::info!(
+            owner = %tracked.owner,
+            name = %tracked.name,
+            number,
+            outcome = "diff_unavailable",
+            total_millis = elapsed_millis(request_started_at),
+            "pull request diff request completed"
+        );
+        api_error(StatusCode::CONFLICT, PullRequestErrorCode::DiffUnavailable)
+    })?;
+    let raw_bytes = raw.len();
+    let blocking_started_at = Instant::now();
+    let built = tokio::task::spawn_blocking(move || {
+        let parse_started_at = Instant::now();
+        let parsed = pull_request_diff::parse_pull_request_diff(&raw);
+        let parse_millis = elapsed_millis(parse_started_at);
+        drop(raw);
+        let parsed = parsed.map_err(|error| PullRequestDiffResponseError::Parse {
+            error,
+            parse_millis,
+        })?;
+
+        let dto_started_at = Instant::now();
+        let files: Vec<PullRequestDiffFileDto> = parsed.into_iter().map(Into::into).collect();
+        let hunks = files.iter().map(|file| file.hunks.len()).sum();
+        let lines = files
+            .iter()
+            .flat_map(|file| &file.hunks)
+            .map(|hunk| hunk.lines.len())
+            .sum();
+        let file_count = files.len();
+        let response = PullRequestDiffResponse {
+            files,
+            synced_at: snapshot.synced_at,
+        };
+        let dto_millis = elapsed_millis(dto_started_at);
+
+        let serialize_started_at = Instant::now();
+        let body =
+            serde_json::to_vec(&response).map_err(|_| PullRequestDiffResponseError::Serialize)?;
+        let serialize_millis = elapsed_millis(serialize_started_at);
+        Ok(PullRequestDiffBuild {
+            body,
+            dto_millis,
+            files: file_count,
+            hunks,
+            lines,
+            parse_millis,
+            serialize_millis,
+        })
+    })
+    .await;
+
+    let build = match built {
+        Ok(Ok(response)) => response,
+        Ok(Err(PullRequestDiffResponseError::Parse {
+            error: DiffParseError::LimitExceeded(limit),
+            parse_millis,
+        })) => {
+            tracing::warn!(
+                owner = %tracked.owner,
+                name = %tracked.name,
+                number,
+                ?limit,
+                outcome = "parser_limit",
+                raw_bytes,
+                parse_millis,
+                blocking_millis = elapsed_millis(blocking_started_at),
+                total_millis = elapsed_millis(request_started_at),
+                "stored pull request diff exceeded a parser resource limit"
+            );
+            return Err(api_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                PullRequestErrorCode::DiffResourceLimitExceeded,
+            ));
+        }
+        Ok(Err(PullRequestDiffResponseError::Parse {
+            error: DiffParseError::InvalidDiff(_) | DiffParseError::NumberOutOfRange,
+            parse_millis,
+        })) => {
+            tracing::error!(
+                owner = %tracked.owner,
+                name = %tracked.name,
+                number,
+                outcome = "parse_failed",
+                raw_bytes,
+                parse_millis,
+                blocking_millis = elapsed_millis(blocking_started_at),
+                total_millis = elapsed_millis(request_started_at),
+                "stored pull request diff is malformed"
+            );
+            return Err(api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                PullRequestErrorCode::DiffParseFailed,
+            ));
+        }
+        Ok(Err(PullRequestDiffResponseError::Serialize)) => {
+            tracing::error!(
+                owner = %tracked.owner,
+                name = %tracked.name,
+                number,
+                outcome = "serialize_failed",
+                raw_bytes,
+                blocking_millis = elapsed_millis(blocking_started_at),
+                total_millis = elapsed_millis(request_started_at),
+                "failed to serialize pull request diff response"
+            );
+            return Err(api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                PullRequestErrorCode::SyncFailed,
+            ));
+        }
+        Err(error) => {
+            tracing::error!(
+                owner = %tracked.owner,
+                name = %tracked.name,
+                number,
+                cancelled = error.is_cancelled(),
+                panicked = error.is_panic(),
+                outcome = "blocking_task_failed",
+                raw_bytes,
+                blocking_millis = elapsed_millis(blocking_started_at),
+                total_millis = elapsed_millis(request_started_at),
+                "pull request diff blocking task failed"
+            );
+            return Err(api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                PullRequestErrorCode::SyncFailed,
+            ));
+        }
+    };
+
+    tracing::info!(
+        owner = %tracked.owner,
+        name = %tracked.name,
+        number,
+        outcome = "success",
+        raw_bytes,
+        response_bytes = build.body.len(),
+        files = build.files,
+        hunks = build.hunks,
+        lines = build.lines,
+        parse_millis = build.parse_millis,
+        dto_millis = build.dto_millis,
+        serialize_millis = build.serialize_millis,
+        blocking_millis = elapsed_millis(blocking_started_at),
+        total_millis = elapsed_millis(request_started_at),
+        "served pull request diff"
+    );
+    let mut response = Response::new(Body::from(build.body));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    Ok(response)
 }
 
 #[utoipa::path(
@@ -843,6 +1331,24 @@ async fn load_pull_request_detail(
     .await?;
 
     row.map(PullRequestDetailRow::into_dto).transpose()
+}
+
+async fn load_pull_request_diff(
+    db: &SqlitePool,
+    repository: &TrackedRepository,
+    number: i64,
+) -> Result<Option<PullRequestDiffRow>, PullRequestDataError> {
+    Ok(sqlx::query_as::<_, PullRequestDiffRow>(
+        "SELECT CASE WHEN octet_length(diff) <= ? THEN diff END AS diff, octet_length(diff) AS diff_bytes, synced_at FROM tracked_repository_pull_request_details WHERE user_id = ? AND provider = ? AND owner = ? AND name = ? AND number = ?",
+    )
+    .bind(MAX_DIFF_BYTES as i64)
+    .bind(&repository.user_id)
+    .bind(GITHUB_PROVIDER)
+    .bind(&repository.owner)
+    .bind(&repository.name)
+    .bind(number)
+    .fetch_optional(db)
+    .await?)
 }
 
 async fn load_timeline_page_state(
@@ -1525,6 +2031,13 @@ struct PullRequestDetailRow {
     timeline_has_older: bool,
 }
 
+#[derive(sqlx::FromRow)]
+struct PullRequestDiffRow {
+    diff: Option<String>,
+    diff_bytes: Option<i64>,
+    synced_at: String,
+}
+
 impl PullRequestDetailRow {
     fn into_dto(self) -> Result<PullRequestDetailDto, PullRequestDataError> {
         Ok(PullRequestDetailDto {
@@ -1845,7 +2358,7 @@ mod tests {
     use base64::{engine::general_purpose::STANDARD, Engine};
     use serde_json::Value;
     use sqlx::SqlitePool;
-    use std::collections::HashMap;
+    use std::{collections::HashMap, fmt::Write};
     use tokio::net::TcpListener;
     use tower::ServiceExt;
 
@@ -1863,6 +2376,11 @@ mod tests {
         http::{app, AppState},
         repositories, session,
     };
+
+    const MULTI_FILE_DIFF: &str =
+        include_str!("../tests/fixtures/pull_request_diffs/multi-file.diff");
+    const MALFORMED_DIFF: &str =
+        include_str!("../tests/fixtures/pull_request_diffs/malformed.diff");
 
     fn test_config() -> Config {
         Config {
@@ -2143,6 +2661,455 @@ mod tests {
         .execute(db)
         .await
         .expect("tracked repository should insert");
+    }
+
+    async fn insert_pull_request_diff_snapshot(db: &SqlitePool, diff: Option<&str>) {
+        sqlx::query(
+            "INSERT INTO tracked_repository_pull_request_details (user_id, provider, owner, name, number, body, files_json, commits_json, reviews_json, review_comments_json, review_decision, issue_comments_json, timeline_json, timeline_cursor, timeline_has_older, check_runs_json, statuses_json, diff, synced_at) VALUES (?, ?, ?, ?, ?, NULL, '[]', '[]', '[]', '[]', NULL, '[]', '[]', NULL, 0, '[]', '[]', ?, ?)",
+        )
+        .bind("user_1")
+        .bind("github")
+        .bind("kestrel")
+        .bind("app")
+        .bind(42_i64)
+        .bind(diff)
+        .bind("2026-01-04T00:00:00Z")
+        .execute(db)
+        .await
+        .expect("pull request diff snapshot should insert");
+    }
+
+    fn pull_request_diff_request(cookie: &str, uri: &str) -> Request<Body> {
+        Request::builder()
+            .uri(uri)
+            .header(header::COOKIE, cookie)
+            .body(Body::empty())
+            .expect("request should build")
+    }
+
+    fn assert_private_no_store(response: &axum::response::Response) {
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok()),
+            Some("private, no-store")
+        );
+    }
+
+    #[tokio::test]
+    async fn pull_request_diff_requires_authentication() {
+        let config = test_config();
+        let db = test_db().await;
+        let response = app(&config, AppState::new(db, config.clone()))
+            .oneshot(
+                Request::builder()
+                    .uri("/api/repositories/kestrel/app/pull-requests/42/diff")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_private_no_store(&response);
+        assert_eq!(
+            response_json(response).await,
+            serde_json::json!({ "error": "authentication_required" })
+        );
+    }
+
+    #[tokio::test]
+    async fn pull_request_diff_rejects_invalid_paths() {
+        let config = test_config();
+        let db = test_db().await;
+        let cookie = session_cookie(&db, &config).await;
+        let router = app(&config, AppState::new(db, config.clone()));
+
+        let invalid_repository = router
+            .clone()
+            .oneshot(pull_request_diff_request(
+                &cookie,
+                "/api/repositories/bad%20owner/app/pull-requests/42/diff",
+            ))
+            .await
+            .expect("request should complete");
+        assert_eq!(invalid_repository.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response_json(invalid_repository).await,
+            serde_json::json!({ "error": "invalid_repository" })
+        );
+
+        let invalid_number = router
+            .clone()
+            .oneshot(pull_request_diff_request(
+                &cookie,
+                "/api/repositories/kestrel/app/pull-requests/0/diff",
+            ))
+            .await
+            .expect("request should complete");
+        assert_eq!(invalid_number.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response_json(invalid_number).await,
+            serde_json::json!({ "error": "invalid_pull_request" })
+        );
+
+        let nonnumeric_number = router
+            .oneshot(pull_request_diff_request(
+                &cookie,
+                "/api/repositories/kestrel/app/pull-requests/not-a-number/diff",
+            ))
+            .await
+            .expect("request should complete");
+        assert_eq!(nonnumeric_number.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response_json(nonnumeric_number).await,
+            serde_json::json!({ "error": "invalid_pull_request" })
+        );
+    }
+
+    #[tokio::test]
+    async fn pull_request_diff_requires_a_tracked_repository_and_snapshot() {
+        let config = test_config();
+        let db = test_db().await;
+        let cookie = session_cookie(&db, &config).await;
+        let router = app(&config, AppState::new(db.clone(), config.clone()));
+
+        let untracked = router
+            .clone()
+            .oneshot(pull_request_diff_request(
+                &cookie,
+                "/api/repositories/kestrel/app/pull-requests/42/diff",
+            ))
+            .await
+            .expect("request should complete");
+        assert_eq!(untracked.status(), StatusCode::NOT_FOUND);
+        assert_private_no_store(&untracked);
+        assert_eq!(
+            response_json(untracked).await,
+            serde_json::json!({ "error": "repository_not_tracked" })
+        );
+
+        insert_tracked_repository(&db).await;
+        let missing = router
+            .oneshot(pull_request_diff_request(
+                &cookie,
+                "/api/repositories/kestrel/app/pull-requests/42/diff",
+            ))
+            .await
+            .expect("request should complete");
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response_json(missing).await,
+            serde_json::json!({ "error": "pull_request_not_found" })
+        );
+    }
+
+    #[tokio::test]
+    async fn pull_request_diff_is_scoped_to_the_authenticated_user() {
+        let config = test_config();
+        let db = test_db().await;
+        insert_tracked_repository(&db).await;
+        insert_pull_request_diff_snapshot(&db, Some(MULTI_FILE_DIFF)).await;
+        sqlx::query(
+            "INSERT INTO users (id, display_name, avatar_url, created_at, updated_at) VALUES (?, ?, NULL, ?, ?)",
+        )
+        .bind("user_2")
+        .bind("User Two")
+        .bind("2026-01-01T00:00:00Z")
+        .bind("2026-01-01T00:00:00Z")
+        .execute(&db)
+        .await
+        .expect("second user should insert");
+        sqlx::query(
+            "INSERT INTO tracked_repositories (user_id, provider, owner, name, created_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind("user_2")
+        .bind("github")
+        .bind("kestrel")
+        .bind("app")
+        .bind("2026-01-01T00:00:00Z")
+        .execute(&db)
+        .await
+        .expect("second user's tracked repository should insert");
+        sqlx::query(
+            "INSERT INTO tracked_repository_pull_request_details (user_id, provider, owner, name, number, body, files_json, commits_json, reviews_json, review_comments_json, review_decision, issue_comments_json, timeline_json, timeline_cursor, timeline_has_older, check_runs_json, statuses_json, diff, synced_at) VALUES (?, ?, ?, ?, ?, NULL, '[]', '[]', '[]', '[]', NULL, '[]', '[]', NULL, 0, '[]', '[]', ?, ?)",
+        )
+        .bind("user_2")
+        .bind("github")
+        .bind("kestrel")
+        .bind("app")
+        .bind(42_i64)
+        .bind("")
+        .bind("2026-01-05T00:00:00Z")
+        .execute(&db)
+        .await
+        .expect("second user's pull request diff snapshot should insert");
+        let session = session::create_session(&db, "user_2", &config.session)
+            .await
+            .expect("second user session should create");
+        let cookie = format!("test_session={}", session.token.expose());
+        let response = app(&config, AppState::new(db, config.clone()))
+            .oneshot(pull_request_diff_request(
+                &cookie,
+                "/api/repositories/kestrel/app/pull-requests/42/diff",
+            ))
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(response).await,
+            serde_json::json!({
+                "files": [],
+                "syncedAt": "2026-01-05T00:00:00Z"
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn pull_request_diff_distinguishes_unavailable_and_empty_diffs() {
+        let config = test_config();
+        let null_db = test_db().await;
+        insert_tracked_repository(&null_db).await;
+        insert_pull_request_diff_snapshot(&null_db, None).await;
+        let null_cookie = session_cookie(&null_db, &config).await;
+        let unavailable = app(&config, AppState::new(null_db.clone(), config.clone()))
+            .oneshot(pull_request_diff_request(
+                &null_cookie,
+                "/api/repositories/kestrel/app/pull-requests/42/diff",
+            ))
+            .await
+            .expect("request should complete");
+        assert_eq!(unavailable.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            response_json(unavailable).await,
+            serde_json::json!({ "error": "diff_unavailable" })
+        );
+
+        let empty_db = test_db().await;
+        insert_tracked_repository(&empty_db).await;
+        insert_pull_request_diff_snapshot(&empty_db, Some("")).await;
+        let empty_cookie = session_cookie(&empty_db, &config).await;
+        let empty = app(&config, AppState::new(empty_db, config.clone()))
+            .oneshot(pull_request_diff_request(
+                &empty_cookie,
+                "/api/repositories/kestrel/app/pull-requests/42/diff",
+            ))
+            .await
+            .expect("request should complete");
+        assert_eq!(empty.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(empty).await,
+            serde_json::json!({
+                "files": [],
+                "syncedAt": "2026-01-04T00:00:00Z"
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn pull_request_diff_returns_semantic_files_in_source_order() {
+        let config = test_config();
+        let db = test_db().await;
+        insert_tracked_repository(&db).await;
+        insert_pull_request_diff_snapshot(&db, Some(MULTI_FILE_DIFF)).await;
+        let cookie = session_cookie(&db, &config).await;
+        let response = app(&config, AppState::new(db, config.clone()))
+            .oneshot(pull_request_diff_request(
+                &cookie,
+                "/api/repositories/kestrel/app/pull-requests/42/diff",
+            ))
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok()),
+            Some("private, no-store")
+        );
+        let body = response_json(response).await;
+        assert_eq!(body["syncedAt"], "2026-01-04T00:00:00Z");
+        assert_eq!(body["files"].as_array().map(Vec::len), Some(2));
+        assert_eq!(body["files"][0]["oldPath"], "src/math.rs");
+        assert_eq!(body["files"][0]["newPath"], "src/math.rs");
+        assert_eq!(body["files"][0]["operation"], "modified");
+        assert_eq!(body["files"][0]["additions"], 3);
+        assert_eq!(body["files"][0]["deletions"], 2);
+        assert_eq!(body["files"][0]["binary"], false);
+        assert_eq!(body["files"][0]["oldMode"], Value::Null);
+        assert_eq!(body["files"][0]["newMode"], Value::Null);
+        assert_eq!(body["files"][0]["hunks"][0]["oldStart"], 1);
+        assert_eq!(body["files"][0]["hunks"][0]["newCount"], 4);
+        assert_eq!(
+            body["files"][0]["hunks"][0]["context"],
+            "pub fn add(left: u32, right: u32) -> u32 {"
+        );
+        assert_eq!(
+            body["files"][0]["hunks"][0]["lines"][1],
+            serde_json::json!({
+                "content": "    left + right",
+                "kind": "deletion",
+                "missingNewline": false,
+                "newLine": null,
+                "oldLine": 2
+            })
+        );
+        assert_eq!(body["files"][1]["newPath"], "README.md");
+    }
+
+    #[tokio::test]
+    async fn pull_request_diff_parse_failure_preserves_stored_raw_diff() {
+        let config = test_config();
+        let db = test_db().await;
+        insert_tracked_repository(&db).await;
+        insert_pull_request_diff_snapshot(&db, Some(MALFORMED_DIFF)).await;
+        let cookie = session_cookie(&db, &config).await;
+        let response = app(&config, AppState::new(db.clone(), config.clone()))
+            .oneshot(pull_request_diff_request(
+                &cookie,
+                "/api/repositories/kestrel/app/pull-requests/42/diff",
+            ))
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            response_json(response).await,
+            serde_json::json!({ "error": "diff_parse_failed" })
+        );
+        let stored: String = sqlx::query_scalar(
+            "SELECT diff FROM tracked_repository_pull_request_details WHERE user_id = 'user_1' AND provider = 'github' AND owner = 'kestrel' AND name = 'app' AND number = 42",
+        )
+        .fetch_one(&db)
+        .await
+        .expect("stored diff should load");
+        assert_eq!(stored.as_bytes(), MALFORMED_DIFF.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn pull_request_diff_reports_resource_limits_separately() {
+        let config = test_config();
+        let db = test_db().await;
+        insert_tracked_repository(&db).await;
+        let oversized = "\n".repeat(300_001);
+        insert_pull_request_diff_snapshot(&db, Some(&oversized)).await;
+        let cookie = session_cookie(&db, &config).await;
+        let response = app(&config, AppState::new(db, config.clone()))
+            .oneshot(pull_request_diff_request(
+                &cookie,
+                "/api/repositories/kestrel/app/pull-requests/42/diff",
+            ))
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_private_no_store(&response);
+        assert_eq!(
+            response_json(response).await,
+            serde_json::json!({ "error": "diff_resource_limit_exceeded" })
+        );
+    }
+
+    #[tokio::test]
+    async fn pull_request_diff_rejects_oversized_storage_before_loading_it() {
+        let config = test_config();
+        let db = test_db().await;
+        insert_tracked_repository(&db).await;
+        insert_pull_request_diff_snapshot(&db, Some("")).await;
+        sqlx::query(
+            "UPDATE tracked_repository_pull_request_details SET diff = CAST(zeroblob(?) AS TEXT) WHERE user_id = 'user_1' AND provider = 'github' AND owner = 'kestrel' AND name = 'app' AND number = 42",
+        )
+        .bind((crate::pull_request_diff::MAX_DIFF_BYTES + 1) as i64)
+        .execute(&db)
+        .await
+        .expect("oversized stored diff should insert");
+        let cookie = session_cookie(&db, &config).await;
+        let response = app(&config, AppState::new(db, config.clone()))
+            .oneshot(pull_request_diff_request(
+                &cookie,
+                "/api/repositories/kestrel/app/pull-requests/42/diff",
+            ))
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            response_json(response).await,
+            serde_json::json!({ "error": "diff_resource_limit_exceeded" })
+        );
+    }
+
+    #[tokio::test]
+    async fn pull_request_diff_serialization_excludes_binary_payloads() {
+        let config = test_config();
+        let db = test_db().await;
+        insert_tracked_repository(&db).await;
+        let literal_payload = "LcmZQzWcm*P0SW;F\n".repeat(16_384);
+        let delta_payload = "ccmV+t0PX*P2!IH%^Z^9`00000v-trB0x!=5aR2}S\n".repeat(16_384);
+        let raw = format!(
+            "diff --git a/large.bin b/large.bin\nindex 1111111..2222222 100644\nGIT binary patch\nliteral 1048576\n{literal_payload}\ndelta 1048576\n{delta_payload}\n"
+        );
+        assert!(raw.len() > 500_000);
+        insert_pull_request_diff_snapshot(&db, Some(&raw)).await;
+        let cookie = session_cookie(&db, &config).await;
+        let response = app(&config, AppState::new(db, config.clone()))
+            .oneshot(pull_request_diff_request(
+                &cookie,
+                "/api/repositories/kestrel/app/pull-requests/42/diff",
+            ))
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 4 * 1024)
+            .await
+            .expect("binary response should remain small");
+        assert!(!body.windows(16).any(|window| window == b"LcmZQzWcm*P0SW;F"));
+        let json: Value = serde_json::from_slice(&body).expect("body should be json");
+        assert_eq!(json["files"].as_array().map(Vec::len), Some(1));
+        assert!(json["files"].as_array().is_some_and(|files| files
+            .iter()
+            .all(|file| file["binary"] == true && file["hunks"] == serde_json::json!([]))));
+    }
+
+    #[tokio::test]
+    async fn pull_request_diff_serializes_50_000_semantic_lines() {
+        let config = test_config();
+        let db = test_db().await;
+        insert_tracked_repository(&db).await;
+        let mut raw = String::from(
+            "diff --git a/large.txt b/large.txt\nindex 1111111..2222222 100644\n--- a/large.txt\n+++ b/large.txt\n@@ -1,25000 +1,25000 @@\n",
+        );
+        for index in 0..25_000 {
+            writeln!(raw, "-old-{index}").expect("deletion should write");
+        }
+        for index in 0..25_000 {
+            writeln!(raw, "+new-{index}").expect("addition should write");
+        }
+        insert_pull_request_diff_snapshot(&db, Some(&raw)).await;
+        let cookie = session_cookie(&db, &config).await;
+        let response = app(&config, AppState::new(db, config.clone()))
+            .oneshot(pull_request_diff_request(
+                &cookie,
+                "/api/repositories/kestrel/app/pull-requests/42/diff",
+            ))
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 8 * 1024 * 1024)
+            .await
+            .expect("large response should stay within the expected bound");
+        let json: Value = serde_json::from_slice(&body).expect("body should be json");
+        let lines = json["files"][0]["hunks"][0]["lines"]
+            .as_array()
+            .expect("lines should be an array");
+        assert_eq!(lines.len(), 50_000);
+        assert_eq!(lines[49_999]["newLine"], 25_000);
     }
 
     #[tokio::test]

@@ -180,6 +180,22 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/repositories/{owner}/{name}/pull-requests/{number}/diff": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["get_pull_request_diff"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/repositories/{owner}/{name}/pull-requests/{number}/sync": {
     parameters: {
       query?: never;
@@ -286,6 +302,50 @@ export interface components {
     PullRequestDetailResponse: {
       pullRequestDetail: components["schemas"]["PullRequestDetailDto"];
     };
+    PullRequestDiffFileDto: {
+      /** Format: int64 */
+      additions: number;
+      binary: boolean;
+      /** Format: int64 */
+      deletions: number;
+      hunks: components["schemas"]["PullRequestDiffHunkDto"][];
+      newMode: null | components["schemas"]["PullRequestDiffFileModeDto"];
+      newPath: string | null;
+      oldMode: null | components["schemas"]["PullRequestDiffFileModeDto"];
+      oldPath: string | null;
+      operation: components["schemas"]["PullRequestDiffFileOperationDto"];
+    };
+    /** @enum {string} */
+    PullRequestDiffFileModeDto: "100644" | "100755" | "120000" | "160000";
+    /** @enum {string} */
+    PullRequestDiffFileOperationDto: "added" | "deleted" | "modified" | "renamed" | "copied";
+    PullRequestDiffHunkDto: {
+      context: string | null;
+      lines: components["schemas"]["PullRequestDiffLineDto"][];
+      /** Format: int64 */
+      newCount: number;
+      /** Format: int64 */
+      newStart: number;
+      /** Format: int64 */
+      oldCount: number;
+      /** Format: int64 */
+      oldStart: number;
+    };
+    PullRequestDiffLineDto: {
+      content: string;
+      kind: components["schemas"]["PullRequestDiffLineKindDto"];
+      missingNewline: boolean;
+      /** Format: int64 */
+      newLine: number | null;
+      /** Format: int64 */
+      oldLine: number | null;
+    };
+    /** @enum {string} */
+    PullRequestDiffLineKindDto: "context" | "addition" | "deletion";
+    PullRequestDiffResponse: {
+      files: components["schemas"]["PullRequestDiffFileDto"][];
+      syncedAt: string;
+    };
     PullRequestDto: {
       authorLogin?: string | null;
       closedAt?: string | null;
@@ -304,7 +364,11 @@ export interface components {
     };
     /** @enum {string} */
     PullRequestErrorCode:
+      | "authentication_required"
       | "authorization_required"
+      | "diff_parse_failed"
+      | "diff_resource_limit_exceeded"
+      | "diff_unavailable"
       | "invalid_pull_request"
       | "invalid_repository"
       | "pull_request_not_found"
@@ -790,6 +854,84 @@ export interface operations {
       };
       /** @description Repository or pull request detail is not stored */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PullRequestErrorResponse"];
+        };
+      };
+    };
+  };
+  get_pull_request_diff: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        owner: string;
+        name: string;
+        number: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Parsed pull request diff */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PullRequestDiffResponse"];
+        };
+      };
+      /** @description Invalid repository or pull request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PullRequestErrorResponse"];
+        };
+      };
+      /** @description Authentication required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PullRequestErrorResponse"];
+        };
+      };
+      /** @description Repository or pull request detail is not stored */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PullRequestErrorResponse"];
+        };
+      };
+      /** @description Stored pull request diff is unavailable */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PullRequestErrorResponse"];
+        };
+      };
+      /** @description Stored pull request diff exceeds parser limits */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PullRequestErrorResponse"];
+        };
+      };
+      /** @description Stored pull request diff could not be loaded or processed */
+      500: {
         headers: {
           [name: string]: unknown;
         };
