@@ -415,6 +415,7 @@ const writeCachedSettings = (userId: string, theme: string) => {
 describe("App", () => {
   beforeEach(() => {
     window.history.replaceState({}, "", "/");
+    vi.stubGlobal("scrollTo", vi.fn());
     clearCache();
     mockAuth();
     writeCachedUser(signedInResponse.user);
@@ -988,6 +989,9 @@ describe("App", () => {
 
     expect(await screen.findByRole("heading", { name: "Add syncing" })).toBeInTheDocument();
     expect(await screen.findByText("1 changed file, 2 source lines.")).toBeInTheDocument();
+    const diffTable = screen.getByRole("table", { name: "Pull request diff contents" });
+    expect(diffTable).toHaveAttribute("aria-rowcount", "4");
+    expect(diffTable.closest("[aria-live]")).toBeNull();
     const views = screen.getByRole("navigation", { name: "Pull request views" });
     expect(within(views).getByRole("link", { name: "Diff" })).toHaveAttribute(
       "aria-current",

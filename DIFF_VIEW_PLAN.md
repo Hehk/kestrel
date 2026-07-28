@@ -1103,23 +1103,23 @@ npm run test:run
 
 **Todos:**
 
-- [ ] Add `@tanstack/solid-virtual`.
-- [ ] Create one `createWindowVirtualizer` for the complete layout index.
-- [ ] Account for content before the list through `scrollMargin`.
-- [ ] Use exact row heights and stable item keys.
-- [ ] Start with approximately 20 rows of overscan.
-- [ ] Render a total-height spacer and one translated visible block.
-- [ ] Render fixed-height file headers.
-- [ ] Render fixed-height hunk headers.
-- [ ] Render context, addition, and deletion rows with old and new line gutters.
-- [ ] Render binary and hunkless file notices.
-- [ ] Preserve whitespace and tabs while preventing line wrapping.
-- [ ] Escape all source content as text.
-- [ ] Remove or replace the existing nested-scroll `.pr-diff` CSS.
-- [ ] Add virtual table, row, row-index, and cell semantics.
-- [ ] Add component tests with mocked viewport measurements.
-- [ ] Assert that a 50,000-line fixture mounts fewer than 200 diff rows.
-- [ ] Run the two-agent review gate, resolve accepted findings, and rerun this stage's verification.
+- [x] Add `@tanstack/solid-virtual`.
+- [x] Create one `createWindowVirtualizer` for the complete layout index.
+- [x] Account for content before the list through `scrollMargin`.
+- [x] Use exact row heights and stable item keys.
+- [x] Start with approximately 20 rows of overscan.
+- [x] Render a total-height spacer and one translated visible block.
+- [x] Render fixed-height file headers.
+- [x] Render fixed-height hunk headers.
+- [x] Render context, addition, and deletion rows with old and new line gutters.
+- [x] Render binary and hunkless file notices.
+- [x] Preserve whitespace and tabs while preventing line wrapping.
+- [x] Escape all source content as text.
+- [x] Remove or replace the existing nested-scroll `.pr-diff` CSS.
+- [x] Add virtual table, row, row-index, and cell semantics.
+- [x] Add component tests with mocked viewport measurements.
+- [x] Assert that a 50,000-line fixture mounts fewer than 200 diff rows.
+- [x] Run the two-agent review gate, resolve accepted findings, and rerun this stage's verification.
 
 **Focused Tests:**
 
@@ -1149,6 +1149,18 @@ npm run test:run
 - Line numbers and source contents are correct at distant scroll positions.
 - Rapid scrolling produces no persistent blank regions.
 - Rendering works in light and dark themes at a basic level.
+
+**Stage Record (2026-07-28):**
+
+- Added `@tanstack/solid-virtual` 3.13.35 and one `createWindowVirtualizer` over the complete compact layout with 20 rows of overscan, exact row heights, and semantic coordinate keys.
+- Added `src/diff/DiffView.tsx` with one total-height spacer and one translated contiguous mounted block. Diff replacement explicitly clears cached virtual measurements, including same-row-count changes with different geometry.
+- Calculated window `scrollMargin` from the table's document position and refresh it on window resize and observed Diff section/page layout changes. Tests cover nonzero scrolling and a dynamically shifted table offset.
+- Rendered fixed file, hunk, source, binary, and hunkless rows. Source rows include old/new gutters, visible unified prefixes, accessible line-kind and line-number labels, missing-newline notices, escaped text content, preserved whitespace, four-column tabs, and no wrapping.
+- Replaced the nested `.pr-diff` scroller with window-scrolling virtual table styles and fixed 40/32/24 pixel row contracts. File paths stay one line and ellipsize within their fixed-height header.
+- Added virtual table, row-count, row-index, column-header, and cell semantics while keeping the virtual source rows outside the polite loading/error live region.
+- Added component tests for all row kinds and heights, gutters, prefixes, missing-newline and escaping behavior, same-count geometry replacement, scroll-margin movement, and distant scrolling. A 50,002-row model keeps fewer than 200 rows mounted before and after jumping to the final line.
+- `npm run check` with 132 frontend tests, `npm run build`, `git diff --check`, and `npm audit --omit=dev` passed; the production dependency audit reported zero vulnerabilities.
+- Both final Stage 7 reviewers reported no findings. Rapid real-browser scrolling, near-bottom jumps, responsive layout, screen-reader table navigation, and light/dark visual checks remain manual risks.
 
 ### Stage 8: File Navigation And Horizontal Scrolling
 

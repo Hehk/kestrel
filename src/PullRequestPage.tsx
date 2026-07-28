@@ -16,6 +16,7 @@ import {
 } from "./icons/Icons";
 import PullRequestsError from "./PullRequestError";
 import type { PullRequestView } from "./router";
+import { DiffView } from "./diff/DiffView";
 
 // TODO: Figure out a better way to handle all the error cases
 const PullRequestPage = ({
@@ -256,24 +257,28 @@ const PullRequestDiff = (props: { data: Accessor<PullRequestPageData> }) => {
             </Switch>
           }
         >
-          {(currentDiff) => (
-            <div class="PullRequestPage-diffSummary">
-              <Show when={diffState()?.status === "loading"}>
-                <p class="repo-pr-status">Refreshing pull request diff...</p>
-              </Show>
-              <Show when={error()}>
-                {(currentError) => (
-                  <>
-                    <PullRequestDiffError error={currentError()} />
-                    <p class="repo-pr-status">Showing the last successfully loaded diff.</p>
-                  </>
-                )}
-              </Show>
-              <PullRequestDiffTotals diff={currentDiff()} />
-            </div>
-          )}
+          <>
+            <Show when={diffState()?.status === "loading"}>
+              <p class="repo-pr-status">Refreshing pull request diff...</p>
+            </Show>
+            <Show when={error()}>
+              {(currentError) => (
+                <>
+                  <PullRequestDiffError error={currentError()} />
+                  <p class="repo-pr-status">Showing the last successfully loaded diff.</p>
+                </>
+              )}
+            </Show>
+          </>
         </Show>
       </div>
+      <Show when={diff()}>
+        {(currentDiff) => (
+          <div class="PullRequestPage-diffSummary">
+            <PullRequestDiffTotals diff={currentDiff()} />
+          </div>
+        )}
+      </Show>
     </section>
   );
 };
@@ -289,10 +294,13 @@ const PullRequestDiffTotals = (props: { diff: Repositories.PullRequestDiff }) =>
   return props.diff.files.length === 0 ? (
     <p class="repo-pr-status">This pull request has no changed files.</p>
   ) : (
-    <p class="repo-pr-status">
-      {props.diff.files.length} changed {props.diff.files.length === 1 ? "file" : "files"},{" "}
-      {lineCount()} source {lineCount() === 1 ? "line" : "lines"}.
-    </p>
+    <>
+      <p class="repo-pr-status">
+        {props.diff.files.length} changed {props.diff.files.length === 1 ? "file" : "files"},{" "}
+        {lineCount()} source {lineCount() === 1 ? "line" : "lines"}.
+      </p>
+      <DiffView diff={props.diff} />
+    </>
   );
 };
 

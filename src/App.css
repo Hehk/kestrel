@@ -654,13 +654,113 @@
   margin-top: 0.3rem;
 }
 
-.pr-diff {
-  max-height: 24rem;
-  padding: 0.75rem;
-  overflow: auto;
+.pr-diff-table {
+  min-width: 0;
+  margin-top: 1rem;
   color: var(--text);
-  background: color-mix(in srgb, var(--text) 4%, var(--bg));
-  border: 1px solid var(--rule);
+  background: var(--bg);
+  border-top: 1px solid var(--rule);
+  font-family: var(--mono);
+  font-size: 0.85rem;
+}
+
+.pr-diff-spacer {
+  position: relative;
+  min-width: 100%;
+}
+
+.pr-diff-virtualRows {
+  position: absolute;
+  top: 0;
+  left: 0;
+  min-width: 100%;
+}
+
+.pr-diff-row {
+  min-width: max-content;
+  display: grid;
+  grid-template-columns: 4.5rem 4.5rem minmax(0, 1fr);
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--rule);
+}
+
+.pr-diff-headerCell,
+.pr-diff-hunkCell,
+.pr-diff-noticeCell {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  padding: 0 0.75rem;
+  white-space: pre;
+}
+
+.pr-diff-headerCell {
+  min-width: 0;
+  height: 40px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--text) 7%, var(--bg));
+  font-weight: 700;
+  text-overflow: ellipsis;
+}
+
+.pr-diff-hunkCell,
+.pr-diff-noticeCell {
+  height: 32px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--link) 7%, var(--bg));
+}
+
+.pr-diff-lineNumber,
+.pr-diff-source {
+  height: 24px;
+  box-sizing: border-box;
+  line-height: 24px;
+  white-space: pre;
+}
+
+.pr-diff-lineNumber {
+  padding: 0 0.6rem;
+  color: var(--text-muted);
+  border-right: 1px solid var(--rule);
+  text-align: right;
+  user-select: none;
+}
+
+.pr-diff-source {
+  min-width: max-content;
+  padding-right: 1rem;
+  tab-size: 4;
+}
+
+.pr-diff-row--addition .pr-diff-source {
+  background: color-mix(in srgb, #2da44e 12%, var(--bg));
+}
+
+.pr-diff-row--deletion .pr-diff-source {
+  background: color-mix(in srgb, #cf222e 12%, var(--bg));
+}
+
+.pr-diff-lineKind {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.pr-diff-prefix {
+  display: inline-block;
+  width: 1ch;
+  user-select: none;
+}
+
+.pr-diff-missingNewline {
+  color: var(--text-muted);
+  font-style: italic;
 }
 
 .settings-form {
