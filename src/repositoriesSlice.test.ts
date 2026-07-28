@@ -48,6 +48,47 @@ const pullRequestDetail = (): Repositories.PullRequestDetail => ({
   timelineHasOlder: false,
 });
 
+const pullRequestDiff = (): Repositories.PullRequestDiff => ({
+  files: [
+    {
+      additions: 2,
+      binary: false,
+      deletions: 1,
+      hunks: [
+        {
+          context: "fn main()",
+          lines: [
+            {
+              content: "old line",
+              kind: "deletion",
+              missingNewline: false,
+              newLine: null,
+              oldLine: 1,
+            },
+            {
+              content: "new line",
+              kind: "addition",
+              missingNewline: false,
+              newLine: 1,
+              oldLine: null,
+            },
+          ],
+          newCount: 1,
+          newStart: 1,
+          oldCount: 1,
+          oldStart: 1,
+        },
+      ],
+      newMode: "100644",
+      newPath: "src/main.rs",
+      oldMode: "100644",
+      oldPath: "src/main.rs",
+      operation: "modified",
+    },
+  ],
+  syncedAt: "2026-01-04T00:00:00Z",
+});
+
 const update = (state: Repositories.State, msg: Repositories.Msg) => {
   const cmds: Repositories.Cmd[] = [];
   const nextState = Repositories.update(
@@ -74,6 +115,8 @@ const loadedState = (repositories: Repositories.Repository[] = []): LoadedState 
   return {
     addError: null,
     addStatus: "idle",
+    currentPullRequestDiff: null,
+    pullRequestDiffRequestId: 0,
     pullRequestDetails: Repositories.initialState().pullRequestDetails,
     pullRequests: Repositories.initialState().pullRequests,
     repositories,
@@ -238,6 +281,98 @@ describe("repositoriesSlice", () => {
     });
   });
 
+  it("loads one current pull request diff and preserves stale data while refreshing", () => {
+    const repo = repository("kestrel/app");
+    const diff = pullRequestDiff();
+    const requested = update(loadedState([repo]), {
+      kind: "PullRequestDiffLoadRequested",
+      number: 42,
+      repository: repo,
+    });
+
+    expect(requested.cmds).toEqual([
+      { kind: "LoadPullRequestDiff", number: 42, repository: repo, requestId: 1 },
+    ]);
+    expect(requested.state.currentPullRequestDiff).toEqual({
+      key: "kestrel/app#42",
+      requestId: 1,
+      state: { diff: null, status: "loading" },
+    });
+
+    const loaded = update(requested.state, {
+      diff,
+      kind: "PullRequestDiffLoaded",
+      number: 42,
+      repository: repo,
+      requestId: 1,
+    });
+    const refreshing = update(loaded.state, {
+      kind: "PullRequestDiffLoadRequested",
+      number: 42,
+      repository: repo,
+    });
+
+    expect(refreshing.state.currentPullRequestDiff).toEqual({
+      key: "kestrel/app#42",
+      requestId: 2,
+      state: { diff, status: "loading" },
+    });
+    expect(refreshing.cmds).toEqual([
+      { kind: "LoadPullRequestDiff", number: 42, repository: repo, requestId: 2 },
+    ]);
+
+    const failed = update(refreshing.state, {
+      error: "loadFailed",
+      kind: "PullRequestDiffLoadFailed",
+      number: 42,
+      repository: repo,
+      requestId: 2,
+    });
+    expect(failed.state.currentPullRequestDiff?.state).toEqual({
+      diff,
+      error: "loadFailed",
+      status: "error",
+    });
+  });
+
+  it("replaces the current diff and ignores superseded responses", () => {
+    const repo = repository("kestrel/app");
+    const first = update(loadedState([repo]), {
+      kind: "PullRequestDiffLoadRequested",
+      number: 42,
+      repository: repo,
+    });
+    const second = update(first.state, {
+      kind: "PullRequestDiffLoadRequested",
+      number: 43,
+      repository: repo,
+    });
+
+    expect(second.state.currentPullRequestDiff).toEqual({
+      key: "kestrel/app#43",
+      requestId: 2,
+      state: { diff: null, status: "loading" },
+    });
+
+    const staleLoaded = update(second.state, {
+      diff: pullRequestDiff(),
+      kind: "PullRequestDiffLoaded",
+      number: 42,
+      repository: repo,
+      requestId: 1,
+    });
+    const staleFailed = update(staleLoaded.state, {
+      error: "diffParseFailed",
+      kind: "PullRequestDiffLoadFailed",
+      number: 43,
+      repository: repo,
+      requestId: 1,
+    });
+
+    expect(staleLoaded.state).toBe(second.state);
+    expect(staleFailed.state).toBe(second.state);
+  });
+
   it("loads older timeline activity without discarding the current detail", () => {
     const repo = repository("kestrel/app");
     const detail = { ...pullRequestDetail(), timelineHasOlder: true };
@@ -306,6 +441,108 @@ describe("repositoriesSlice", () => {
 
     await waitFor(() =>
       expect(messages).toEqual([{ kind: "PullRequestsLoaded", pullRequests, repository: repo }]),
+    );
+  });
+
+  it("loads a parsed pull request diff from the dedicated endpoint", async () => {
+    const repo = repository("kestrel/app");
+    const diff = pullRequestDiff();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(diff)),
+    );
+    const messages: Repositories.Msg[] = [];
+
+    Repositories.runCmd(
+      { kind: "LoadPullRequestDiff", number: 42, repository: repo, requestId: 7 },
+      (msg) => messages.push(msg),
+    );
+
+    await waitFor(() =>
+      expect(messages).toEqual([
+        {
+          diff,
+          kind: "PullRequestDiffLoaded",
+          number: 42,
+          repository: repo,
+          requestId: 7,
+        },
+      ]),
+    );
+    const request = vi.mocked(fetch).mock.calls[0]?.[0];
+    expect(request).toBeInstanceOf(Request);
+    expect((request as Request).method).toBe("GET");
+    expect((request as Request).url).toContain(
+      "/api/repositories/kestrel/app/pull-requests/42/diff",
+    );
+  });
+
+  it.each([
+    ["authentication_required", "authenticationRequired"],
+    ["authorization_required", "authorizationRequired"],
+    ["diff_parse_failed", "diffParseFailed"],
+    ["diff_resource_limit_exceeded", "diffResourceLimitExceeded"],
+    ["diff_unavailable", "diffUnavailable"],
+    ["invalid_pull_request", "invalidPullRequest"],
+    ["invalid_repository", "invalidRepository"],
+    ["pull_request_not_found", "pullRequestNotFound"],
+    ["repository_not_tracked", "repositoryNotTracked"],
+    ["sync_failed", "loadFailed"],
+  ] as const)("maps Diff endpoint error %s", async (apiError, expectedError) => {
+    const repo = repository("kestrel/app");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ error: apiError }, 500)),
+    );
+    const messages: Repositories.Msg[] = [];
+
+    Repositories.runCmd(
+      { kind: "LoadPullRequestDiff", number: 42, repository: repo, requestId: 3 },
+      (msg) => messages.push(msg),
+    );
+
+    await waitFor(() =>
+      expect(messages).toEqual([
+        {
+          error: expectedError,
+          kind: "PullRequestDiffLoadFailed",
+          number: 42,
+          repository: repo,
+          requestId: 3,
+        },
+      ]),
+    );
+  });
+
+  it.each([
+    ["network rejection", () => Promise.reject(new Error("network failed"))],
+    [
+      "invalid JSON",
+      () =>
+        Promise.resolve(
+          new Response("{", { headers: { "content-type": "application/json" }, status: 200 }),
+        ),
+    ],
+  ])("maps thrown Diff %s to a terminal failure", async (_name, response) => {
+    const repo = repository("kestrel/app");
+    vi.stubGlobal("fetch", vi.fn(response));
+    const messages: Repositories.Msg[] = [];
+
+    Repositories.runCmd(
+      { kind: "LoadPullRequestDiff", number: 42, repository: repo, requestId: 4 },
+      (msg) => messages.push(msg),
+    );
+
+    await waitFor(() =>
+      expect(messages).toEqual([
+        {
+          error: "loadFailed",
+          kind: "PullRequestDiffLoadFailed",
+          number: 42,
+          repository: repo,
+          requestId: 4,
+        },
+      ]),
     );
   });
 

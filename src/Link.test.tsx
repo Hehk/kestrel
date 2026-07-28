@@ -150,7 +150,7 @@ describe("Link", () => {
         <Link target="_blank" to={{ name: "Settings" }}>
           New tab
         </Link>
-        <Link download to={{ name: "PullRequest", repo: "kestrel", id: "123" }}>
+        <Link download to={{ name: "PullRequest", repo: "kestrel", id: "123", view: "overview" }}>
           Download
         </Link>
       </>

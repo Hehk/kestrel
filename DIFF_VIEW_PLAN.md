@@ -924,19 +924,19 @@ npm run check
 
 **Todos:**
 
-- [ ] Add `view: "overview" | "diff"` to the pull request route type.
-- [ ] Parse the base pull request path as Overview.
-- [ ] Encode Diff as `/pull/:repo/:id/diff`.
-- [ ] Include `view` in route equality.
-- [ ] Keep unknown child segments as Not Found.
-- [ ] Update every existing pull request link to target Overview explicitly.
-- [ ] Pass the selected view from `App.tsx` into the pull request page.
-- [ ] Extract shared title, actions, sync control, and Overview/Diff navigation from the current page.
-- [ ] Preserve the existing Overview rendering and three-column layout.
-- [ ] Add a simple Diff placeholder inside the wide Diff layout.
-- [ ] Make direct Diff navigation reuse existing repository and pull request summary resolution.
-- [ ] Add browser back and forward integration coverage.
-- [ ] Run the two-agent review gate, resolve accepted findings, and rerun this stage's verification.
+- [x] Add `view: "overview" | "diff"` to the pull request route type.
+- [x] Parse the base pull request path as Overview.
+- [x] Encode Diff as `/pull/:repo/:id/diff`.
+- [x] Include `view` in route equality.
+- [x] Keep unknown child segments as Not Found.
+- [x] Update every existing pull request link to target Overview explicitly.
+- [x] Pass the selected view from `App.tsx` into the pull request page.
+- [x] Extract shared title, actions, sync control, and Overview/Diff navigation from the current page.
+- [x] Preserve the existing Overview rendering and three-column layout.
+- [x] Add a simple Diff placeholder inside the wide Diff layout.
+- [x] Make direct Diff navigation reuse existing repository and pull request summary resolution.
+- [x] Add browser back and forward integration coverage.
+- [x] Run the two-agent review gate, resolve accepted findings, and rerun this stage's verification.
 
 **Focused Tests:**
 
@@ -967,25 +967,35 @@ npm run test:run
 - Overview behavior and tests remain intact.
 - Diff has a wide placeholder page ready for data loading.
 
+**Stage Record (2026-07-27):**
+
+- Added typed Overview and Diff pull request routes. The base path remains the canonical Overview URL, `/diff` selects Diff, route equality includes the view, and malformed or unknown child paths resolve to Not Found.
+- Updated all pull request links to select Overview explicitly and passed the selected view through `App.tsx` into a shared pull request shell.
+- Moved the title, actions, sync control, and accessible Overview/Diff navigation into shared chrome while preserving Overview's three-column content and adding a responsive wide Diff placeholder.
+- Reused the existing pull request summary and detail resolution for direct Diff entry. Automatic detail loading now records its loading state before dispatch, preventing duplicate GETs and disabling Sync while the request is in flight.
+- Added route round-trip and equality tests, direct Diff resolution and rendering coverage, selected-view assertions, failed Diff sync feedback, and browser back and forward integration coverage.
+- `npm run check` with 91 frontend tests, `npm run build`, and `git diff --check` passed.
+- Both final Stage 4 reviewers reported no findings. Responsive grid geometry remains a manual browser verification risk because JSDOM does not evaluate CSS layout.
+
 ### Stage 5: Frontend Diff State And Loading
 
 **Outcome:** The Diff route loads, caches, refreshes, and displays the state of the dedicated Diff resource without rendering all source rows yet.
 
 **Todos:**
 
-- [ ] Add the one-entry `CurrentPullRequestDiff` state to `repositoriesSlice.ts`.
-- [ ] Add load requested, loaded, and failed messages and commands.
-- [ ] Fetch the generated Diff endpoint through the existing API client.
-- [ ] Key the current resource by repository and pull request number.
-- [ ] Preserve a matching loaded diff while switching Overview to Diff and back.
-- [ ] Replace the one-entry resource when visiting a different pull request.
-- [ ] Make `queuePullRequestRouteWork` load detail for Overview and diff for Diff.
-- [ ] Avoid loading timeline detail during direct Diff navigation.
-- [ ] Reload the current matching diff after a successful pull request sync.
-- [ ] Preserve stale diff data and show a non-destructive error after refresh failure.
-- [ ] Render loading, refreshing, unavailable, empty, parse-error, authorization-error, and general-error states.
-- [ ] Temporarily render file and line totals for a successfully loaded response to prove the full data path.
-- [ ] Run the two-agent review gate, resolve accepted findings, and rerun this stage's verification.
+- [x] Add the one-entry `CurrentPullRequestDiff` state to `repositoriesSlice.ts`.
+- [x] Add load requested, loaded, and failed messages and commands.
+- [x] Fetch the generated Diff endpoint through the existing API client.
+- [x] Key the current resource by repository and pull request number.
+- [x] Preserve a matching loaded diff while switching Overview to Diff and back.
+- [x] Replace the one-entry resource when visiting a different pull request.
+- [x] Make `queuePullRequestRouteWork` load detail for Overview and diff for Diff.
+- [x] Avoid loading timeline detail during direct Diff navigation.
+- [x] Reload the current matching diff after a successful pull request sync.
+- [x] Preserve stale diff data and show a non-destructive error after refresh failure.
+- [x] Render loading, refreshing, unavailable, empty, parse-error, authorization-error, and general-error states.
+- [x] Temporarily render file and line totals for a successfully loaded response to prove the full data path.
+- [x] Run the two-agent review gate, resolve accepted findings, and rerun this stage's verification.
 
 **Focused Tests:**
 
@@ -1016,26 +1026,37 @@ npm run test:run
 - Sync refresh behavior is deterministic.
 - No virtualization dependency has been introduced yet.
 
+**Stage Record (2026-07-27):**
+
+- Added a one-entry keyed `CurrentPullRequestDiff` resource with loading, loaded, stale-refresh, and error states. Monotonic request generations reject superseded responses and remain unique across user refreshes.
+- Added the generated Diff endpoint command and dedicated error mapping, including terminal handling for rejected requests and malformed successful JSON.
+- Made route work view-specific: Overview loads detail and timeline data, while direct Diff loads only the parsed Diff resource. Same-PR view changes reuse the response, and another PR route releases the previous parsed document before destination resolution.
+- Reloaded a matching cached Diff after successful pull request sync. Refresh keeps the previous response visible, labels it as stale after failure, and disables overlapping Sync requests.
+- Replaced the placeholder with announced loading and refreshing states, empty and successful totals, unavailable, parse-limit, parse, authentication, authorization, repository, validation, and general failure messages.
+- Added reducer and command tests for one-entry replacement, stale retention, request races, transport and JSON failures, route retry, and user changes; store tests cover route-specific loading, release, cache reuse, and sync refresh; App tests cover direct loading, all UI states, stale failures, rejected Sync, and browser history reuse.
+- `npm run check` with 120 frontend tests, `npm run build`, and `git diff --check` passed.
+- Both final Stage 5 reviewers reported no findings. Rapid overlapping large-request heap behavior, responsive layout, and live-region announcements remain manual or later-stage verification risks.
+
 ### Stage 6: Compact Layout Index
 
 **Outcome:** Pure frontend code maps the hierarchical API response to stable virtual rows without duplicating every line object.
 
 **Todos:**
 
-- [ ] Add focused diff layout types and helpers in a new frontend module.
-- [ ] Build compact row-kind and semantic-index arrays or an equivalently bounded prefix index.
-- [ ] Represent file headers, hunk headers, source lines, and binary or hunkless notices.
-- [ ] Implement `rowAt(index)`.
-- [ ] Implement stable `rowKey(index)` values.
-- [ ] Implement exact `rowHeight(index)` values for each row kind.
-- [ ] Record each file's starting row for future navigation.
-- [ ] Record each hunk's starting row for search and copying.
-- [ ] Calculate a conservative maximum visual source width with consistent tab expansion.
-- [ ] Generate deterministic 50,000-line and 100,000-line test responses without committing giant source files.
-- [ ] Use a canonical generated scenario matrix covering one large hunk, many files, many hunks, alternating line kinds, and header-heavy input with expected file, hunk, source-line, and visual-row counts.
-- [ ] Generate 64 KiB and 1 MiB source lines with tabs, trailing whitespace, wide or combining Unicode, and a rare match near the final column.
-- [ ] Prove the index uses compact metadata rather than one new object per source line.
-- [ ] Run the two-agent review gate, resolve accepted findings, and rerun this stage's verification.
+- [x] Add focused diff layout types and helpers in a new frontend module.
+- [x] Build compact row-kind and semantic-index arrays or an equivalently bounded prefix index.
+- [x] Represent file headers, hunk headers, source lines, and binary or hunkless notices.
+- [x] Implement `rowAt(index)`.
+- [x] Implement stable `rowKey(index)` values.
+- [x] Implement exact `rowHeight(index)` values for each row kind.
+- [x] Record each file's starting row for future navigation.
+- [x] Record each hunk's starting row for search and copying.
+- [x] Calculate a conservative maximum visual source width with consistent tab expansion.
+- [x] Generate deterministic 50,000-line and 100,000-line test responses without committing giant source files.
+- [x] Use a canonical generated scenario matrix covering one large hunk, many files, many hunks, alternating line kinds, and header-heavy input with expected file, hunk, source-line, and visual-row counts.
+- [x] Generate 64 KiB and 1 MiB source lines with tabs, trailing whitespace, wide or combining Unicode, and a rare match near the final column.
+- [x] Prove the index uses compact metadata rather than one new object per source line.
+- [x] Run the two-agent review gate, resolve accepted findings, and rerun this stage's verification.
 
 **Focused Tests:**
 
@@ -1064,6 +1085,17 @@ npm run test:run
 - Row lookup, keys, heights, and file starts are deterministic.
 - Large generated data builds successfully without DOM involvement.
 - The index is ready to drive a virtualizer directly.
+
+**Stage Record (2026-07-27):**
+
+- Added `src/diff/layout.ts` with a two-pass exact-allocation index. Each visual row retains one byte of kind data and three `Uint32` semantic indexes; file and flat hunk start arrays support direct navigation without duplicating source objects.
+- Represented fixed-height file, hunk, context, addition, deletion, binary-notice, and hunkless-notice rows. `rowAt`, `rowKey`, `rowHeight`, and `hunkStartRow` validate bounds and resolve the original generated DTO objects on demand.
+- Added deterministic four-column tab expansion and conservative source-width scanning that counts the Diff prefix, trailing whitespace, combining and variation sequences, emoji presentation, CJK, Hangul, Kana, Nushu, Tangut, and other supplementary wide ranges.
+- Added canonical semantic mapping tests plus generated one-large-hunk, many-files, many-hunks, alternating-kind, and header-heavy matrices. The matrices cover 50,000 and 100,000 source lines with exact file, hunk, source-kind, visual-row, key, and metadata-byte assertions.
+- Added exact 64 KiB and 1 MiB source-line cases with tabs, trailing spaces, wide and combining Unicode, and a marker in the final 32 code units. Tests prove direct DTO identity and the absence of a retained row-object array.
+- Isolated Node measurements after fixture construction built 50,000 lines in 2.72 ms with 650,042 metadata bytes and 100,000 lines in 3.36 ms with 1,300,042 metadata bytes. Observed `ArrayBuffer` growth closely matched the exact typed-array totals.
+- `npm run check` with 128 frontend tests, `npm run build`, and `git diff --check` passed.
+- Both final Stage 6 reviewers reported no findings. Browser font fallback, future Unicode width changes, and worst-case all-non-ASCII profiling remain Stage 7/8 or manual risks.
 
 ### Stage 7: Basic Virtualized Diff Renderer
 

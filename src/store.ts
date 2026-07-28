@@ -48,10 +48,14 @@ export type Msg =
   | { kind: "Settings"; msg: Settings.Msg }
   | { kind: "UserRefreshed"; user: User };
 
-const createInitialState = (user: User, route: Router.AuthenticatedRoute): State => {
+const createInitialState = (
+  user: User,
+  route: Router.AuthenticatedRoute,
+  pullRequestDiffRequestId = 0,
+): State => {
   return {
     count: 0,
-    repositories: Repositories.initialState(),
+    repositories: Repositories.initialState(pullRequestDiffRequestId),
     route,
     settings: Settings.fromCache(user.id),
     user,
@@ -97,7 +101,17 @@ export const update = (msg: Msg, state: State): Mvu.Transition<State, Cmd> => {
         return [state, commands];
       }
 
-      return [queuePullRequestRouteWork(ctx, { ...state, route }, { syncMissing: true }), commands];
+      return [
+        queuePullRequestRouteWork(
+          ctx,
+          { ...state, route },
+          {
+            retryDiffError: true,
+            syncMissing: true,
+          },
+        ),
+        commands,
+      ];
     }
     case "Settings": {
       const [settings, commands] = Settings.update(msg.msg, state.settings);
@@ -107,19 +121,34 @@ export const update = (msg: Msg, state: State): Mvu.Transition<State, Cmd> => {
     case "Repositories": {
       const commands: Cmd[] = [];
       const ctx: RepositoryUpdateContext = { runCmd: (cmd) => commands.push(cmd) };
-      const repositories = Repositories.update(
+      let repositories = Repositories.update(
         {
           runCmd: (cmd) => ctx.runCmd(repositoriesCmd(cmd)),
         },
         msg.msg,
         state.repositories,
       );
+      if (msg.msg.kind === "PullRequestDetailSynced") {
+        const key = Repositories.pullRequestDiffKey(msg.msg.repository, msg.msg.number);
+        if (repositories.currentPullRequestDiff?.key === key) {
+          repositories = Repositories.update(
+            { runCmd: (cmd) => ctx.runCmd(repositoriesCmd(cmd)) },
+            {
+              kind: "PullRequestDiffLoadRequested",
+              number: msg.msg.number,
+              repository: msg.msg.repository,
+            },
+            repositories,
+          );
+        }
+      }
 
       return [
         queuePullRequestRouteWork(
           ctx,
           { ...state, repositories },
           {
+            retryDiffError: false,
             syncMissing: msg.msg.kind === "PullRequestsLoaded",
           },
         ),
@@ -131,7 +160,11 @@ export const update = (msg: Msg, state: State): Mvu.Transition<State, Cmd> => {
         return [{ ...state, user: msg.user }, Mvu.Cmd.none()];
       }
 
-      const nextState = createInitialState(msg.user, state.route);
+      const nextState = createInitialState(
+        msg.user,
+        state.route,
+        state.repositories.pullRequestDiffRequestId,
+      );
       return [
         nextState,
         Mvu.Cmd.batch(
@@ -146,34 +179,49 @@ export const update = (msg: Msg, state: State): Mvu.Transition<State, Cmd> => {
 const queuePullRequestRouteWork = (
   ctx: RepositoryUpdateContext,
   state: State,
-  options: { syncMissing: boolean },
+  options: { retryDiffError: boolean; syncMissing: boolean },
 ): State => {
   const route = state.route;
   if (route.name !== "PullRequest") {
     return state;
   }
 
-  const repositories = state.repositories;
+  const number = Number(route.id);
+  const routeKey =
+    Number.isInteger(number) && number > 0 ? `${route.repo.toLowerCase()}#${number}` : null;
+  let repositories = state.repositories;
+  let nextState = state;
+  if (
+    repositories.currentPullRequestDiff !== null &&
+    repositories.currentPullRequestDiff.key !== routeKey
+  ) {
+    repositories = Repositories.update(
+      { runCmd: (cmd) => ctx.runCmd(repositoriesCmd(cmd)) },
+      { kind: "PullRequestDiffDiscarded" },
+      repositories,
+    );
+    nextState = { ...state, repositories };
+  }
+
   if (repositories.status !== "loaded") {
-    return state;
+    return nextState;
   }
 
   const repository = repositories.repositories.find(
     (candidate) => candidate.fullName === route.repo.toLowerCase(),
   );
   if (repository === undefined) {
-    return state;
+    return nextState;
   }
 
   const pullRequests = repositories.pullRequests[repository.fullName];
   if (pullRequests === undefined) {
     ctx.runCmd({ kind: "Repositories", cmd: { kind: "LoadPullRequests", repository } });
-    return state;
+    return nextState;
   }
 
-  const number = Number(route.id);
   if (!Number.isInteger(number) || number <= 0 || pullRequests.status !== "loaded") {
-    return state;
+    return nextState;
   }
 
   const hasPullRequest = pullRequests.pullRequests.some(
@@ -181,19 +229,40 @@ const queuePullRequestRouteWork = (
   );
   if (!hasPullRequest) {
     if (!options.syncMissing || pullRequests.complete) {
-      return state;
+      return nextState;
     }
 
     ctx.runCmd({ kind: "Repositories", cmd: { kind: "SyncPullRequests", repository } });
-    return state;
+    return nextState;
+  }
+
+  if (route.view === "diff") {
+    const key = Repositories.pullRequestDiffKey(repository, number);
+    if (
+      repositories.currentPullRequestDiff?.key === key &&
+      !(options.retryDiffError && repositories.currentPullRequestDiff.state.status === "error")
+    ) {
+      return nextState;
+    }
+
+    const nextRepositories = Repositories.update(
+      { runCmd: (cmd) => ctx.runCmd(repositoriesCmd(cmd)) },
+      { kind: "PullRequestDiffLoadRequested", number, repository },
+      repositories,
+    );
+    return { ...nextState, repositories: nextRepositories };
   }
 
   if (Repositories.pullRequestDetailKey(repository, number) in repositories.pullRequestDetails) {
-    return state;
+    return nextState;
   }
 
-  ctx.runCmd({ kind: "Repositories", cmd: { kind: "LoadPullRequestDetail", number, repository } });
-  return state;
+  const nextRepositories = Repositories.update(
+    { runCmd: (cmd) => ctx.runCmd(repositoriesCmd(cmd)) },
+    { kind: "PullRequestDetailLoadRequested", number, repository },
+    nextState.repositories,
+  );
+  return { ...nextState, repositories: nextRepositories };
 };
 
 const [store, setStore] = createStore<{ value: State | null }>({ value: null });

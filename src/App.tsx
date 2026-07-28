@@ -19,7 +19,9 @@ const Page = (props: { route: Router.AuthenticatedRoute }) => {
       case "Settings":
         return <SettingsPage />;
       case "PullRequest":
-        return <PullRequestPage repo={props.route.repo} id={props.route.id} />;
+        return (
+          <PullRequestPage repo={props.route.repo} id={props.route.id} view={props.route.view} />
+        );
       case "NotFound":
         return <NotFoundPage path={props.route.path} />;
     }
@@ -180,6 +182,7 @@ const PullRequestsSummary = (props: {
                     name: "PullRequest",
                     repo: props.repository.fullName,
                     id: String(pullRequest.number),
+                    view: "overview",
                   }}
                 >
                   #{pullRequest.number} {pullRequest.title}

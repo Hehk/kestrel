@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { resetForTest } from "./store";
-import type { PullRequestDetail } from "./repositoriesSlice";
+import type { PullRequestDetail, PullRequestDiff } from "./repositoriesSlice";
 import * as Session from "./session";
 
 const signedInResponse = {
@@ -48,6 +48,7 @@ type PullRequest = {
 type SaveRepository = (repository: string) => Response | Promise<Response>;
 type SyncPullRequests = (fullName: string) => Response | Promise<Response>;
 type SyncPullRequestDetail = (fullName: string, number: number) => Response | Promise<Response>;
+type LoadPullRequestDiff = (fullName: string, number: number) => Response | Promise<Response>;
 type LoadOlderPullRequestTimeline = (
   fullName: string,
   number: number,
@@ -155,6 +156,47 @@ const pullRequestDetail = (): PullRequestDetail => {
   };
 };
 
+const pullRequestDiff = (): PullRequestDiff => ({
+  files: [
+    {
+      additions: 1,
+      binary: false,
+      deletions: 1,
+      hunks: [
+        {
+          context: "fn main()",
+          lines: [
+            {
+              content: "old line",
+              kind: "deletion",
+              missingNewline: false,
+              newLine: null,
+              oldLine: 1,
+            },
+            {
+              content: "new line",
+              kind: "addition",
+              missingNewline: false,
+              newLine: 1,
+              oldLine: null,
+            },
+          ],
+          newCount: 1,
+          newStart: 1,
+          oldCount: 1,
+          oldStart: 1,
+        },
+      ],
+      newMode: "100644",
+      newPath: "src/main.rs",
+      oldMode: "100644",
+      oldPath: "src/main.rs",
+      operation: "modified",
+    },
+  ],
+  syncedAt: "2026-01-04T00:00:00Z",
+});
+
 const mockAuth = (
   body: unknown = signedInResponse,
   initialTheme = "system",
@@ -166,11 +208,14 @@ const mockAuth = (
   initialPullRequestDetails: Record<string, PullRequestDetail> = {},
   syncPullRequestDetail?: SyncPullRequestDetail,
   loadOlderPullRequestTimeline?: LoadOlderPullRequestTimeline,
+  initialPullRequestDiffs: Record<string, PullRequestDiff> = {},
+  loadPullRequestDiff?: LoadPullRequestDiff,
 ) => {
   let theme = initialTheme;
   let repositories = initialRepositories;
   let pullRequestsByRepository = initialPullRequests;
   let pullRequestDetailsByKey = initialPullRequestDetails;
+  const pullRequestDiffsByKey = initialPullRequestDiffs;
 
   vi.stubGlobal(
     "fetch",
@@ -232,6 +277,24 @@ const mockAuth = (
         const updatedDetail = { ...detail, timelineHasOlder: false };
         pullRequestDetailsByKey = { ...pullRequestDetailsByKey, [key]: updatedDetail };
         return jsonResponse({ pullRequestDetail: updatedDetail });
+      }
+
+      const pullRequestDiffMatch = url.match(
+        /\/api\/repositories\/([^/]+)\/([^/]+)\/pull-requests\/(\d+)\/diff$/,
+      );
+      if (pullRequestDiffMatch && method === "GET") {
+        const owner = decodeURIComponent(pullRequestDiffMatch[1] ?? "");
+        const name = decodeURIComponent(pullRequestDiffMatch[2] ?? "");
+        const number = Number(pullRequestDiffMatch[3]);
+        const fullName = `${owner}/${name}`;
+        if (loadPullRequestDiff !== undefined) {
+          return loadPullRequestDiff(fullName, number);
+        }
+
+        const diff = pullRequestDiffsByKey[`${fullName}#${number}`];
+        return diff === undefined
+          ? jsonResponse({ error: "pull_request_not_found" }, 404)
+          : jsonResponse(diff);
       }
 
       const pullRequestDetailMatch = url.match(
@@ -518,9 +581,7 @@ describe("App", () => {
     expect(within(sidebar).getByText("app.rs")).toBeInTheDocument();
     expect(within(sidebar).getByText("Add syncing")).toBeInTheDocument();
 
-    const content = screen
-      .getByRole("heading", { name: "Add syncing" })
-      .closest<HTMLElement>(".PullRequestPage-content");
+    const content = document.querySelector<HTMLElement>(".PullRequestPage-content");
     expect(content).not.toBeNull();
     expect(
       within(content as HTMLElement).queryByRole("heading", { name: /Files changed/ }),
@@ -685,7 +746,7 @@ describe("App", () => {
     expect(completedSyncButton.querySelector("svg")).not.toHaveClass("pr-sidebar-sync-icon");
   });
 
-  it("renders actions and review status above checks in the left sidebar", async () => {
+  it("renders shared actions before the Overview status sidebar", async () => {
     const user = userEvent.setup();
     window.history.replaceState({}, "", "/pull/kestrel%2Fapp/42");
     mockAuth(
@@ -708,7 +769,7 @@ describe("App", () => {
 
     await screen.findByRole("heading", { name: "Checks" });
     const sidebar = screen.getByRole("complementary", { name: "Pull request status" });
-    const actions = within(sidebar).getByRole("navigation", { name: "Pull request actions" });
+    const actions = screen.getByRole("navigation", { name: "Pull request actions" });
     const reviewHeading = within(sidebar).getByRole("heading", { name: "Review status" });
     const checksHeading = within(sidebar).getByRole("heading", { name: "Checks" });
     expect(actions.compareDocumentPosition(reviewHeading)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
@@ -760,7 +821,7 @@ describe("App", () => {
       { "kestrel/app": [pullRequest(42, "Add syncing")] },
       undefined,
       { "kestrel/app#42": pullRequestDetail() },
-      () => jsonResponse({ error: "sync_failed" }, 500),
+      () => Promise.reject(new Error("network failed")),
     );
 
     renderApp();
@@ -905,6 +966,230 @@ describe("App", () => {
     renderApp();
 
     expect(await screen.findByRole("heading", { name: "Add syncing" })).toBeInTheDocument();
+  });
+
+  it("loads the Diff route directly with shared pull request chrome", async () => {
+    window.history.replaceState({}, "", "/pull/kestrel%2Fapp/42/diff");
+    mockAuth(
+      signedInResponse,
+      "system",
+      undefined,
+      [repository("kestrel/app")],
+      undefined,
+      { "kestrel/app": [pullRequest(42, "Add syncing")] },
+      undefined,
+      {},
+      undefined,
+      undefined,
+      { "kestrel/app#42": pullRequestDiff() },
+    );
+
+    renderApp();
+
+    expect(await screen.findByRole("heading", { name: "Add syncing" })).toBeInTheDocument();
+    expect(await screen.findByText("1 changed file, 2 source lines.")).toBeInTheDocument();
+    const views = screen.getByRole("navigation", { name: "Pull request views" });
+    expect(within(views).getByRole("link", { name: "Diff" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("region", { name: "Pull request diff" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Pull request actions" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("complementary", { name: "Pull request status" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("complementary", { name: "Pull request metadata" }),
+    ).not.toBeInTheDocument();
+    const requestedUrls = vi
+      .mocked(fetch)
+      .mock.calls.map(([input]) => (input instanceof Request ? input.url : input.toString()));
+    expect(requestedUrls.some((url) => url.endsWith("/pull-requests/42/diff"))).toBe(true);
+    expect(requestedUrls.some((url) => url.endsWith("/pull-requests/42"))).toBe(false);
+  });
+
+  it("shows Diff loading before rendering an empty response", async () => {
+    const pendingDiff = deferredResponse();
+    window.history.replaceState({}, "", "/pull/kestrel%2Fapp/42/diff");
+    mockAuth(
+      signedInResponse,
+      "system",
+      undefined,
+      [repository("kestrel/app")],
+      undefined,
+      { "kestrel/app": [pullRequest(42, "Add syncing")] },
+      undefined,
+      {},
+      undefined,
+      undefined,
+      {},
+      () => pendingDiff.promise,
+    );
+
+    renderApp();
+
+    const loadingStatus = await screen.findByText("Loading pull request diff...");
+    expect(loadingStatus.closest('[aria-live="polite"]')).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Sync pull request from GitHub" })).toBeDisabled();
+    pendingDiff.resolve(jsonResponse({ files: [], syncedAt: "2026-01-04T00:00:00Z" }));
+    expect(await screen.findByText("This pull request has no changed files.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sync pull request from GitHub" })).toBeEnabled();
+  });
+
+  it.each([
+    ["pull_request_not_found", 404, /Pull request details are not stored yet/],
+    ["diff_unavailable", 409, /The stored pull request does not include a diff/],
+    ["diff_parse_failed", 500, /The stored diff could not be parsed/],
+    ["diff_resource_limit_exceeded", 422, /The stored diff is too large to display/],
+    ["authentication_required", 401, /Authentication is required to load this diff/],
+    ["authorization_required", 403, /GitHub App authorization required/],
+    ["sync_failed", 500, /The pull request diff could not be loaded/],
+  ])("renders Diff error %s", async (error, status, message) => {
+    window.history.replaceState({}, "", "/pull/kestrel%2Fapp/42/diff");
+    mockAuth(
+      signedInResponse,
+      "system",
+      undefined,
+      [repository("kestrel/app")],
+      undefined,
+      { "kestrel/app": [pullRequest(42, "Add syncing")] },
+      undefined,
+      {},
+      undefined,
+      undefined,
+      {},
+      () => jsonResponse({ error }, status),
+    );
+
+    renderApp();
+
+    expect(await screen.findByText(message)).toBeInTheDocument();
+  });
+
+  it("shows sync failures from the Diff route", async () => {
+    const user = userEvent.setup();
+    window.history.replaceState({}, "", "/pull/kestrel%2Fapp/42/diff");
+    mockAuth(
+      signedInResponse,
+      "system",
+      undefined,
+      [repository("kestrel/app")],
+      undefined,
+      { "kestrel/app": [pullRequest(42, "Add syncing")] },
+      undefined,
+      { "kestrel/app#42": pullRequestDetail() },
+      () => Promise.reject(new Error("network failed")),
+      undefined,
+      { "kestrel/app#42": pullRequestDiff() },
+    );
+
+    renderApp();
+    await screen.findByText("1 changed file, 2 source lines.");
+    await user.click(screen.getByRole("button", { name: "Sync pull request from GitHub" }));
+
+    expect(
+      await screen.findByText("Pull request details could not be loaded."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("1 changed file, 2 source lines.")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Pull request diff" })).toBeInTheDocument();
+  });
+
+  it("keeps stale Diff totals visible when refresh fails after sync", async () => {
+    const user = userEvent.setup();
+    const pendingRefresh = deferredResponse();
+    let diffRequests = 0;
+    window.history.replaceState({}, "", "/pull/kestrel%2Fapp/42/diff");
+    mockAuth(
+      signedInResponse,
+      "system",
+      undefined,
+      [repository("kestrel/app")],
+      undefined,
+      { "kestrel/app": [pullRequest(42, "Add syncing")] },
+      undefined,
+      {},
+      () =>
+        jsonResponse({
+          pullRequest: pullRequest(42, "Add syncing"),
+          pullRequestDetail: pullRequestDetail(),
+        }),
+      undefined,
+      {},
+      () => {
+        diffRequests += 1;
+        return diffRequests === 1 ? jsonResponse(pullRequestDiff()) : pendingRefresh.promise;
+      },
+    );
+
+    renderApp();
+    await screen.findByText("1 changed file, 2 source lines.");
+    await user.click(screen.getByRole("button", { name: "Sync pull request from GitHub" }));
+
+    expect(await screen.findByText("Refreshing pull request diff...")).toBeInTheDocument();
+    expect(screen.getByText("1 changed file, 2 source lines.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sync pull request from GitHub" })).toBeDisabled();
+
+    pendingRefresh.resolve(jsonResponse({ error: "sync_failed" }, 500));
+    expect(
+      await screen.findByText("The pull request diff could not be loaded."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Showing the last successfully loaded diff.")).toBeInTheDocument();
+    expect(screen.getByText("1 changed file, 2 source lines.")).toBeInTheDocument();
+  });
+
+  it("navigates between pull request views with browser back and forward", async () => {
+    const user = userEvent.setup();
+    let diffRequests = 0;
+    window.history.replaceState({}, "", "/pull/kestrel%2Fapp/42");
+    mockAuth(
+      signedInResponse,
+      "system",
+      undefined,
+      [repository("kestrel/app")],
+      undefined,
+      { "kestrel/app": [pullRequest(42, "Add syncing")] },
+      undefined,
+      {},
+      undefined,
+      undefined,
+      {},
+      () => {
+        diffRequests += 1;
+        return jsonResponse(pullRequestDiff());
+      },
+    );
+
+    renderApp();
+    const views = await screen.findByRole("navigation", { name: "Pull request views" });
+    const overviewLink = within(views).getByRole("link", { name: "Overview" });
+    const diffLink = within(views).getByRole("link", { name: "Diff" });
+    expect(overviewLink).toHaveAttribute("aria-current", "page");
+    expect(overviewLink).toHaveAttribute("href", "/pull/kestrel%2Fapp/42");
+    expect(diffLink).toHaveAttribute("href", "/pull/kestrel%2Fapp/42/diff");
+
+    await user.click(diffLink);
+    expect(window.location.pathname).toBe("/pull/kestrel%2Fapp/42/diff");
+    expect(await screen.findByText("1 changed file, 2 source lines.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Diff" })).toHaveAttribute("aria-current", "page");
+
+    const back = new Promise<void>((resolve) =>
+      window.addEventListener("popstate", () => resolve(), { once: true }),
+    );
+    window.history.back();
+    await back;
+    await waitFor(() => expect(window.location.pathname).toBe("/pull/kestrel%2Fapp/42"));
+    expect(screen.getByRole("complementary", { name: "Pull request status" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Overview" })).toHaveAttribute("aria-current", "page");
+
+    const forward = new Promise<void>((resolve) =>
+      window.addEventListener("popstate", () => resolve(), { once: true }),
+    );
+    window.history.forward();
+    await forward;
+    await waitFor(() => expect(window.location.pathname).toBe("/pull/kestrel%2Fapp/42/diff"));
+    expect(screen.getByText("1 changed file, 2 source lines.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Diff" })).toHaveAttribute("aria-current", "page");
+    expect(diffRequests).toBe(1);
   });
 
   it("syncs missing pull requests automatically from the pull request route", async () => {

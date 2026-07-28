@@ -4,6 +4,7 @@ import { api } from "./api/client";
 export type Repository = components["schemas"]["RepositoryDto"];
 export type PullRequest = components["schemas"]["PullRequestDto"];
 export type PullRequestDetail = components["schemas"]["PullRequestDetailDto"];
+export type PullRequestDiff = components["schemas"]["PullRequestDiffResponse"];
 export type AddError = "duplicate" | "invalid" | "saveFailed";
 export type PullRequestsError =
   | "authorizationRequired"
@@ -58,15 +59,40 @@ export type PullRequestDetailState =
     };
 export type PullRequestDetailsByKey = Record<string, PullRequestDetailState>;
 
+export type PullRequestDiffError =
+  | "authenticationRequired"
+  | "authorizationRequired"
+  | "diffParseFailed"
+  | "diffResourceLimitExceeded"
+  | "diffUnavailable"
+  | "invalidPullRequest"
+  | "invalidRepository"
+  | "pullRequestNotFound"
+  | "repositoryNotTracked"
+  | "loadFailed";
+export type PullRequestDiffState =
+  | { status: "loading"; diff: PullRequestDiff | null }
+  | { status: "loaded"; diff: PullRequestDiff }
+  | { status: "error"; diff: PullRequestDiff | null; error: PullRequestDiffError };
+export type CurrentPullRequestDiff = {
+  key: string;
+  requestId: number;
+  state: PullRequestDiffState;
+};
+
 export type State =
   | {
       status: "loading";
+      currentPullRequestDiff: CurrentPullRequestDiff | null;
+      pullRequestDiffRequestId: number;
       repositories: Repository[];
       pullRequestDetails: PullRequestDetailsByKey;
       pullRequests: PullRequestsByRepository;
     }
   | {
       status: "loaded";
+      currentPullRequestDiff: CurrentPullRequestDiff | null;
+      pullRequestDiffRequestId: number;
       repositories: Repository[];
       addStatus: "idle" | "saving" | "error";
       addError: AddError | null;
@@ -75,6 +101,8 @@ export type State =
     }
   | {
       status: "error";
+      currentPullRequestDiff: CurrentPullRequestDiff | null;
+      pullRequestDiffRequestId: number;
       repositories: Repository[];
       pullRequestDetails: PullRequestDetailsByKey;
       pullRequests: PullRequestsByRepository;
@@ -100,6 +128,12 @@ export type Cmd =
       kind: "LoadPullRequestDetail";
       number: number;
       repository: Repository;
+    }
+  | {
+      kind: "LoadPullRequestDiff";
+      number: number;
+      repository: Repository;
+      requestId: number;
     }
   | {
       kind: "SyncPullRequestDetail";
@@ -132,6 +166,22 @@ export type Msg =
     }
   | { kind: "PullRequestsSyncFailed"; error: PullRequestsError; repository: Repository }
   | { kind: "PullRequestDetailLoadRequested"; number: number; repository: Repository }
+  | { kind: "PullRequestDiffDiscarded" }
+  | { kind: "PullRequestDiffLoadRequested"; number: number; repository: Repository }
+  | {
+      diff: PullRequestDiff;
+      kind: "PullRequestDiffLoaded";
+      number: number;
+      repository: Repository;
+      requestId: number;
+    }
+  | {
+      error: PullRequestDiffError;
+      kind: "PullRequestDiffLoadFailed";
+      number: number;
+      repository: Repository;
+      requestId: number;
+    }
   | {
       detail: PullRequestDetail;
       kind: "PullRequestDetailLoaded";
@@ -176,9 +226,11 @@ type UpdateContext = {
   runCmd: (cmd: Cmd) => void;
 };
 
-export const initialState = (): State => {
+export const initialState = (pullRequestDiffRequestId = 0): State => {
   return {
     status: "loading",
+    currentPullRequestDiff: null,
+    pullRequestDiffRequestId,
     repositories: [],
     pullRequestDetails: {},
     pullRequests: {},
@@ -196,6 +248,8 @@ export const update = (ctx: UpdateContext, msg: Msg, state: State): State => {
     case "Loaded": {
       return {
         status: "loaded",
+        currentPullRequestDiff: state.currentPullRequestDiff,
+        pullRequestDiffRequestId: state.pullRequestDiffRequestId,
         repositories: msg.repositories,
         addStatus: "idle",
         addError: null,
@@ -208,6 +262,8 @@ export const update = (ctx: UpdateContext, msg: Msg, state: State): State => {
         ? state
         : {
             status: "error",
+            currentPullRequestDiff: state.currentPullRequestDiff,
+            pullRequestDiffRequestId: state.pullRequestDiffRequestId,
             repositories: state.repositories,
             pullRequestDetails: state.pullRequestDetails,
             pullRequests: state.pullRequests,
@@ -314,6 +370,62 @@ export const update = (ctx: UpdateContext, msg: Msg, state: State): State => {
         error: null,
         status: "loading",
       });
+    }
+    case "PullRequestDiffDiscarded": {
+      return {
+        ...state,
+        currentPullRequestDiff: null,
+        pullRequestDiffRequestId: state.pullRequestDiffRequestId + 1,
+      };
+    }
+    case "PullRequestDiffLoadRequested": {
+      const key = pullRequestDiffKey(msg.repository, msg.number);
+      const current = state.currentPullRequestDiff;
+      const requestId = state.pullRequestDiffRequestId + 1;
+      const diff = current?.key === key ? current.state.diff : null;
+      ctx.runCmd({
+        kind: "LoadPullRequestDiff",
+        number: msg.number,
+        repository: msg.repository,
+        requestId,
+      });
+      return {
+        ...state,
+        currentPullRequestDiff: { key, requestId, state: { diff, status: "loading" } },
+        pullRequestDiffRequestId: requestId,
+      };
+    }
+    case "PullRequestDiffLoaded": {
+      const key = pullRequestDiffKey(msg.repository, msg.number);
+      if (
+        state.currentPullRequestDiff?.key !== key ||
+        state.currentPullRequestDiff.requestId !== msg.requestId
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        currentPullRequestDiff: {
+          key,
+          requestId: msg.requestId,
+          state: { diff: msg.diff, status: "loaded" },
+        },
+      };
+    }
+    case "PullRequestDiffLoadFailed": {
+      const key = pullRequestDiffKey(msg.repository, msg.number);
+      const current = state.currentPullRequestDiff;
+      if (current?.key !== key || current.requestId !== msg.requestId) {
+        return state;
+      }
+      return {
+        ...state,
+        currentPullRequestDiff: {
+          key,
+          requestId: msg.requestId,
+          state: { diff: current.state.diff, error: msg.error, status: "error" },
+        },
+      };
     }
     case "PullRequestDetailLoaded": {
       return setPullRequestDetailState(state, msg.repository, msg.number, {
@@ -425,6 +537,10 @@ export const runCmd = (cmd: Cmd, send: (msg: Msg) => void) => {
       void loadPullRequestDetail(cmd.repository, cmd.number, send);
       return;
     }
+    case "LoadPullRequestDiff": {
+      void loadPullRequestDiff(cmd.repository, cmd.number, cmd.requestId, send);
+      return;
+    }
     case "SyncPullRequestDetail": {
       void syncPullRequestDetail(cmd.repository, cmd.number, send);
       return;
@@ -507,34 +623,72 @@ const loadPullRequestDetail = async (
   send({ detail: data.pullRequestDetail, kind: "PullRequestDetailLoaded", number, repository });
 };
 
+const loadPullRequestDiff = async (
+  repository: Repository,
+  number: number,
+  requestId: number,
+  send: (msg: Msg) => void,
+) => {
+  try {
+    const { data, error } = await api.GET(
+      "/api/repositories/{owner}/{name}/pull-requests/{number}/diff",
+      { params: { path: { name: repository.name, number, owner: repository.owner } } },
+    );
+    if (error || data === undefined) {
+      send({
+        error: pullRequestDiffError(error),
+        kind: "PullRequestDiffLoadFailed",
+        number,
+        repository,
+        requestId,
+      });
+      return;
+    }
+
+    send({ diff: data, kind: "PullRequestDiffLoaded", number, repository, requestId });
+  } catch {
+    send({
+      error: "loadFailed",
+      kind: "PullRequestDiffLoadFailed",
+      number,
+      repository,
+      requestId,
+    });
+  }
+};
+
 const syncPullRequestDetail = async (
   repository: Repository,
   number: number,
   send: (msg: Msg) => void,
 ) => {
-  const { data, error } = await api.POST(
-    "/api/repositories/{owner}/{name}/pull-requests/{number}/sync",
-    {
-      params: { path: { name: repository.name, number, owner: repository.owner } },
-    },
-  );
-  if (error || data === undefined) {
+  try {
+    const { data, error } = await api.POST(
+      "/api/repositories/{owner}/{name}/pull-requests/{number}/sync",
+      {
+        params: { path: { name: repository.name, number, owner: repository.owner } },
+      },
+    );
+    if (error || data === undefined) {
+      send({
+        error: pullRequestsError(error),
+        kind: "PullRequestDetailSyncFailed",
+        number,
+        repository,
+      });
+      return;
+    }
+
     send({
-      error: pullRequestsError(error),
-      kind: "PullRequestDetailSyncFailed",
+      detail: data.pullRequestDetail,
+      kind: "PullRequestDetailSynced",
       number,
+      pullRequest: data.pullRequest,
       repository,
     });
-    return;
+  } catch {
+    send({ error: "syncFailed", kind: "PullRequestDetailSyncFailed", number, repository });
   }
-
-  send({
-    detail: data.pullRequestDetail,
-    kind: "PullRequestDetailSynced",
-    number,
-    pullRequest: data.pullRequest,
-    repository,
-  });
 };
 
 const loadOlderPullRequestTimeline = async (
@@ -591,7 +745,36 @@ const pullRequestsError = (error: { error?: unknown } | undefined): PullRequests
   return "syncFailed";
 };
 
+const pullRequestDiffError = (error: { error?: unknown } | undefined): PullRequestDiffError => {
+  switch (error?.error) {
+    case "authentication_required":
+      return "authenticationRequired";
+    case "authorization_required":
+      return "authorizationRequired";
+    case "diff_parse_failed":
+      return "diffParseFailed";
+    case "diff_resource_limit_exceeded":
+      return "diffResourceLimitExceeded";
+    case "diff_unavailable":
+      return "diffUnavailable";
+    case "invalid_pull_request":
+      return "invalidPullRequest";
+    case "invalid_repository":
+      return "invalidRepository";
+    case "pull_request_not_found":
+      return "pullRequestNotFound";
+    case "repository_not_tracked":
+      return "repositoryNotTracked";
+    default:
+      return "loadFailed";
+  }
+};
+
 export const pullRequestDetailKey = (repository: Repository, number: number): string => {
+  return `${repository.fullName}#${number}`;
+};
+
+export const pullRequestDiffKey = (repository: Repository, number: number): string => {
   return `${repository.fullName}#${number}`;
 };
 

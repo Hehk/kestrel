@@ -1,3 +1,12 @@
+export type PullRequestView = "overview" | "diff";
+
+export type PullRequestRoute = {
+  name: "PullRequest";
+  repo: string;
+  id: string;
+  view: PullRequestView;
+};
+
 export type ProtectedRoute =
   | {
       name: "Home";
@@ -5,11 +14,7 @@ export type ProtectedRoute =
   | {
       name: "Settings";
     }
-  | {
-      name: "PullRequest";
-      repo: string;
-      id: string;
-    };
+  | PullRequestRoute;
 
 export type LoginRoute = {
   name: "Login";
@@ -36,8 +41,10 @@ export const fromRoute = (route: LinkRoute): string => {
       return "/settings";
     case "Login":
       return "/login";
-    case "PullRequest":
-      return `/pull/${encodeURIComponent(route.repo)}/${encodeURIComponent(route.id)}`;
+    case "PullRequest": {
+      const base = `/pull/${encodeURIComponent(route.repo)}/${encodeURIComponent(route.id)}`;
+      return route.view === "diff" ? `${base}/diff` : base;
+    }
   }
 };
 
@@ -53,10 +60,21 @@ export const toRoute = (path: string): Route => {
     return { name: "Login" };
   } else if (pathname.startsWith("/pull/")) {
     const [, kind, repo, id, ...rest] = pathname.split("/");
-    if (kind !== "pull" || !repo || !id || rest.length > 0) {
+    const view =
+      rest.length === 0 ? "overview" : rest.length === 1 && rest[0] === "diff" ? "diff" : undefined;
+    if (kind !== "pull" || !repo || !id || view === undefined) {
       return { name: "NotFound", path };
     }
-    return { name: "PullRequest", repo: decodeURIComponent(repo), id: decodeURIComponent(id) };
+    try {
+      return {
+        name: "PullRequest",
+        repo: decodeURIComponent(repo),
+        id: decodeURIComponent(id),
+        view,
+      };
+    } catch {
+      return { name: "NotFound", path };
+    }
   }
 
   return { name: "NotFound", path };
@@ -86,7 +104,7 @@ export const toPublicRoute = (route: Route): PublicRoute => {
 export const equal = (a: Route, b: Route): boolean => {
   if (a.name !== b.name) return false;
   if (a.name === "PullRequest" && b.name === "PullRequest") {
-    return a.repo === b.repo && a.id === b.id;
+    return a.repo === b.repo && a.id === b.id && a.view === b.view;
   }
   if (a.name === "NotFound" && b.name === "NotFound") {
     return a.path === b.path;

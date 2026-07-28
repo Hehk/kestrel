@@ -6,12 +6,79 @@
 
 .PullRequestPage {
   display: grid;
-  grid-template-areas: "left content right";
+  grid-template-areas:
+    "header header header"
+    "left content right";
   grid-template-columns: minmax(0, 1fr) minmax(0, 720px) minmax(0, 1fr);
   align-items: start;
   width: min(1280px, calc(100vw - 32px));
   margin: 0 auto;
   padding: 2rem 0 1rem;
+}
+
+.PullRequestPage-header {
+  grid-area: header;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 720px) minmax(0, 1fr);
+  min-width: 0;
+  margin-bottom: 1.5rem;
+}
+
+.PullRequestPage-headerActions,
+.PullRequestPage-heading {
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 0 1rem;
+}
+
+.PullRequestPage-headerActions {
+  grid-column: 1;
+}
+
+.PullRequestPage-heading {
+  grid-column: 2;
+}
+
+.PullRequestPage-views {
+  display: flex;
+  gap: 1rem;
+  margin-top: 0.75rem;
+  padding-bottom: 0.45rem;
+  border-bottom: 1px solid var(--rule);
+  font-family: var(--mono);
+  font-size: 0.85rem;
+}
+
+.PullRequestPage-views a,
+.PullRequestPage-views a:visited {
+  color: var(--link);
+}
+
+.PullRequestPage-views a[aria-current="page"],
+.PullRequestPage-views a[aria-current="page"]:visited {
+  color: var(--text);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.PullRequestPage--diff {
+  grid-template-areas:
+    "header"
+    "diff";
+  grid-template-columns: minmax(0, 1fr);
+  width: calc(100vw - 32px);
+}
+
+.PullRequestPage-diffContent {
+  grid-area: diff;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 1.25rem 1rem;
+  border-top: 1px solid var(--rule);
+}
+
+.PullRequestPage-diffContent h2 {
+  margin: 0 0 0.5rem;
 }
 
 .PullRequestPage-content {
@@ -700,11 +767,33 @@
 @media (max-width: 1100px) {
   .PullRequestPage {
     grid-template-areas:
+      "header"
       "left"
       "content"
       "right";
     grid-template-columns: minmax(0, 720px);
     justify-content: center;
+  }
+
+  .PullRequestPage-header {
+    grid-template-columns: minmax(0, 720px);
+    justify-content: center;
+  }
+
+  .PullRequestPage-headerActions,
+  .PullRequestPage-heading {
+    grid-column: 1;
+  }
+
+  .PullRequestPage-headerActions {
+    margin-bottom: 1rem;
+  }
+
+  .PullRequestPage--diff {
+    grid-template-areas:
+      "header"
+      "diff";
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .PullRequestPage-leftSidebar:not(:empty) {
