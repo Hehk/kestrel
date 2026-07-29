@@ -1,6 +1,7 @@
 import { createWindowVirtualizer } from "@tanstack/solid-virtual";
 import {
   createEffect,
+  createDeferred,
   createMemo,
   createSignal,
   For,
@@ -13,12 +14,18 @@ import {
 } from "solid-js";
 import type { DiffRow, PullRequestDiff, PullRequestDiffFile } from "./layout";
 import { DIFF_ROW_HEIGHT } from "./layout";
-import { buildDiffLayout, rowAt, rowHeight, rowKey } from "./layout";
+import { buildDiffLayout, rowAt, rowHeight, rowKey, sourceVisualColumns } from "./layout";
+import { firstMatchAtOrAfterRow, searchDiff } from "./search";
+
+type MountedSearchMatch = { active: boolean; length: number; offset: number };
+type PendingResultNavigation = { move: number; query: string };
 
 export const DiffView = (props: { diff: PullRequestDiff }) => {
   let table: HTMLDivElement | undefined;
   let stickyStack: HTMLDivElement | undefined;
   let horizontalRail: HTMLDivElement | undefined;
+  let searchInput: HTMLInputElement | undefined;
+  let searchReturnFocus: HTMLElement | null = null;
   const layout = createMemo(() => buildDiffLayout(props.diff));
   const [scrollMargin, setScrollMargin] = createSignal(0);
   const [stickyHeight, setStickyHeight] = createSignal(0);
@@ -26,6 +33,11 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
   const [horizontalOffset, setHorizontalOffset] = createSignal(0);
   const [railLeft, setRailLeft] = createSignal(0);
   const [railWidth, setRailWidth] = createSignal(0);
+  const [searchQuery, setSearchQuery] = createSignal("");
+  const deferredSearchQuery = createDeferred(searchQuery);
+  const [activeResultIndex, setActiveResultIndex] = createSignal(-1);
+  const [pendingResultNavigation, setPendingResultNavigation] =
+    createSignal<PendingResultNavigation | null>(null);
   const virtualizer = createWindowVirtualizer<HTMLDivElement>({
     get count() {
       return layout().rowCount;
@@ -46,6 +58,8 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
     props.diff.files.map((file, fileIndex) => ({ fileIndex, label: fileLabel(file) })),
   );
   const activeFileLabel = () => fileOptions()[activeFileIndex()]?.label ?? "Unknown file";
+  const searchResults = createMemo(() => searchDiff(layout(), deferredSearchQuery()));
+  const searchPending = () => deferredSearchQuery() !== searchQuery();
 
   const updateActiveFile = () => {
     if (layout().rowCount === 0) return;
@@ -64,6 +78,17 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
     setHorizontalOffset(next);
   };
 
+  const setHorizontalRailOffset = (nextOffset: number, event?: Event) => {
+    if (horizontalRail === undefined) return false;
+    const maximum = Math.max(0, horizontalRail.scrollWidth - horizontalRail.clientWidth);
+    const next = Math.min(Math.max(nextOffset, 0), maximum);
+    if (next === horizontalRail.scrollLeft) return false;
+    horizontalRail.scrollLeft = next;
+    setHorizontalOffset(next);
+    event?.preventDefault();
+    return true;
+  };
+
   const updateGeometry = () => {
     if (table !== undefined) {
       const rect = table.getBoundingClientRect();
@@ -79,6 +104,90 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
     updateActiveFile();
   };
 
+  const revealResult = (resultIndex: number) => {
+    const results = searchResults();
+    if (resultIndex < 0 || resultIndex >= results.count) return;
+    const rowIndex = results.rowIndexes[resultIndex] as number;
+    virtualizer.scrollToIndex(rowIndex, { align: "center" });
+    const row = rowAt(layout(), rowIndex);
+    if (
+      horizontalRail === undefined ||
+      (row.kind !== "context" && row.kind !== "addition" && row.kind !== "deletion")
+    ) {
+      return;
+    }
+    const offset = results.matchOffsets[resultIndex] as number;
+    const length = results.matchLengths[resultIndex] as number;
+    const totalColumns = Math.max(layout().maxSourceColumns, 1);
+    const contentWidth = Math.max(horizontalRail.scrollWidth - 16, 0);
+    const start =
+      (sourceVisualColumns(row.line.content.slice(0, offset)) / totalColumns) * contentWidth;
+    const end =
+      (sourceVisualColumns(row.line.content.slice(0, offset + length)) / totalColumns) *
+      contentWidth;
+    const current = horizontalRail.scrollLeft;
+    if (start < current) setHorizontalRailOffset(start);
+    else if (end > current + horizontalRail.clientWidth) {
+      setHorizontalRailOffset(end - horizontalRail.clientWidth);
+    }
+    queueMicrotask(() => revealMountedActiveMatch());
+  };
+
+  const revealMountedActiveMatch = () => {
+    if (table === undefined || horizontalRail === undefined) return;
+    const activeMatch = table.querySelector<HTMLElement>(".pr-diff-searchMatch--active");
+    const source = activeMatch?.closest<HTMLElement>(".pr-diff-source");
+    if (
+      activeMatch === null ||
+      activeMatch === undefined ||
+      source === null ||
+      source === undefined
+    ) {
+      return;
+    }
+    const matchRect = activeMatch.getBoundingClientRect();
+    const sourceRect = source.getBoundingClientRect();
+    if (matchRect.left < sourceRect.left) {
+      setHorizontalRailOffset(horizontalRail.scrollLeft - (sourceRect.left - matchRect.left));
+    } else if (matchRect.right > sourceRect.right) {
+      setHorizontalRailOffset(horizontalRail.scrollLeft + (matchRect.right - sourceRect.right));
+    }
+  };
+
+  const moveResult = (direction: 1 | -1) => {
+    if (searchPending()) {
+      const query = searchQuery();
+      setPendingResultNavigation((current) => ({
+        move: current?.query === query ? current.move + direction : direction,
+        query,
+      }));
+      return;
+    }
+    const count = searchResults().count;
+    if (count === 0) return;
+    const next = (activeResultIndex() + direction + count) % count;
+    setActiveResultIndex(next);
+    revealResult(next);
+  };
+
+  const matchesForRow = (rowIndex: number): MountedSearchMatch[] => {
+    if (searchPending()) return [];
+    const results = searchResults();
+    const matches: MountedSearchMatch[] = [];
+    for (
+      let resultIndex = firstMatchAtOrAfterRow(results, rowIndex);
+      resultIndex < results.count && results.rowIndexes[resultIndex] === rowIndex;
+      resultIndex += 1
+    ) {
+      matches.push({
+        active: resultIndex === activeResultIndex(),
+        length: results.matchLengths[resultIndex] as number,
+        offset: results.matchOffsets[resultIndex] as number,
+      });
+    }
+    return matches;
+  };
+
   createEffect(
     on(
       layout,
@@ -92,6 +201,27 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
       { defer: true },
     ),
   );
+
+  createEffect(
+    on([searchResults, searchQuery, deferredSearchQuery], ([results, query, deferredQuery]) => {
+      if (deferredQuery !== query) return;
+      const pendingNavigation = pendingResultNavigation();
+      const requestedMove = pendingNavigation?.query === query ? pendingNavigation.move : 0;
+      const next =
+        results.count === 0
+          ? -1
+          : ((requestedMove % results.count) + results.count) % results.count;
+      setPendingResultNavigation(null);
+      setActiveResultIndex(next);
+      if (next !== -1) queueMicrotask(() => revealResult(next));
+    }),
+  );
+
+  createEffect(() => {
+    virtualRows();
+    activeResultIndex();
+    queueMicrotask(() => revealMountedActiveMatch());
+  });
 
   onMount(() => {
     updateGeometry();
@@ -112,16 +242,6 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
     const handleScroll = () => updateActiveFile();
     let activePointerId: number | null = null;
     let lastPointerX = 0;
-    const setRailOffset = (nextOffset: number, event?: Event) => {
-      if (horizontalRail === undefined) return false;
-      const maximum = Math.max(0, horizontalRail.scrollWidth - horizontalRail.clientWidth);
-      const next = Math.min(Math.max(nextOffset, 0), maximum);
-      if (next === horizontalRail.scrollLeft) return false;
-      horizontalRail.scrollLeft = next;
-      setHorizontalOffset(next);
-      event?.preventDefault();
-      return true;
-    };
     const handleWheel = (event: WheelEvent) => {
       if (
         horizontalRail === undefined ||
@@ -145,7 +265,7 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
             : 1;
       const maximum = Math.max(0, horizontalRail.scrollWidth - horizontalRail.clientWidth);
       const next = Math.min(Math.max(horizontalRail.scrollLeft + rawDelta * unit, 0), maximum);
-      setRailOffset(next, event);
+      setHorizontalRailOffset(next, event);
     };
     const handlePointerDown = (event: PointerEvent) => {
       if (
@@ -163,12 +283,44 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
       if (event.pointerId !== activePointerId || horizontalRail === undefined) return;
       const delta = lastPointerX - event.clientX;
       lastPointerX = event.clientX;
-      setRailOffset(horizontalRail.scrollLeft + delta, event);
+      setHorizontalRailOffset(horizontalRail.scrollLeft + delta, event);
     };
     const handlePointerEnd = (event: PointerEvent) => {
       if (event.pointerId !== activePointerId) return;
       table?.releasePointerCapture?.(event.pointerId);
       activePointerId = null;
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing) return;
+      const isFindShortcut =
+        event.metaKey !== event.ctrlKey &&
+        !event.altKey &&
+        !event.shiftKey &&
+        event.key.toLowerCase() === "f";
+      if (isFindShortcut) {
+        event.preventDefault();
+        if (
+          document.activeElement instanceof HTMLElement &&
+          document.activeElement !== searchInput
+        ) {
+          searchReturnFocus = document.activeElement;
+        }
+        searchInput?.focus();
+        searchInput?.select();
+        return;
+      }
+      if (event.target !== searchInput) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setSearchQuery("");
+        const returnFocus = searchReturnFocus;
+        searchReturnFocus = null;
+        if (returnFocus?.isConnected) returnFocus.focus();
+        else searchInput?.blur();
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        moveResult(event.shiftKey ? -1 : 1);
+      }
     };
     table?.addEventListener("wheel", handleWheel, { passive: false });
     table?.addEventListener("pointerdown", handlePointerDown);
@@ -177,6 +329,7 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
     table?.addEventListener("pointercancel", handlePointerEnd);
     window.addEventListener("scroll", handleScroll, { passive: true });
     window.addEventListener("resize", updateGeometry);
+    window.addEventListener("keydown", handleKeyDown);
     onCleanup(() => {
       resizeObserver?.disconnect();
       table?.removeEventListener("wheel", handleWheel);
@@ -186,6 +339,7 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
       table?.removeEventListener("pointercancel", handlePointerEnd);
       window.removeEventListener("scroll", handleScroll);
       window.removeEventListener("resize", updateGeometry);
+      window.removeEventListener("keydown", handleKeyDown);
     });
   });
 
@@ -214,6 +368,24 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
               {(option) => <option value={option.fileIndex}>{option.label}</option>}
             </For>
           </select>
+          <input
+            aria-label="Search diff"
+            class="pr-diff-searchInput"
+            onInput={(event) => setSearchQuery(event.currentTarget.value)}
+            placeholder="Search"
+            ref={(element) => (searchInput = element)}
+            type="search"
+            value={searchQuery()}
+          />
+          <span aria-atomic="true" aria-live="polite" class="pr-diff-searchCount">
+            {searchQuery().length === 0
+              ? ""
+              : searchPending()
+                ? "Searching..."
+                : searchResults().count === 0
+                  ? "No results"
+                  : `${activeResultIndex() + 1} of ${searchResults().count}`}
+          </span>
         </div>
         <div
           aria-label={`Active file: ${activeFileLabel()}`}
@@ -238,6 +410,7 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
               {(virtualRow) => (
                 <DiffRowView
                   index={virtualRow.index}
+                  matches={matchesForRow(virtualRow.index)}
                   row={rowAt(layout(), virtualRow.index)}
                   size={rowHeight(layout(), virtualRow.index)}
                 />
@@ -270,7 +443,12 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
   );
 };
 
-const DiffRowView = (props: { index: number; row: DiffRow; size: number }) => (
+const DiffRowView = (props: {
+  index: number;
+  matches: MountedSearchMatch[];
+  row: DiffRow;
+  size: number;
+}) => (
   <div
     aria-rowindex={props.index + 1}
     class={`pr-diff-row pr-diff-row--${props.row.kind}`}
@@ -278,11 +456,11 @@ const DiffRowView = (props: { index: number; row: DiffRow; size: number }) => (
     role="row"
     style={{ height: `${props.size}px` }}
   >
-    <DiffRowCells row={props.row} />
+    <DiffRowCells matches={props.matches} row={props.row} />
   </div>
 );
 
-const DiffRowCells = (props: { row: DiffRow }) => {
+const DiffRowCells = (props: { matches: MountedSearchMatch[]; row: DiffRow }) => {
   const fileRow = () => (props.row.kind === "file" ? props.row : undefined);
   const hunkRow = () => (props.row.kind === "hunk" ? props.row : undefined);
   const noticeRow = () => (props.row.kind === "notice" ? props.row : undefined);
@@ -339,7 +517,7 @@ const DiffRowCells = (props: { row: DiffRow }) => {
                 <span aria-hidden="true" class="pr-diff-prefix">
                   {sourcePrefix(row().kind)}
                 </span>
-                {row().line.content}
+                <HighlightedSource content={row().line.content} matches={props.matches} />
                 <Show when={row().line.missingNewline}>
                   <span class="pr-diff-missingNewline"> No newline at end of file</span>
                 </Show>
@@ -349,6 +527,44 @@ const DiffRowCells = (props: { row: DiffRow }) => {
         )}
       </Match>
     </Switch>
+  );
+};
+
+const HighlightedSource = (props: { content: string; matches: MountedSearchMatch[] }) => {
+  const segments = createMemo(() => {
+    const result: Array<{ active: boolean; match: boolean; text: string }> = [];
+    let cursor = 0;
+    for (const match of props.matches) {
+      if (match.offset > cursor) {
+        result.push({
+          active: false,
+          match: false,
+          text: props.content.slice(cursor, match.offset),
+        });
+      }
+      result.push({
+        active: match.active,
+        match: true,
+        text: props.content.slice(match.offset, match.offset + match.length),
+      });
+      cursor = match.offset + match.length;
+    }
+    if (cursor < props.content.length) {
+      result.push({ active: false, match: false, text: props.content.slice(cursor) });
+    }
+    return result;
+  });
+
+  return (
+    <For each={segments()}>
+      {(segment) =>
+        segment.match ? (
+          <mark classList={{ "pr-diff-searchMatch--active": segment.active }}>{segment.text}</mark>
+        ) : (
+          segment.text
+        )
+      }
+    </For>
   );
 };
 

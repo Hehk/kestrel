@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from "@solidjs/testing-library";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { createSignal } from "solid-js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -244,7 +244,256 @@ describe("DiffView", () => {
     expect(rail.scrollLeft).toBe(20);
     expect(table.style.getPropertyValue("--pr-diff-horizontal-offset")).toBe("20px");
   });
+
+  it("scopes find shortcuts and wraps highlighted result navigation", async () => {
+    const user = userEvent.setup();
+    const diff = smallDiff();
+    const sourceLine = diff.files[0]?.hunks[0]?.lines[1];
+    if (sourceLine !== undefined) sourceLine.content = "needle and NEEDLE";
+    const { container, unmount } = render(() => (
+      <>
+        <button type="button">Before diff</button>
+        <DiffView diff={diff} />
+      </>
+    ));
+    const input = await screen.findByRole("searchbox", { name: "Search diff" });
+    const previousFocus = screen.getByRole("button", { name: "Before diff" });
+    previousFocus.focus();
+
+    const findEvent = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      key: "f",
+    });
+    window.dispatchEvent(findEvent);
+    expect(findEvent.defaultPrevented).toBe(true);
+    expect(input).toHaveFocus();
+
+    await user.type(input, "needle");
+    expect(await screen.findByText("1 of 2")).toBeInTheDocument();
+    expect(screen.getByText("1 of 2")).toHaveAttribute("aria-atomic", "true");
+    expect(container.querySelectorAll("mark")).toHaveLength(2);
+    expect(container.querySelectorAll(".pr-diff-searchMatch--active")).toHaveLength(1);
+    expect(container.querySelector(".pr-diff-searchMatch--active")).toHaveTextContent("needle");
+
+    await user.keyboard("{Enter}");
+    expect(await screen.findByText("2 of 2")).toBeInTheDocument();
+    expect(container.querySelector(".pr-diff-searchMatch--active")).toHaveTextContent("NEEDLE");
+    await user.keyboard("{Enter}");
+    expect(await screen.findByText("1 of 2")).toBeInTheDocument();
+    await user.keyboard("{Shift>}{Enter}{/Shift}");
+    expect(await screen.findByText("2 of 2")).toBeInTheDocument();
+
+    previousFocus.focus();
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "f",
+        metaKey: true,
+      }),
+    );
+    expect(input).toHaveFocus();
+    expect(input).toHaveProperty("selectionStart", 0);
+    expect(input).toHaveProperty("selectionEnd", 6);
+
+    await user.keyboard("{Escape}");
+    expect(input).toHaveValue("");
+    expect(previousFocus).toHaveFocus();
+    unmount();
+    const afterUnmount = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      metaKey: true,
+      key: "f",
+    });
+    window.dispatchEvent(afterUnmount);
+    expect(afterUnmount.defaultPrevented).toBe(false);
+  });
+
+  it("leaves modified find shortcuts and composing input to the browser", async () => {
+    const diff = smallDiff();
+    const sourceLine = diff.files[0]?.hunks[0]?.lines[1];
+    if (sourceLine !== undefined) sourceLine.content = "needle then needle";
+    render(() => <DiffView diff={diff} />);
+    const input = await screen.findByRole("searchbox", { name: "Search diff" });
+
+    for (const modifiers of [
+      { ctrlKey: true, shiftKey: true },
+      { altKey: true, ctrlKey: true },
+      { ctrlKey: true, metaKey: true },
+    ]) {
+      const event = new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "f",
+        ...modifiers,
+      });
+      window.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+      expect(input).not.toHaveFocus();
+    }
+
+    fireEvent.input(input, { target: { value: "needle" } });
+    input.focus();
+    expect(await screen.findByText("1 of 2")).toBeInTheDocument();
+    for (const key of ["Enter", "Escape"]) {
+      const event = new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        isComposing: true,
+        key,
+      });
+      input.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+    }
+    expect(input).toHaveValue("needle");
+    expect(screen.getByText("1 of 2")).toBeInTheDocument();
+  });
+
+  it("reveals a match near the final source column through the shared rail", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(
+      function (this: HTMLElement) {
+        return this.classList.contains("pr-diff-horizontalRail") ? 200 : 0;
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(
+      function (this: HTMLElement) {
+        return this.classList.contains("pr-diff-horizontalRail") ? 1_000 : 0;
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        const rail = document.querySelector<HTMLElement>(".pr-diff-horizontalRail");
+        const offset = rail?.scrollLeft ?? 0;
+        if (this.classList.contains("pr-diff-searchMatch--active")) {
+          return domRect(400 - offset, 450 - offset);
+        }
+        if (this.classList.contains("pr-diff-source")) return domRect(0, 200);
+        return domRect(0, 0);
+      },
+    );
+    const diff = smallDiff();
+    const sourceLine = diff.files[0]?.hunks[0]?.lines[1];
+    if (sourceLine !== undefined) sourceLine.content = `${"x".repeat(1_000)}rare`;
+    render(() => <DiffView diff={diff} />);
+    const input = await screen.findByRole("searchbox", { name: "Search diff" });
+    const rail = screen.getByRole("region", { name: "Scroll diff horizontally" });
+
+    await user.type(input, "rare");
+    expect(await screen.findByText("1 of 1")).toBeInTheDocument();
+    await waitFor(() => expect(rail.scrollLeft).toBeGreaterThan(0));
+    const activeMatch = document.querySelector<HTMLElement>(".pr-diff-searchMatch--active");
+    const source = activeMatch?.closest<HTMLElement>(".pr-diff-source");
+    expect(activeMatch?.getBoundingClientRect().left).toBeGreaterThanOrEqual(
+      source?.getBoundingClientRect().left ?? 0,
+    );
+    expect(activeMatch?.getBoundingClientRect().right).toBeLessThanOrEqual(
+      source?.getBoundingClientRect().right ?? 0,
+    );
+    expect(rail.scrollLeft).toBe(400);
+  });
+
+  it("centers and mounts a distant search result", async () => {
+    vi.spyOn(document.documentElement, "scrollHeight", "get").mockReturnValue(30_000);
+    const { container } = render(() => <DiffView diff={largeDiff(1_000)} />);
+    const input = await screen.findByRole("searchbox", { name: "Search diff" });
+    expect(container).not.toHaveTextContent("line 900");
+    const initialScrollCallCount = vi.mocked(scrollTo).mock.calls.length;
+
+    fireEvent.input(input, { target: { value: "line 900" } });
+
+    expect(await screen.findByText("1 of 1")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(vi.mocked(scrollTo).mock.calls.length).toBeGreaterThan(initialScrollCallCount),
+    );
+    const scrollOptions = vi
+      .mocked(scrollTo)
+      .mock.calls.map(([options]) => options as ScrollToOptions)
+      .sort((left, right) => (right.top ?? 0) - (left.top ?? 0))[0];
+    expect(scrollOptions).toMatchObject({ behavior: "auto", top: expect.any(Number) });
+    expect(scrollOptions?.top).toBeCloseTo(21_444, 0);
+
+    vi.stubGlobal("scrollY", scrollOptions?.top ?? 0);
+    window.dispatchEvent(new Event("scroll"));
+    const activeMatch = await screen.findByText("line 900", { selector: "mark" });
+    expect(activeMatch).toHaveClass("pr-diff-searchMatch--active");
+  });
+
+  it("applies navigation requested while a new query is deferred", async () => {
+    const diff = smallDiff();
+    const sourceLine = diff.files[0]?.hunks[0]?.lines[1];
+    if (sourceLine !== undefined) sourceLine.content = "needle then needle";
+    render(() => <DiffView diff={diff} />);
+    const input = await screen.findByRole("searchbox", { name: "Search diff" });
+
+    fireEvent.input(input, { target: { value: "needle" } });
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "Enter",
+        shiftKey: true,
+      }),
+    );
+
+    expect(await screen.findByText("2 of 2")).toBeInTheDocument();
+  });
+
+  it("accumulates pending navigation and does not consume it on layout refresh", async () => {
+    const first = smallDiff();
+    const firstSource = first.files[0]?.hunks[0]?.lines[1];
+    if (firstSource !== undefined) firstSource.content = "old old old";
+    const [diff, setDiff] = createSignal(first);
+    render(() => <DiffView diff={diff()} />);
+    const input = await screen.findByRole("searchbox", { name: "Search diff" });
+    await userEvent.setup().type(input, "old");
+    await screen.findByText("1 of 4");
+
+    fireEvent.input(input, { target: { value: "new" } });
+    input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+    const refreshed = smallDiff();
+    const refreshedSource = refreshed.files[0]?.hunks[0]?.lines[1];
+    if (refreshedSource !== undefined) refreshedSource.content = "new new new";
+    setDiff(refreshed);
+
+    expect(await screen.findByText("3 of 3")).toBeInTheDocument();
+  });
+
+  it("discards pending navigation when deferral skips to another query", async () => {
+    const diff = smallDiff();
+    const sourceLine = diff.files[0]?.hunks[0]?.lines[1];
+    if (sourceLine !== undefined) sourceLine.content = "old old target target";
+    render(() => <DiffView diff={diff} />);
+    const input = await screen.findByRole("searchbox", { name: "Search diff" });
+    await userEvent.setup().type(input, "old");
+    await screen.findByText("1 of 3");
+    input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+    await screen.findByText("2 of 3");
+
+    fireEvent.input(input, { target: { value: "new" } });
+    input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+    fireEvent.input(input, { target: { value: "target" } });
+
+    expect(await screen.findByText("1 of 2")).toBeInTheDocument();
+  });
 });
+
+const domRect = (left: number, right: number): DOMRect =>
+  ({
+    bottom: 0,
+    height: 0,
+    left,
+    right,
+    top: 0,
+    width: right - left,
+    x: left,
+    y: 0,
+    toJSON: () => ({}),
+  }) as DOMRect;
 
 const pointerEvent = (type: string, clientX: number): PointerEvent => {
   const event = new Event(type, { bubbles: true, cancelable: true });

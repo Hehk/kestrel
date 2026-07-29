@@ -690,9 +690,25 @@
 .pr-diff-filePicker {
   min-width: 0;
   max-width: 100%;
-  flex: 1 1 auto;
+  flex: 2 1 12rem;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pr-diff-searchInput {
+  min-width: 5rem;
+  max-width: 16rem;
+  flex: 1 1 9rem;
+}
+
+.pr-diff-searchCount {
+  min-width: 4.5rem;
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  text-align: right;
   white-space: nowrap;
 }
 
@@ -833,6 +849,17 @@
   font-style: italic;
 }
 
+.pr-diff-source mark {
+  color: inherit;
+  background: color-mix(in srgb, #f0b429 48%, var(--bg));
+}
+
+.pr-diff-source mark.pr-diff-searchMatch--active {
+  color: var(--bg);
+  background: var(--text);
+  outline: 1px solid var(--text);
+}
+
 .pr-diff-horizontalRailFrame {
   position: fixed;
   z-index: 6;
@@ -964,6 +991,18 @@
   .pr-diff-activeFile {
     padding-right: 0.5rem;
     padding-left: 0.5rem;
+  }
+
+  .pr-diff-filePickerLabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+  }
+
+  .pr-diff-searchCount {
+    min-width: 3.5rem;
   }
 
   .repo-add-controls,

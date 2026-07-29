@@ -1230,21 +1230,21 @@ npm run test:run
 
 **Todos:**
 
-- [ ] Add search query, result indexes, and current-result state local to the Diff view.
-- [ ] Search semantic source content rather than DOM text.
-- [ ] Start with case-insensitive literal matching.
-- [ ] Defer search calculation enough to keep input responsive.
-- [ ] Store compact virtual row indexes and match offsets.
-- [ ] Intercept `Cmd+F` and `Ctrl+F` only while the Diff view is active.
-- [ ] Implement Enter, Shift+Enter, and Escape behavior.
-- [ ] Wrap navigation at the first and last result.
-- [ ] Use `scrollToIndex` to center an unmounted result.
-- [ ] Adjust the shared horizontal offset to reveal the active match.
-- [ ] Highlight active and inactive matches only in mounted source rows.
-- [ ] Display and announce current and total result counts.
-- [ ] Remove keyboard listeners when the Diff view unmounts.
-- [ ] Test queries matching the first, middle, and final rows of a large model.
-- [ ] Run the two-agent review gate, resolve accepted findings, and rerun this stage's verification.
+- [x] Add search query, result indexes, and current-result state local to the Diff view.
+- [x] Search semantic source content rather than DOM text.
+- [x] Start with case-insensitive literal matching.
+- [x] Defer search calculation enough to keep input responsive.
+- [x] Store compact virtual row indexes and match offsets.
+- [x] Intercept `Cmd+F` and `Ctrl+F` only while the Diff view is active.
+- [x] Implement Enter, Shift+Enter, and Escape behavior.
+- [x] Wrap navigation at the first and last result.
+- [x] Use `scrollToIndex` to center an unmounted result.
+- [x] Adjust the shared horizontal offset to reveal the active match.
+- [x] Highlight active and inactive matches only in mounted source rows.
+- [x] Display and announce current and total result counts.
+- [x] Remove keyboard listeners when the Diff view unmounts.
+- [x] Test queries matching the first, middle, and final rows of a large model.
+- [x] Run the two-agent review gate, resolve accepted findings, and rerun this stage's verification.
 
 **Focused Tests:**
 
@@ -1273,6 +1273,19 @@ npm run test:run
 - Vertical and horizontal navigation reveal the active match.
 - Result highlighting does not require mounting additional rows.
 - Search listeners do not leak to Overview or other routes.
+
+**Stage Record (2026-07-28):**
+
+- Added deferred, view-local full-Diff search over semantic hunk line content. Case-insensitive literal matching escapes regular-expression syntax, preserves original UTF-16 offsets, and supports repeated non-overlapping matches without inspecting mounted DOM.
+- Added exact two-pass result construction into three `Uint32Array` indexes for virtual rows, match offsets, and match lengths. The retained result storage is 12 bytes per match with no growable result arrays.
+- Added exact `Ctrl+F` and `Cmd+F` interception scoped to the mounted Diff view, query selection, Enter and Shift+Enter wraparound, Escape clearing with prior-focus restoration, and IME-safe keyboard handling. Listeners are removed on unmount.
+- Tagged navigation requested during deferred processing with its query so repeated moves accumulate, layout refreshes cannot consume them early, and skipped or reverted queries cannot leak navigation into later results.
+- Centered active results through the window virtualizer, including unmounted rows, and revealed long-line matches through the shared horizontal rail with a mounted-mark geometry correction. Only mounted source rows render active and inactive highlights.
+- Added an atomic polite count announcement for searching, empty results, and current/total position. Conservative pending-state rendering prevents stale-query counts, highlights, or navigation from appearing while deferred work catches up.
+- Added pure and component coverage for literal escaping, Unicode and combining content, repeated matches, first/middle/final large-model rows, wraparound, pending-query races, IME input, focus restoration, shortcut scoping and cleanup, exact centered unmounted navigation, mounted highlighting, and horizontal reveal.
+- Generated 50,000- and 100,000-line checks include common one-character queries with 500,003 and 1,000,003 retained matches plus rare first/middle/final matches. They completed in 49 ms and 87 ms respectively in the final local test run, including layout construction and both searches.
+- `npm run check` with 146 frontend tests, `npm run build`, and `git diff --check` passed. Both final Stage 9 reviewers reported no production findings after accepted fixes.
+- Real-browser input responsiveness on slower devices, very long individual lines, screen-reader announcements, cross-browser IME behavior, mobile toolbar reflow, and touch result controls remain manual or Stage 10 risks.
 
 ### Stage 10: Copying, Accessibility, And Responsive Polish
 
