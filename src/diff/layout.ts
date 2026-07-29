@@ -132,7 +132,11 @@ export const buildDiffLayout = (diff: PullRequestDiff): DiffLayout => {
         fileIndexes[rowIndex] = fileIndex;
         hunkIndexes[rowIndex] = hunkIndex;
         lineIndexes[rowIndex] = lineIndex;
-        maxSourceColumns = Math.max(maxSourceColumns, sourceVisualColumns(line.content));
+        let sourceColumns = sourceVisualColumns(line.content);
+        if (line.missingNewline) {
+          sourceColumns = sourceVisualColumns(" No newline at end of file", sourceColumns);
+        }
+        maxSourceColumns = Math.max(maxSourceColumns, sourceColumns);
         rowIndex += 1;
       }
     }

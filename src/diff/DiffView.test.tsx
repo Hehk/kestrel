@@ -1,4 +1,5 @@
 import { cleanup, render, screen, waitFor, within } from "@solidjs/testing-library";
+import userEvent from "@testing-library/user-event";
 import { createSignal } from "solid-js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DiffView } from "./DiffView";
@@ -142,7 +143,118 @@ describe("DiffView", () => {
     expect(await within(table).findByText(`line ${lineCount - 1}`)).toBeInTheDocument();
     expect(within(table).getAllByRole("row").length).toBeLessThan(200);
   });
+
+  it("jumps to file starts and tracks the first visible file", async () => {
+    const user = userEvent.setup();
+    const diff = multiFileDiff();
+    vi.spyOn(document.documentElement, "scrollHeight", "get").mockReturnValue(5_000);
+    render(() => <DiffView diff={diff} />);
+    const picker = await screen.findByRole("combobox", { name: "Jump to file" });
+
+    expect(screen.getByLabelText("Active file: file-0.txt")).toBeInTheDocument();
+    await user.selectOptions(picker, "1");
+    expect(vi.mocked(scrollTo)).toHaveBeenLastCalledWith({ behavior: "auto", top: 312 });
+    expect(screen.getByLabelText("Active file: file-0.txt")).toBeInTheDocument();
+
+    vi.stubGlobal("scrollY", 313);
+    window.dispatchEvent(new Event("scroll"));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Active file: file-1.txt")).toBeInTheDocument(),
+    );
+
+    vi.stubGlobal("scrollY", 625);
+    window.dispatchEvent(new Event("scroll"));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Active file: file-2.txt")).toBeInTheDocument(),
+    );
+  });
+
+  it("synchronizes rail, wheel, remounted rows, and resize clamping", async () => {
+    let railScrollWidth = 900;
+    let notifyResize = () => {};
+    class MockResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        notifyResize = () => callback([], this as unknown as ResizeObserver);
+      }
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+    }
+    vi.stubGlobal("ResizeObserver", MockResizeObserver);
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(
+      function (this: HTMLElement) {
+        return this.classList.contains("pr-diff-horizontalRail") ? 300 : 0;
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(
+      function (this: HTMLElement) {
+        return this.classList.contains("pr-diff-horizontalRail") ? railScrollWidth : 0;
+      },
+    );
+    const [diff, setDiff] = createSignal(largeDiff(1_000));
+    const { container } = render(() => <DiffView diff={diff()} />);
+    const table = await screen.findByRole("table", { name: "Pull request diff contents" });
+    const rail = screen.getByRole("region", { name: "Scroll diff horizontally" });
+
+    rail.scrollLeft = 120;
+    rail.dispatchEvent(new Event("scroll"));
+    expect(table.style.getPropertyValue("--pr-diff-horizontal-offset")).toBe("120px");
+
+    const source = container.querySelector<HTMLElement>(".pr-diff-source");
+    const wheel = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaX: 80 });
+    source?.dispatchEvent(wheel);
+    expect(wheel.defaultPrevented).toBe(true);
+    expect(rail.scrollLeft).toBe(200);
+    expect(table.style.getPropertyValue("--pr-diff-horizontal-offset")).toBe("200px");
+
+    source?.dispatchEvent(pointerEvent("pointerdown", 200));
+    const pointerMove = pointerEvent("pointermove", 150);
+    source?.dispatchEvent(pointerMove);
+    expect(pointerMove.defaultPrevented).toBe(true);
+    expect(rail.scrollLeft).toBe(250);
+    expect(table.style.getPropertyValue("--pr-diff-horizontal-offset")).toBe("250px");
+    source?.dispatchEvent(pointerEvent("pointerup", 150));
+
+    rail.scrollLeft = 600;
+    rail.dispatchEvent(new Event("scroll"));
+    const edgeWheel = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaX: 80 });
+    source?.dispatchEvent(edgeWheel);
+    expect(edgeWheel.defaultPrevented).toBe(false);
+    expect(rail.scrollLeft).toBe(600);
+
+    rail.scrollLeft = 200;
+    rail.dispatchEvent(new Event("scroll"));
+
+    vi.stubGlobal("scrollY", 10_000);
+    window.dispatchEvent(new Event("scroll"));
+    await waitFor(() =>
+      expect(container.querySelector<HTMLElement>("[data-diff-row]")?.dataset["diffRow"]).not.toBe(
+        "0",
+      ),
+    );
+    expect(table.style.getPropertyValue("--pr-diff-horizontal-offset")).toBe("200px");
+
+    railScrollWidth = 350;
+    setDiff(smallDiff());
+    await waitFor(() => expect(rail.scrollLeft).toBe(50));
+    expect(table.style.getPropertyValue("--pr-diff-horizontal-offset")).toBe("50px");
+
+    railScrollWidth = 320;
+    notifyResize();
+    expect(rail.scrollLeft).toBe(20);
+    expect(table.style.getPropertyValue("--pr-diff-horizontal-offset")).toBe("20px");
+  });
 });
+
+const pointerEvent = (type: string, clientX: number): PointerEvent => {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperties(event, {
+    clientX: { value: clientX },
+    pointerId: { value: 1 },
+    pointerType: { value: "touch" },
+  });
+  return event as PointerEvent;
+};
 
 const diffLine = (
   index: number,
@@ -283,5 +395,31 @@ const largeDiff = (lineCount: number): PullRequestDiff => ({
       operation: "modified",
     },
   ],
+  syncedAt: "2026-01-04T00:00:00Z",
+});
+
+const multiFileDiff = (): PullRequestDiff => ({
+  files: Array.from({ length: 3 }, (_, fileIndex) => ({
+    additions: 0,
+    binary: false,
+    deletions: 0,
+    hunks: [
+      {
+        context: null,
+        lines: Array.from({ length: 10 }, (_, lineIndex) =>
+          diffLine(fileIndex * 10 + lineIndex, "context"),
+        ),
+        newCount: 10,
+        newStart: fileIndex * 10 + 1,
+        oldCount: 10,
+        oldStart: fileIndex * 10 + 1,
+      },
+    ],
+    newMode: "100644" as const,
+    newPath: `file-${fileIndex}.txt`,
+    oldMode: "100644" as const,
+    oldPath: `file-${fileIndex}.txt`,
+    operation: "modified" as const,
+  })),
   syncedAt: "2026-01-04T00:00:00Z",
 });

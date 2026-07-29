@@ -654,9 +654,66 @@
   margin-top: 0.3rem;
 }
 
+.pr-diff-root {
+  --pr-diff-gutter-width: 4.5rem;
+  position: relative;
+  padding-bottom: calc(2rem + env(safe-area-inset-bottom));
+}
+
+.pr-diff-stickyStack {
+  position: sticky;
+  z-index: 4;
+  top: 0;
+  min-width: 0;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--rule);
+}
+
+.pr-diff-toolbar {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  box-sizing: border-box;
+  padding: 0 0.75rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.pr-diff-filePickerLabel {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.pr-diff-filePicker {
+  min-width: 0;
+  max-width: 100%;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pr-diff-activeFile {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  padding: 0 0.75rem;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--text) 7%, var(--bg));
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .pr-diff-table {
   min-width: 0;
-  margin-top: 1rem;
+  overflow: clip;
   color: var(--text);
   background: var(--bg);
   border-top: 1px solid var(--rule);
@@ -677,9 +734,12 @@
 }
 
 .pr-diff-row {
-  min-width: max-content;
+  width: 100%;
+  min-width: 0;
   display: grid;
-  grid-template-columns: 4.5rem 4.5rem minmax(0, 1fr);
+  grid-template-columns:
+    var(--pr-diff-gutter-width) var(--pr-diff-gutter-width)
+    minmax(0, 1fr);
   box-sizing: border-box;
   border-bottom: 1px solid var(--rule);
 }
@@ -706,9 +766,12 @@
 
 .pr-diff-hunkCell,
 .pr-diff-noticeCell {
+  min-width: 0;
   height: 32px;
+  overflow: hidden;
   color: var(--text-muted);
   background: color-mix(in srgb, var(--link) 7%, var(--bg));
+  text-overflow: ellipsis;
 }
 
 .pr-diff-lineNumber,
@@ -728,9 +791,16 @@
 }
 
 .pr-diff-source {
-  min-width: max-content;
-  padding-right: 1rem;
+  min-width: 0;
+  overflow: hidden;
   tab-size: 4;
+  touch-action: pan-y pinch-zoom;
+}
+
+.pr-diff-sourceContent {
+  width: max-content;
+  padding-right: 1rem;
+  transform: translateX(calc(-1 * var(--pr-diff-horizontal-offset, 0px)));
 }
 
 .pr-diff-row--addition .pr-diff-source {
@@ -761,6 +831,39 @@
 .pr-diff-missingNewline {
   color: var(--text-muted);
   font-style: italic;
+}
+
+.pr-diff-horizontalRailFrame {
+  position: fixed;
+  z-index: 6;
+  bottom: env(safe-area-inset-bottom);
+  height: 28px;
+  display: grid;
+  grid-template-columns:
+    var(--pr-diff-gutter-width) var(--pr-diff-gutter-width)
+    minmax(0, 1fr);
+  box-sizing: border-box;
+  overflow: hidden;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+}
+
+.pr-diff-railGutter {
+  border-right: 1px solid var(--rule);
+}
+
+.pr-diff-horizontalRail {
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  direction: ltr;
+}
+
+.pr-diff-horizontalRailContent {
+  min-width: 100%;
+  height: 1px;
+  font-family: var(--mono);
+  font-size: 0.85rem;
 }
 
 .settings-form {
@@ -851,6 +954,16 @@
   .PullRequestPage {
     width: calc(100vw - 24px);
     padding: 24px 0 48px;
+  }
+
+  .pr-diff-root {
+    --pr-diff-gutter-width: 3rem;
+  }
+
+  .pr-diff-toolbar,
+  .pr-diff-activeFile {
+    padding-right: 0.5rem;
+    padding-left: 0.5rem;
   }
 
   .repo-add-controls,

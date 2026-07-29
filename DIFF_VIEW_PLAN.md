@@ -1168,20 +1168,20 @@ npm run test:run
 
 **Todos:**
 
-- [ ] Add a file picker to the sticky Diff toolbar.
-- [ ] Use `fileStartRows` and `scrollToIndex` for file navigation.
-- [ ] Derive the active file from the first visible row rather than the overscan boundary.
-- [ ] Render a sticky active-file header independent of virtualized file-header rows.
-- [ ] Keep long paths to one visual line and expose their complete accessible text.
-- [ ] Add one shared horizontal offset for mounted source cells.
-- [ ] Add a sticky or fixed horizontal scrollbar rail while the Diff view is active.
-- [ ] Keep old and new line-number gutters fixed during horizontal movement.
-- [ ] Synchronize the rail, trackpad horizontal gestures, and newly mounted rows.
-- [ ] Size the rail from the layout's conservative maximum source width.
-- [ ] Clamp the offset after viewport or content-width changes.
-- [ ] Add bottom spacing so the horizontal rail does not cover final rows.
-- [ ] Add deterministic tests for file jumps, active-file changes, and horizontal offset synchronization.
-- [ ] Run the two-agent review gate, resolve accepted findings, and rerun this stage's verification.
+- [x] Add a file picker to the sticky Diff toolbar.
+- [x] Use `fileStartRows` and `scrollToIndex` for file navigation.
+- [x] Derive the active file from the first visible row rather than the overscan boundary.
+- [x] Render a sticky active-file header independent of virtualized file-header rows.
+- [x] Keep long paths to one visual line and expose their complete accessible text.
+- [x] Add one shared horizontal offset for mounted source cells.
+- [x] Add a sticky or fixed horizontal scrollbar rail while the Diff view is active.
+- [x] Keep old and new line-number gutters fixed during horizontal movement.
+- [x] Synchronize the rail, trackpad horizontal gestures, and newly mounted rows.
+- [x] Size the rail from the layout's conservative maximum source width.
+- [x] Clamp the offset after viewport or content-width changes.
+- [x] Add bottom spacing so the horizontal rail does not cover final rows.
+- [x] Add deterministic tests for file jumps, active-file changes, and horizontal offset synchronization.
+- [x] Run the two-agent review gate, resolve accepted findings, and rerun this stage's verification.
 
 **Focused Tests:**
 
@@ -1210,6 +1210,19 @@ npm run test:run
 - The sticky active-file header tracks window scrolling.
 - Every column of the longest line can be reached without visiting the bottom of the diff.
 - Horizontal movement does not shift line-number gutters.
+
+**Stage Record (2026-07-28):**
+
+- Added a sticky Diff toolbar with a native accessible file picker. Selection calls the virtualizer with the compact `fileStartRows` index and exact sticky-header scroll padding.
+- Derived the active file from the first unobscured virtual row at the current window offset rather than from overscan or eager picker state. A separate sticky active-file header remains present when virtual file rows unmount.
+- Kept full file paths in picker options, header text, accessible labels, and titles while constraining toolbar and active-header presentation to one ellipsized line.
+- Added one inherited horizontal offset for all mounted source-content wrappers. Source viewports clip translated content while old/new gutters remain in fixed grid columns, so newly virtualized rows inherit the current position automatically.
+- Added a fixed, named native horizontal-scroll region aligned to the Diff table. Its rail width uses the same monospace `0.85rem` metrics and the layout's conservative maximum columns, including rendered missing-newline notices.
+- Synchronized native rail scrolling, horizontal trackpad or shifted-wheel input, and touch/pen dragging. Edge gestures remain available to the browser, vertical panning and pinch zoom stay enabled, and the rail remains keyboard focusable.
+- Recomputed rail/table/sticky geometry through existing ancestor observation and window resize handling. Offset is clamped after content replacement or viewport changes, and safe-area-aware bottom spacing prevents the fixed rail covering final rows.
+- Added deterministic tests for exact file-start jumps, viewport-derived first/middle/last active files, rail and wheel synchronization, touch dragging, edge behavior, vertical remount inheritance, and content/resize clamping.
+- `npm run check` with 134 frontend tests, `npm run build`, and `git diff --check` passed.
+- Both final Stage 8 reviewers reported no findings. Real-device touch/pinch behavior, overlay scrollbars, font fallback, mobile browser chrome, safe-area alignment, and short-last-file document clamping remain manual risks.
 
 ### Stage 9: Full-Diff Search
 

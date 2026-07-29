@@ -146,6 +146,12 @@ describe("diff layout", () => {
     expect(sourceVisualColumns("☕⌚☔")).toBe(7);
     expect(sourceVisualColumns("𛀀𗀀")).toBe(5);
     expect(sourceVisualColumns("ꥠힰ")).toBe(5);
+    const missingNewlineDiff = canonicalDiff();
+    const sourceLine = missingNewlineDiff.files[0]?.hunks[0]?.lines[0];
+    if (sourceLine !== undefined) sourceLine.missingNewline = true;
+    expect(buildDiffLayout(missingNewlineDiff).maxSourceColumns).toBeGreaterThan(
+      sourceVisualColumns(sourceLine?.content ?? ""),
+    );
   });
 
   it("scans exact 64 KiB and 1 MiB source lines including their final columns", () => {
