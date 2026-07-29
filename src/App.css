@@ -66,7 +66,9 @@
     "header"
     "diff";
   grid-template-columns: minmax(0, 1fr);
-  width: calc(100vw - 32px);
+  width: auto;
+  margin-right: calc(16px + env(safe-area-inset-right));
+  margin-left: calc(16px + env(safe-area-inset-left));
 }
 
 .PullRequestPage-diffContent {
@@ -702,6 +704,38 @@
   flex: 1 1 9rem;
 }
 
+.pr-diff-searchNav {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 0.25rem;
+}
+
+.pr-diff-compactButton {
+  min-height: 24px;
+  flex: 0 0 auto;
+  padding: 0.05rem 0.4rem;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.pr-diff-compactButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.pr-diff-compactButton[aria-disabled="true"] {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.pr-diff-compactButton:focus-visible,
+.pr-diff-horizontalRail:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -3px;
+}
+
 .pr-diff-searchCount {
   min-width: 4.5rem;
   flex: 0 0 auto;
@@ -718,13 +752,35 @@
   align-items: center;
   box-sizing: border-box;
   padding: 0 0.75rem;
-  overflow: hidden;
+  gap: 0.6rem;
   background: color-mix(in srgb, var(--text) 7%, var(--bg));
   font-family: var(--mono);
   font-size: 0.85rem;
   font-weight: 700;
+}
+
+.pr-diff-activeFilePath,
+.pr-diff-headerText,
+.pr-diff-hunkText {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.pr-diff-copyStatus {
+  max-width: min(32vw, 22rem);
+  overflow: hidden;
+  color: var(--status-success);
+  font-size: 0.75rem;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pr-diff-copyStatus--failure {
+  color: var(--status-failure);
 }
 
 .pr-diff-table {
@@ -768,6 +824,7 @@
   align-items: center;
   box-sizing: border-box;
   padding: 0 0.75rem;
+  gap: 0.6rem;
   white-space: pre;
 }
 
@@ -821,10 +878,17 @@
 
 .pr-diff-row--addition .pr-diff-source {
   background: color-mix(in srgb, #2da44e 12%, var(--bg));
+  box-shadow: inset 3px 0 var(--status-success);
 }
 
 .pr-diff-row--deletion .pr-diff-source {
   background: color-mix(in srgb, #cf222e 12%, var(--bg));
+  box-shadow: inset 3px 0 var(--status-failure);
+}
+
+.pr-diff-row--addition .pr-diff-prefix,
+.pr-diff-row--deletion .pr-diff-prefix {
+  font-weight: 700;
 }
 
 .pr-diff-lineKind {
@@ -983,6 +1047,12 @@
     padding: 24px 0 48px;
   }
 
+  .PullRequestPage--diff {
+    width: auto;
+    margin-right: calc(12px + env(safe-area-inset-right));
+    margin-left: calc(12px + env(safe-area-inset-left));
+  }
+
   .pr-diff-root {
     --pr-diff-gutter-width: 3rem;
   }
@@ -991,6 +1061,24 @@
   .pr-diff-activeFile {
     padding-right: 0.5rem;
     padding-left: 0.5rem;
+  }
+
+  .pr-diff-toolbar {
+    height: auto;
+    min-height: 40px;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    padding-top: 0.35rem;
+    padding-bottom: 0.35rem;
+  }
+
+  .pr-diff-filePicker {
+    flex-basis: 11rem;
+  }
+
+  .pr-diff-searchInput {
+    max-width: none;
+    flex-basis: 8rem;
   }
 
   .pr-diff-filePickerLabel {
@@ -1003,6 +1091,18 @@
 
   .pr-diff-searchCount {
     min-width: 3.5rem;
+  }
+
+  .pr-diff-activeFile {
+    gap: 0.35rem;
+  }
+
+  .pr-diff-copyStatus {
+    max-width: 7rem;
+  }
+
+  .pr-diff-searchNav .pr-diff-compactButton {
+    min-height: 36px;
   }
 
   .repo-add-controls,
@@ -1071,6 +1171,36 @@
 @media (prefers-reduced-motion: reduce) {
   .pr-sidebar-sync-icon {
     animation: none;
+  }
+
+  .pr-diff-horizontalRail {
+    scroll-behavior: auto;
+  }
+}
+
+@media (pointer: coarse) {
+  .pr-diff-searchNav .pr-diff-compactButton {
+    min-height: 44px;
+  }
+}
+
+@media (forced-colors: active) {
+  .pr-diff-row--addition .pr-diff-source,
+  .pr-diff-row--deletion .pr-diff-source {
+    border-left: 3px solid CanvasText;
+    box-shadow: none;
+  }
+
+  .pr-diff-source mark {
+    color: HighlightText;
+    background: Highlight;
+    forced-color-adjust: none;
+  }
+
+  .pr-diff-source mark.pr-diff-searchMatch--active {
+    color: HighlightText;
+    background: Highlight;
+    outline: 2px solid CanvasText;
   }
 }
 

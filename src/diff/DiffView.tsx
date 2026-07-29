@@ -12,6 +12,7 @@ import {
   Show,
   Switch,
 } from "solid-js";
+import { buildFileCopyText, buildHunkCopyText } from "./copy";
 import type { DiffRow, PullRequestDiff, PullRequestDiffFile } from "./layout";
 import { DIFF_ROW_HEIGHT } from "./layout";
 import { buildDiffLayout, rowAt, rowHeight, rowKey, sourceVisualColumns } from "./layout";
@@ -19,6 +20,7 @@ import { firstMatchAtOrAfterRow, searchDiff } from "./search";
 
 type MountedSearchMatch = { active: boolean; length: number; offset: number };
 type PendingResultNavigation = { move: number; query: string };
+type CopyOutcome = { kind: "failure" | "success"; message: string };
 
 export const DiffView = (props: { diff: PullRequestDiff }) => {
   let table: HTMLDivElement | undefined;
@@ -26,6 +28,7 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
   let horizontalRail: HTMLDivElement | undefined;
   let searchInput: HTMLInputElement | undefined;
   let searchReturnFocus: HTMLElement | null = null;
+  let copyGeneration = 0;
   const layout = createMemo(() => buildDiffLayout(props.diff));
   const [scrollMargin, setScrollMargin] = createSignal(0);
   const [stickyHeight, setStickyHeight] = createSignal(0);
@@ -38,6 +41,8 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
   const [activeResultIndex, setActiveResultIndex] = createSignal(-1);
   const [pendingResultNavigation, setPendingResultNavigation] =
     createSignal<PendingResultNavigation | null>(null);
+  const [copyOutcome, setCopyOutcome] = createSignal<CopyOutcome | null>(null);
+  const [copyPending, setCopyPending] = createSignal(false);
   const virtualizer = createWindowVirtualizer<HTMLDivElement>({
     get count() {
       return layout().rowCount;
@@ -60,6 +65,39 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
   const activeFileLabel = () => fileOptions()[activeFileIndex()]?.label ?? "Unknown file";
   const searchResults = createMemo(() => searchDiff(layout(), deferredSearchQuery()));
   const searchPending = () => deferredSearchQuery() !== searchQuery();
+
+  const writeClipboard = async (text: string, subject: string) => {
+    if (copyPending()) return;
+    const generation = ++copyGeneration;
+    const sourceDiff = layout().diff;
+    setCopyOutcome(null);
+    setCopyPending(true);
+    try {
+      if (navigator.clipboard === undefined) throw new Error("Clipboard is unavailable");
+      await navigator.clipboard.writeText(text);
+      if (generation === copyGeneration && layout().diff === sourceDiff) {
+        setCopyOutcome({ kind: "success", message: `Copied ${subject}.` });
+      }
+    } catch {
+      if (generation === copyGeneration && layout().diff === sourceDiff) {
+        setCopyOutcome({ kind: "failure", message: `Could not copy ${subject}.` });
+      }
+    } finally {
+      if (generation === copyGeneration) setCopyPending(false);
+    }
+  };
+
+  const copyFile = (file: PullRequestDiffFile) => {
+    if (copyPending()) return;
+    const text = buildFileCopyText(file);
+    if (text !== null) void writeClipboard(text, `file ${fileLabel(file)}`);
+  };
+
+  const copyHunk = (row: Extract<DiffRow, { kind: "hunk" }>) => {
+    if (copyPending()) return;
+    const text = buildHunkCopyText(row.file, row.hunk);
+    if (text !== null) void writeClipboard(text, `hunk from ${fileLabel(row.file)}`);
+  };
 
   const updateActiveFile = () => {
     if (layout().rowCount === 0) return;
@@ -202,6 +240,8 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
     ),
   );
 
+  createEffect(on(layout, () => setCopyOutcome(null), { defer: true }));
+
   createEffect(
     on([searchResults, searchQuery, deferredSearchQuery], ([results, query, deferredQuery]) => {
       if (deferredQuery !== query) return;
@@ -331,6 +371,7 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
     window.addEventListener("resize", updateGeometry);
     window.addEventListener("keydown", handleKeyDown);
     onCleanup(() => {
+      copyGeneration += 1;
       resizeObserver?.disconnect();
       table?.removeEventListener("wheel", handleWheel);
       table?.removeEventListener("pointerdown", handlePointerDown);
@@ -377,6 +418,26 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
             type="search"
             value={searchQuery()}
           />
+          <div aria-label="Search result navigation" class="pr-diff-searchNav" role="group">
+            <button
+              aria-label="Previous search result"
+              class="pr-diff-compactButton"
+              disabled={searchPending() || searchResults().count === 0}
+              onClick={() => moveResult(-1)}
+              type="button"
+            >
+              Prev
+            </button>
+            <button
+              aria-label="Next search result"
+              class="pr-diff-compactButton"
+              disabled={searchPending() || searchResults().count === 0}
+              onClick={() => moveResult(1)}
+              type="button"
+            >
+              Next
+            </button>
+          </div>
           <span aria-atomic="true" aria-live="polite" class="pr-diff-searchCount">
             {searchQuery().length === 0
               ? ""
@@ -392,7 +453,39 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
           class="pr-diff-activeFile"
           title={activeFileLabel()}
         >
-          {activeFileLabel()}
+          <span class="pr-diff-activeFilePath">{activeFileLabel()}</span>
+          <span
+            aria-atomic="true"
+            aria-live="polite"
+            class="pr-diff-copyStatus"
+            classList={{ "pr-diff-copyStatus--failure": copyOutcome()?.kind === "failure" }}
+            role="status"
+          >
+            {copyOutcome()?.message ?? ""}
+          </span>
+          <button
+            aria-label={
+              props.diff.files[activeFileIndex()]?.binary
+                ? `Copy unavailable for binary file ${activeFileLabel()}`
+                : `Copy file ${activeFileLabel()}`
+            }
+            aria-busy={copyPending()}
+            aria-disabled={copyPending() ? "true" : undefined}
+            class="pr-diff-compactButton"
+            disabled={props.diff.files[activeFileIndex()]?.binary ?? true}
+            onClick={() => {
+              const file = props.diff.files[activeFileIndex()];
+              if (file !== undefined) copyFile(file);
+            }}
+            title={
+              props.diff.files[activeFileIndex()]?.binary
+                ? "Binary patch content is unavailable"
+                : `Copy file ${activeFileLabel()}`
+            }
+            type="button"
+          >
+            {props.diff.files[activeFileIndex()]?.binary ? "Copy unavailable" : "Copy file"}
+          </button>
         </div>
       </div>
       <div
@@ -409,8 +502,11 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
             <For each={virtualRows()}>
               {(virtualRow) => (
                 <DiffRowView
+                  copyPending={copyPending()}
                   index={virtualRow.index}
                   matches={matchesForRow(virtualRow.index)}
+                  onCopyFile={copyFile}
+                  onCopyHunk={copyHunk}
                   row={rowAt(layout(), virtualRow.index)}
                   size={rowHeight(layout(), virtualRow.index)}
                 />
@@ -444,8 +540,11 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
 };
 
 const DiffRowView = (props: {
+  copyPending: boolean;
   index: number;
   matches: MountedSearchMatch[];
+  onCopyFile: (file: PullRequestDiffFile) => void;
+  onCopyHunk: (row: Extract<DiffRow, { kind: "hunk" }>) => void;
   row: DiffRow;
   size: number;
 }) => (
@@ -456,11 +555,23 @@ const DiffRowView = (props: {
     role="row"
     style={{ height: `${props.size}px` }}
   >
-    <DiffRowCells matches={props.matches} row={props.row} />
+    <DiffRowCells
+      copyPending={props.copyPending}
+      matches={props.matches}
+      onCopyFile={props.onCopyFile}
+      onCopyHunk={props.onCopyHunk}
+      row={props.row}
+    />
   </div>
 );
 
-const DiffRowCells = (props: { matches: MountedSearchMatch[]; row: DiffRow }) => {
+const DiffRowCells = (props: {
+  copyPending: boolean;
+  matches: MountedSearchMatch[];
+  onCopyFile: (file: PullRequestDiffFile) => void;
+  onCopyHunk: (row: Extract<DiffRow, { kind: "hunk" }>) => void;
+  row: DiffRow;
+}) => {
   const fileRow = () => (props.row.kind === "file" ? props.row : undefined);
   const hunkRow = () => (props.row.kind === "hunk" ? props.row : undefined);
   const noticeRow = () => (props.row.kind === "notice" ? props.row : undefined);
@@ -473,15 +584,45 @@ const DiffRowCells = (props: { matches: MountedSearchMatch[]; row: DiffRow }) =>
     <Switch>
       <Match when={fileRow()}>
         {(row) => (
-          <div aria-colspan="3" class="pr-diff-headerCell" role="columnheader">
-            {filePath(row())}
+          <div aria-colspan="3" aria-label={filePath(row())} class="pr-diff-headerCell" role="cell">
+            <span class="pr-diff-headerText">{filePath(row())}</span>
+            <button
+              aria-label={
+                row().file.binary
+                  ? `Copy unavailable for binary file ${fileLabel(row().file)}`
+                  : `Copy file ${fileLabel(row().file)}`
+              }
+              aria-busy={props.copyPending}
+              aria-disabled={props.copyPending ? "true" : undefined}
+              class="pr-diff-compactButton"
+              disabled={row().file.binary}
+              onClick={() => props.onCopyFile(row().file)}
+              title={
+                row().file.binary
+                  ? "Binary patch content is unavailable"
+                  : `Copy file ${fileLabel(row().file)}`
+              }
+              type="button"
+            >
+              {row().file.binary ? "Copy unavailable" : "Copy file"}
+            </button>
           </div>
         )}
       </Match>
       <Match when={hunkRow()}>
         {(row) => (
-          <div aria-colspan="3" class="pr-diff-hunkCell" role="cell">
-            {hunkLabel(row())}
+          <div aria-colspan="3" aria-label={hunkLabel(row())} class="pr-diff-hunkCell" role="cell">
+            <span class="pr-diff-hunkText">{hunkLabel(row())}</span>
+            <button
+              aria-label={`Copy hunk from ${fileLabel(row().file)}, ${hunkLabel(row())}`}
+              aria-busy={props.copyPending}
+              aria-disabled={props.copyPending ? "true" : undefined}
+              class="pr-diff-compactButton"
+              onClick={() => props.onCopyHunk(row())}
+              type="button"
+            >
+              Copy hunk
+            </button>
           </div>
         )}
       </Match>

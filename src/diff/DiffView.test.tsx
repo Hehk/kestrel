@@ -28,7 +28,7 @@ describe("DiffView", () => {
     expect(table).toHaveAttribute("aria-rowcount", "9");
     expect(within(table).getAllByRole("row")).toHaveLength(9);
     expect(
-      within(table).getByRole("columnheader", { name: "src/old.ts -> src/new.ts" }),
+      within(table).getByRole("cell", { name: "src/old.ts -> src/new.ts" }),
     ).toBeInTheDocument();
     expect(within(table).getByText("@@ -1,3 +1,3 @@ function example")).toBeInTheDocument();
     expect(within(table).getByText("Binary file changed.")).toBeInTheDocument();
@@ -72,6 +72,141 @@ describe("DiffView", () => {
     expect(container.querySelector('[data-diff-row="0"]')).toHaveStyle({ height: "40px" });
     expect(container.querySelector('[data-diff-row="1"]')).toHaveStyle({ height: "32px" });
     expect(container.querySelector('[data-diff-row="6"]')).toHaveStyle({ height: "32px" });
+  });
+
+  it("copies files and hunks from semantic data and disables binary copying", async () => {
+    const user = userEvent.setup();
+    render(() => <DiffView diff={smallDiff()} />);
+    await screen.findByRole("table", { name: "Pull request diff contents" });
+    const fileButtons = screen.getAllByRole("button", {
+      name: "Copy file src/old.ts -> src/new.ts",
+    });
+    expect(fileButtons).toHaveLength(2);
+
+    await user.click(fileButtons[0] as HTMLButtonElement);
+    expect(await navigator.clipboard.readText()).toBe(
+      "diff --git a/src/old.ts b/src/new.ts\n" +
+        "rename from src/old.ts\n" +
+        "rename to src/new.ts\n" +
+        "--- a/src/old.ts\n" +
+        "+++ b/src/new.ts\n" +
+        "@@ -1,3 +1,3 @@ function example\n" +
+        "-const value = 'old';\n" +
+        "\\ No newline at end of file\n" +
+        "+\tconst value = '<script>';  \n" +
+        " unchanged\n",
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Copied file src/old.ts -> src/new.ts.");
+
+    const hunkButton = screen.getByRole("button", {
+      name: "Copy hunk from src/old.ts -> src/new.ts, @@ -1,3 +1,3 @@ function example",
+    });
+    hunkButton.focus();
+    await user.keyboard("{Enter}");
+    expect(await navigator.clipboard.readText()).toMatch(
+      /^--- a\/src\/old\.ts\n\+\+\+ b\/src\/new\.ts\n@@ -1,3 \+1,3 @@/,
+    );
+    expect(await navigator.clipboard.readText()).not.toContain("rename from");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Copied hunk from src/old.ts -> src/new.ts.",
+    );
+    const binaryCopy = screen.getByRole("button", {
+      name: "Copy unavailable for binary file asset.bin",
+    });
+    expect(binaryCopy).toBeDisabled();
+    expect(binaryCopy).toHaveTextContent("Copy unavailable");
+    expect(binaryCopy).toHaveAttribute("title", "Binary patch content is unavailable");
+  });
+
+  it("announces clipboard rejection without losing search or diff state", async () => {
+    const user = userEvent.setup();
+    render(() => <DiffView diff={smallDiff()} />);
+    const input = await screen.findByRole("searchbox", { name: "Search diff" });
+    await user.type(input, "old");
+    await screen.findByText("1 of 1");
+    vi.spyOn(navigator.clipboard, "writeText").mockRejectedValueOnce(new DOMException("Denied"));
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Copy hunk from src/old.ts -> src/new.ts, @@ -1,3 +1,3 @@ function example",
+      }),
+    );
+
+    expect(
+      await screen.findByText("Could not copy hunk from src/old.ts -> src/new.ts."),
+    ).toHaveClass("pr-diff-copyStatus--failure");
+    expect(input).toHaveValue("old");
+    expect(screen.getByText("1 of 1")).toBeInTheDocument();
+    expect(screen.getByRole("table", { name: "Pull request diff contents" })).toHaveAttribute(
+      "aria-rowcount",
+      "9",
+    );
+  });
+
+  it("serializes copy writes, repeats announcements, and clears stale diff outcomes", async () => {
+    const user = userEvent.setup();
+    const [diff, setDiff] = createSignal(smallDiff());
+    render(() => <DiffView diff={diff()} />);
+    const copyButton = (name = "Copy file src/old.ts -> src/new.ts") =>
+      screen.getAllByRole("button", { name })[0] as HTMLButtonElement;
+    const writeText = vi.spyOn(navigator.clipboard, "writeText");
+    writeText.mockResolvedValueOnce(undefined);
+
+    await user.click(copyButton());
+    expect(await screen.findByText("Copied file src/old.ts -> src/new.ts.")).toBeInTheDocument();
+
+    const repeatedWrite = deferred<void>();
+    writeText.mockReturnValueOnce(repeatedWrite.promise);
+    copyButton().focus();
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("status").textContent).toBe("");
+    expect(copyButton()).toHaveFocus();
+    expect(copyButton()).toHaveAttribute("aria-busy", "true");
+    expect(copyButton()).toHaveAttribute("aria-disabled", "true");
+    await user.click(
+      screen.getByRole("button", {
+        name: "Copy hunk from src/old.ts -> src/new.ts, @@ -1,3 +1,3 @@ function example",
+      }),
+    );
+    expect(writeText).toHaveBeenCalledTimes(2);
+    repeatedWrite.resolve(undefined);
+    expect(await screen.findByText("Copied file src/old.ts -> src/new.ts.")).toBeInTheDocument();
+
+    const staleWrite = deferred<void>();
+    writeText.mockReturnValueOnce(staleWrite.promise);
+    await user.click(copyButton());
+    const replacement = smallDiff();
+    const replacementFile = replacement.files[0];
+    if (replacementFile !== undefined) {
+      replacementFile.oldPath = "src/before.ts";
+      replacementFile.newPath = "src/after.ts";
+    }
+    setDiff(replacement);
+    expect(screen.getByRole("status").textContent).toBe("");
+    staleWrite.resolve(undefined);
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("button", { name: "Copy file src/before.ts -> src/after.ts" })[0],
+      ).toBeEnabled(),
+    );
+    expect(screen.getByRole("status").textContent).toBe("");
+  });
+
+  it("ignores clipboard rejection after the Diff view unmounts", async () => {
+    const user = userEvent.setup();
+    const pendingWrite = deferred<void>();
+    vi.spyOn(navigator.clipboard, "writeText").mockReturnValueOnce(pendingWrite.promise);
+    const { container, unmount } = render(() => <DiffView diff={smallDiff()} />);
+
+    await user.click(
+      screen.getAllByRole("button", { name: "Copy file src/old.ts -> src/new.ts" })[0] as Element,
+    );
+    unmount();
+    pendingWrite.reject(new DOMException("Denied"));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(container).toBeEmptyDOMElement();
   });
 
   it("rebuilds virtual geometry when a same-count Diff changes row heights", async () => {
@@ -276,6 +411,11 @@ describe("DiffView", () => {
     expect(container.querySelectorAll("mark")).toHaveLength(2);
     expect(container.querySelectorAll(".pr-diff-searchMatch--active")).toHaveLength(1);
     expect(container.querySelector(".pr-diff-searchMatch--active")).toHaveTextContent("needle");
+
+    await user.click(screen.getByRole("button", { name: "Next search result" }));
+    expect(await screen.findByText("2 of 2")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Previous search result" }));
+    expect(await screen.findByText("1 of 2")).toBeInTheDocument();
 
     await user.keyboard("{Enter}");
     expect(await screen.findByText("2 of 2")).toBeInTheDocument();
@@ -494,6 +634,16 @@ const domRect = (left: number, right: number): DOMRect =>
     y: 0,
     toJSON: () => ({}),
   }) as DOMRect;
+
+const deferred = <T,>() => {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, reject, resolve };
+};
 
 const pointerEvent = (type: string, clientX: number): PointerEvent => {
   const event = new Event(type, { bubbles: true, cancelable: true });

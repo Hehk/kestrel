@@ -1293,23 +1293,23 @@ npm run test:run
 
 **Todos:**
 
-- [ ] Implement pure Copy hunk text generation from semantic DTOs.
-- [ ] Implement pure Copy file text generation from semantic DTOs.
-- [ ] Preserve file headers, hunk ranges, and unified-diff line prefixes.
-- [ ] Define and test binary-file copy behavior.
-- [ ] Add Copy hunk controls to hunk headers.
-- [ ] Add Copy file controls to file and sticky active-file headers.
-- [ ] Handle clipboard rejection without losing diff state.
-- [ ] Announce copy success and failure through a polite live region.
-- [ ] Audit toolbar, file picker, search, copy, and sync controls for keyboard access and labels.
-- [ ] Confirm additions and deletions are distinguishable without color alone.
-- [ ] Confirm virtual row count and row indexes are exposed consistently.
-- [ ] Complete light and dark theme treatments.
-- [ ] Complete desktop and mobile spacing, gutter, toolbar, and horizontal-rail behavior.
-- [ ] Respect reduced-motion preferences.
-- [ ] Add component coverage for copying and accessibility announcements.
-- [ ] Measure Copy file and Copy hunk reconstruction for one 100,000-line target, including peak heap and clipboard failure behavior.
-- [ ] Run the two-agent review gate, resolve accepted findings, and rerun this stage's verification.
+- [x] Implement pure Copy hunk text generation from semantic DTOs.
+- [x] Implement pure Copy file text generation from semantic DTOs.
+- [x] Preserve file headers, hunk ranges, and unified-diff line prefixes.
+- [x] Define and test binary-file copy behavior.
+- [x] Add Copy hunk controls to hunk headers.
+- [x] Add Copy file controls to file and sticky active-file headers.
+- [x] Handle clipboard rejection without losing diff state.
+- [x] Announce copy success and failure through a polite live region.
+- [x] Audit toolbar, file picker, search, copy, and sync controls for keyboard access and labels.
+- [x] Confirm additions and deletions are distinguishable without color alone.
+- [x] Confirm virtual row count and row indexes are exposed consistently.
+- [x] Complete light and dark theme treatments.
+- [x] Complete desktop and mobile spacing, gutter, toolbar, and horizontal-rail behavior.
+- [x] Respect reduced-motion preferences.
+- [x] Add component coverage for copying and accessibility announcements.
+- [x] Measure Copy file and Copy hunk reconstruction for one 100,000-line target, including peak heap and clipboard failure behavior.
+- [x] Run the two-agent review gate, resolve accepted findings, and rerun this stage's verification.
 
 **Focused Tests:**
 
@@ -1339,6 +1339,21 @@ cargo test --manifest-path backend/Cargo.toml
 - Search and copy outcomes are announced.
 - Light, dark, desktop, and mobile states are usable.
 - All automated frontend and backend tests pass.
+
+**Stage Record (2026-07-29):**
+
+- Added `src/diff/copy.ts` with pure semantic reconstruction for Copy file and Copy hunk. Output preserves `diff --git`, reconstructible operation and mode metadata, textual file headers, explicit hunk ranges and context, unified prefixes, source whitespace, and missing-newline markers.
+- File copies cover added, deleted, modified, renamed, copied, mode-only, hunkless, and quoted-path changes. Git C-style path escaping handles quotes, backslashes, control characters, and DEL while leaving readable Unicode paths intact. Hunkless files omit inconsistent `---`/`+++` text headers.
+- Binary DTOs return no copy text because their payload bytes are intentionally absent. Binary file controls are natively disabled and visibly labeled `Copy unavailable`, with an explicit accessible name and explanation.
+- Added Copy file controls to virtual and sticky file headers and Copy hunk controls to every mounted hunk header. All output is generated from hierarchical DTOs, so source-row mounting does not affect copied content.
+- Serialized native clipboard writes to prevent an older completion overwriting a newer result. Pending controls retain focus through `aria-disabled` and `aria-busy`, repeated outcomes clear before reannouncement, stale diff outcomes are suppressed, and rejection or unmount does not discard search or Diff state.
+- Added one visible atomic polite status for copy success and failure. File and hunk separators use named spanning cells, and existing table row counts, row indexes, line-cell semantics, visible `+`/`-` prefixes, and screen-reader line-kind labels remain consistent.
+- Added labeled Previous and Next search controls for touch users, responsive toolbar wrapping, larger coarse-pointer targets, compact mobile gutters, inline safe-area margins, inset focus indicators, forced-colors treatments, adaptive light/dark colors, and explicit reduced-motion-safe horizontal scrolling.
+- Added pure and component coverage for exact copied text, operations and modes, hunkless and binary behavior, C-style path quoting, keyboard activation, clipboard success and rejection, write serialization, repeated announcements, focus retention, diff replacement, unmount cleanup, and preserved search/table state.
+- A generated 100,000-line target reconstructed both full-file and hunk text in 15 ms in the final isolated local run. The Vitest worker reported approximately 50 MB before and 65 MB after the measured reconstruction; the automated bound permits less than 128 MB observed heap growth and 5 seconds per operation.
+- `npm run check` passed with 157 frontend tests, `npm run build` passed, `cargo fmt --manifest-path backend/Cargo.toml -- --check` passed, `cargo test --manifest-path backend/Cargo.toml` passed with 118 tests, and `git diff --check` passed.
+- Both final Stage 10 reviewers reported no actionable findings. Real-browser peak allocation and clipboard latency, permission prompts, repeated screen-reader announcements, forced-colors visuals, physical mobile touch/zoom, safe areas, sticky behavior, and horizontal-rail interaction remain manual or Stage 11 risks.
+- A replacement Diff remains copy-blocked only while an already-started native clipboard write is unresolved. This intentional ordering guarantee prevents stale writes from overwriting a newer copied result.
 
 ### Stage 11: Performance Validation And Release Readiness
 
