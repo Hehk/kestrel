@@ -21,6 +21,7 @@ import { firstMatchAtOrAfterRow, searchDiff } from "./search";
 type MountedSearchMatch = { active: boolean; length: number; offset: number };
 type PendingResultNavigation = { move: number; query: string };
 type CopyOutcome = { kind: "failure" | "success"; message: string };
+const MAX_MOUNTED_MATCHES_PER_ROW = 200;
 
 export const DiffView = (props: { diff: PullRequestDiff }) => {
   let table: HTMLDivElement | undefined;
@@ -212,11 +213,26 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
     if (searchPending()) return [];
     const results = searchResults();
     const matches: MountedSearchMatch[] = [];
-    for (
-      let resultIndex = firstMatchAtOrAfterRow(results, rowIndex);
-      resultIndex < results.count && results.rowIndexes[resultIndex] === rowIndex;
-      resultIndex += 1
+    const firstResultIndex = firstMatchAtOrAfterRow(results, rowIndex);
+    const endResultIndex = firstMatchAtOrAfterRow(results, rowIndex + 1);
+    const rowResultCount = endResultIndex - firstResultIndex;
+    let renderedStartIndex = firstResultIndex;
+    const activeIndex = activeResultIndex();
+    if (
+      rowResultCount > MAX_MOUNTED_MATCHES_PER_ROW &&
+      activeIndex >= firstResultIndex &&
+      activeIndex < endResultIndex
     ) {
+      renderedStartIndex = Math.min(
+        Math.max(activeIndex - Math.floor(MAX_MOUNTED_MATCHES_PER_ROW / 2), firstResultIndex),
+        endResultIndex - MAX_MOUNTED_MATCHES_PER_ROW,
+      );
+    }
+    const renderedEndIndex = Math.min(
+      renderedStartIndex + MAX_MOUNTED_MATCHES_PER_ROW,
+      endResultIndex,
+    );
+    for (let resultIndex = renderedStartIndex; resultIndex < renderedEndIndex; resultIndex += 1) {
       matches.push({
         active: resultIndex === activeResultIndex(),
         length: results.matchLengths[resultIndex] as number,
@@ -445,7 +461,7 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
                 ? "Searching..."
                 : searchResults().count === 0
                   ? "No results"
-                  : `${activeResultIndex() + 1} of ${searchResults().count}`}
+                  : `${activeResultIndex() + 1} of ${searchResults().count}${searchResults().truncated ? "+ (results limited)" : ""}`}
           </span>
         </div>
         <div

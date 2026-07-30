@@ -6,13 +6,17 @@ export type DiffSearchResults = {
   readonly matchOffsets: Uint32Array;
   readonly matchLengths: Uint32Array;
   readonly count: number;
+  readonly truncated: boolean;
 };
+
+export const MAX_DIFF_SEARCH_RESULTS = 2_000_000;
 
 const EMPTY_RESULTS: DiffSearchResults = {
   count: 0,
   matchLengths: new Uint32Array(0),
   matchOffsets: new Uint32Array(0),
   rowIndexes: new Uint32Array(0),
+  truncated: false,
 };
 
 export const searchDiff = (layout: DiffLayout, query: string): DiffSearchResults => {
@@ -21,7 +25,10 @@ export const searchDiff = (layout: DiffLayout, query: string): DiffSearchResults
   let count = 0;
   visitMatches(layout, matcher, () => {
     count += 1;
+    return count <= MAX_DIFF_SEARCH_RESULTS;
   });
+  const truncated = count > MAX_DIFF_SEARCH_RESULTS;
+  count = Math.min(count, MAX_DIFF_SEARCH_RESULTS);
   const rowIndexes = new Uint32Array(count);
   const matchOffsets = new Uint32Array(count);
   const matchLengths = new Uint32Array(count);
@@ -31,15 +38,16 @@ export const searchDiff = (layout: DiffLayout, query: string): DiffSearchResults
     matchOffsets[resultIndex] = offset;
     matchLengths[resultIndex] = length;
     resultIndex += 1;
+    return resultIndex < count;
   });
 
-  return { count, matchLengths, matchOffsets, rowIndexes };
+  return { count, matchLengths, matchOffsets, rowIndexes, truncated };
 };
 
 const visitMatches = (
   layout: DiffLayout,
   matcher: RegExp,
-  visit: (rowIndex: number, offset: number, length: number) => void,
+  visit: (rowIndex: number, offset: number, length: number) => boolean | void,
 ) => {
   for (let fileIndex = 0; fileIndex < layout.diff.files.length; fileIndex += 1) {
     const file = layout.diff.files[fileIndex];
@@ -54,7 +62,7 @@ const visitMatches = (
         matcher.lastIndex = 0;
         let match = matcher.exec(content);
         while (match !== null) {
-          visit(firstSourceRow + lineIndex, match.index, match[0].length);
+          if (visit(firstSourceRow + lineIndex, match.index, match[0].length) === false) return;
           match = matcher.exec(content);
         }
       }

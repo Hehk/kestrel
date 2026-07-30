@@ -1361,23 +1361,23 @@ cargo test --manifest-path backend/Cargo.toml
 
 **Todos:**
 
-- [ ] Create repeatable 50,000-line and 100,000-line profiling scenarios.
-- [ ] Measure backend parsing and DTO construction.
-- [ ] Measure JSON serialization and compressed response size.
-- [ ] Review Diff endpoint usage logs using `FUTURE_WORK.md` and add concurrency or delivery controls only if observed memory, latency, or overlap justifies them.
-- [ ] Measure browser JSON parsing and layout-index construction.
-- [ ] Measure retained browser heap before and after visiting several large pull requests.
-- [ ] Confirm only one current parsed diff remains retained.
-- [ ] Profile rapid top-to-bottom scrolling in a production build.
-- [ ] Tune virtualizer overscan based on observed blanking and frame cost.
-- [ ] Measure common and rare search queries.
-- [ ] Measure high-cardinality search result allocation and Copy file/Copy hunk construction, peak heap, and real-browser clipboard latency.
-- [ ] Profile large literal and delta binary patches and confirm payload bytes do not escape into semantic DTOs or JSON.
-- [ ] Confirm the diff's total virtual height remains within browser layout limits at the target scale.
-- [ ] Run the complete frontend and backend suites after tuning.
-- [ ] Review the final OpenAPI diff and generated schema.
-- [ ] Record measured results and any intentionally deferred bottlenecks.
-- [ ] Run the two-agent review gate, resolve accepted findings, and rerun the complete verification suite.
+- [x] Create repeatable 50,000-line and 100,000-line profiling scenarios.
+- [x] Measure backend parsing and DTO construction.
+- [x] Measure JSON serialization and compressed response size.
+- [x] Review Diff endpoint usage logs using `FUTURE_WORK.md` and add concurrency or delivery controls only if observed memory, latency, or overlap justifies them.
+- [x] Measure browser JSON parsing and layout-index construction.
+- [x] Measure retained browser heap before and after visiting several large pull requests.
+- [x] Confirm only one current parsed diff remains retained.
+- [x] Profile rapid top-to-bottom scrolling in a production build.
+- [x] Tune virtualizer overscan based on observed blanking and frame cost.
+- [x] Measure common and rare search queries.
+- [x] Measure high-cardinality search result allocation and Copy file/Copy hunk construction, peak heap, and real-browser clipboard latency.
+- [x] Profile large literal and delta binary patches and confirm payload bytes do not escape into semantic DTOs or JSON.
+- [x] Confirm the diff's total virtual height remains within browser layout limits at the target scale.
+- [x] Run the complete frontend and backend suites after tuning.
+- [x] Review the final OpenAPI diff and generated schema.
+- [x] Record measured results and any intentionally deferred bottlenecks.
+- [x] Run the two-agent review gate, resolve accepted findings, and rerun the complete verification suite.
 
 **Full Verification:**
 
@@ -1414,6 +1414,23 @@ cargo clippy --manifest-path backend/Cargo.toml --all-targets -- -D warnings
 - Performance has been measured rather than inferred.
 - No backend parsed cache, parsed SQLite column, Web Worker, or chunked API has been added without a measured need.
 - The implementation is ready for normal code review and release.
+
+**Stage Record (2026-07-30):**
+
+- Added repeatable dependency-free release profilers: `npm run profile:diff` and `npm run profile:diff:mobile` build a temporary production Solid bundle and drive it through Chrome CDP, while `npm run profile:diff:backend` runs ignored release-mode Rust pipeline and real-endpoint overlap scenarios. Outputs include revision, dirty state, CPU, runtime/browser, viewport, units, 20-sample median/p95/max timing, bytes, heap observations, and enforced correctness budgets.
+- Recorded on Apple M5, Chrome 150, Node 25.9.0, and the Stage 10 revision plus this dirty Stage 11 worktree. Desktop was 1440x900 and mobile was 390x844. The Chrome runner supports `CHROME_PATH`, Linux/macOS discovery, custom `--viewport`, pre-navigation clipboard permission, command/startup timeouts, and bounded process/temp cleanup.
+- The 50,000/100,000-line browser scenarios produced 4.83/9.68 MB JSON. Median JSON parse was 3.8/7.5 ms, compact layout construction 1.1/2.0 ms, common search 18.3/34.0 ms, rare search 1.0/2.1 ms, and Copy file construction 1.0/2.2 ms. The 100,000-line native clipboard write median was 6.9 ms.
+- Common search retained 500,003/1,000,003 matches in exactly 6.0/12.0 MB typed indexes. Chrome's observed after-operation heap delta was approximately 20.5/41.0 MB. Copy file/hunk construction observed about 4.0/8.6 MB at 50,000/100,000 lines, and the 100,000-line clipboard transfer observed about 1.24 MB additional heap.
+- Measured aggregate dense search justified a hard retained-result ceiling of 2,000,000 matches, or 24 MB typed indexes. The visible atomic status reports `results limited`; later matches are intentionally not navigable. Mounted rendering is independently capped at 200 marks per row while preserving first, final, active, wraparound, source text, and full retained-result navigation. The capped five-line browser case completed search/render in 137 ms with about 51.5 MB observed heap delta and 1,000 mounted marks.
+- Measured worst-case tab expansion justified reducing the API source-line limit from 2 MiB to 512 KiB. The exact boundary is parser-tested and browser-profiled. Its 2,097,149 visual columns produced a 19.32 million CSS-pixel desktop rail and 17.17 million mobile rail, stayed below the enforced 25 million budget, and revealed the final character in Chrome. Renderer-only tests continue to cover larger direct DTO lines.
+- Rapid production scrolling through 50,002 rows reached the final row with zero blank frames. Desktop/mobile mounted at most 79/77 rows and recorded 17.8/17.7 ms p95 frame duration. Overscan remains 20 because both viewports stayed below the 200-row DOM budget without blanking. Measured virtual heights were 1,200,072 and 2,400,072 CSS pixels for 50,000 and 100,000 source lines.
+- Three sequential 100,000-line replacements within one mounted `DiffView` stabilized at approximately 19.1, 24.0, and 24.1 MB used heap and returned near 18.0 MB after disposal. Reducer/store tests independently prove that only one current parsed Diff slot survives route changes and superseded responses.
+- Release Rust profiling measured the one-hunk 100,000-line pipeline at roughly 4.5 ms parse, 0.1-0.8 ms DTO construction, 7.2 ms serialization, and 19.1 ms gzip median. A 1.48 MB raw diff became 9.96 MB JSON and 553 KB gzip. The 100,000-line header-heavy shape remained similar, with gzip around 28.4 ms.
+- A 967 KB generated literal/delta binary patch parsed in about 1.3 ms and produced only 197 bytes JSON or 156 bytes gzip, confirming payload bytes do not enter semantic DTOs or output. Existing endpoint tests also reject payload markers and bound the binary response body.
+- The real Axum/SQLite/`spawn_blocking`/CompressionLayer overlap profile consumed complete gzip bodies. One 100,000-line request took approximately 37-45 ms, two overlapping requests 53-54 ms, and four 93-94 ms; the full profile process peaked near 158 MB RSS. These controlled target-scale results do not justify a semaphore, response limit, delivery timeout, or cache. `FUTURE_WORK.md` records that deployed distributions, queue delay, in-flight RSS, and slow-client retention still require production observation.
+- Added a self-contained `--openapi` backend export. `npm run api:check` now compares against the current checkout without a running service, and CI enforces generated-schema drift in a dedicated Node/Rust job. Final review found no endpoint or DTO schema change.
+- Explicit deferrals: true allocation-peak sampling beyond precise before/after Chrome heap observations; full route/store CDP heap snapshots beyond same-component replacement plus reducer proofs; deployed timing/overlap distributions; slow-client delivery retention; permission-prompt latency; non-Chromium horizontal layout limits; physical mobile/browser-chrome behavior; and screen-reader confirmation. These are measurement limitations, not evidence for speculative caches, workers, chunked APIs, or concurrency controls.
+- Final verification passed `npm run check` with 160 frontend tests, `npm run build`, self-contained `npm run api:check`, backend formatting, 119 locked backend tests plus two ignored release profilers, locked all-target Clippy with warnings denied, desktop/mobile browser profiles, backend release profiles, and `git diff --check`. Both final Stage 11 reviewers reported no remaining production findings after accepted fixes.
 
 ## Follow-Up Possibilities
 

@@ -17,7 +17,7 @@ const MAX_SEMANTIC_LINES: usize = 200_000;
 const MAX_PATH_BYTES: usize = 16 * 1024;
 const MAX_UNQUOTED_PATH_SPACES: usize = 256;
 const MAX_PATH_COMPLEXITY: usize = 32 * 1024 * 1024;
-const MAX_SOURCE_LINE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_SOURCE_LINE_BYTES: usize = 512 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PullRequestDiffFile {
@@ -1108,6 +1108,20 @@ mod tests {
         let lines = &text_hunks(&files[0])[0].lines;
         assert_eq!(lines[0].content.len(), 64 * 1024);
         assert_eq!(lines[1].content.len(), 64 * 1024 + 1);
+    }
+
+    #[test]
+    fn parse_pull_request_diff_accepts_the_source_line_byte_boundary() {
+        let source = "\t".repeat(MAX_SOURCE_LINE_BYTES);
+        let raw = format!(
+            "diff --git a/large.txt b/large.txt\nindex 1111111..2222222 100644\n--- a/large.txt\n+++ b/large.txt\n@@ -1 +1 @@\n {source}\n"
+        );
+
+        let files = parse_pull_request_diff(&raw).expect("boundary source line should parse");
+        assert_eq!(
+            text_hunks(&files[0])[0].lines[0].content.len(),
+            MAX_SOURCE_LINE_BYTES
+        );
     }
 
     #[test]

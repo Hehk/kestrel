@@ -19,4 +19,4 @@ These fixtures are small GitHub-style git diffs used to validate the pull reques
 
 Keep these committed fixtures short and readable. Performance fixtures with 50,000 or 100,000 lines must be generated in tests or profiling scripts rather than checked into source control.
 
-Generated performance scenarios must be deterministic and record expected file, hunk, source-line, and visual-row counts. The canonical matrix includes one large hunk, many files, many hunks, alternating line kinds, and header-heavy input. Pathological generated inputs also cover high match cardinality, 64 KiB and 1 MiB source lines, one 100,000-line copy target, and large literal and delta binary patches.
+Generated performance scenarios must be deterministic and record expected file, hunk, source-line, and visual-row counts. The canonical matrix includes one large hunk, many files, many hunks, alternating line kinds, and header-heavy input. Pathological generated inputs also cover high match cardinality, 64 KiB renderer-only lines, the 512 KiB API source-line boundary, one 100,000-line copy target, and large literal and delta binary patches.

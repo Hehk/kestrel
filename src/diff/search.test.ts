@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildDiffLayout } from "./layout";
 import type { PullRequestDiff } from "./layout";
-import { firstMatchAtOrAfterRow, searchDiff } from "./search";
+import { firstMatchAtOrAfterRow, MAX_DIFF_SEARCH_RESULTS, searchDiff } from "./search";
 
 describe("diff search", () => {
   it("finds case-insensitive repeated matches in semantic row order", () => {
@@ -13,6 +13,7 @@ describe("diff search", () => {
     expect(Array.from(results.matchOffsets)).toEqual([0, 7, 2]);
     expect(Array.from(results.matchLengths)).toEqual([6, 6, 6]);
     expect(results.rowIndexes).toBeInstanceOf(Uint32Array);
+    expect(results.truncated).toBe(false);
     expect(firstMatchAtOrAfterRow(results, 0)).toBe(0);
     expect(firstMatchAtOrAfterRow(results, 3)).toBe(2);
     expect(firstMatchAtOrAfterRow(results, 5)).toBe(3);
@@ -58,6 +59,21 @@ describe("diff search", () => {
     },
     20_000,
   );
+
+  it("caps retained matches before aggregate search allocation becomes unsafe", () => {
+    const results = searchDiff(
+      buildDiffLayout(diffWithLines(Array.from({ length: 5 }, () => "a".repeat(400_001)))),
+      "a",
+    );
+
+    expect(results.count).toBe(MAX_DIFF_SEARCH_RESULTS);
+    expect(results.truncated).toBe(true);
+    expect(
+      results.rowIndexes.byteLength +
+        results.matchOffsets.byteLength +
+        results.matchLengths.byteLength,
+    ).toBe(MAX_DIFF_SEARCH_RESULTS * 12);
+  }, 20_000);
 });
 
 const diffWithLines = (contents: string[]): PullRequestDiff => ({

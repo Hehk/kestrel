@@ -51,6 +51,12 @@ Use measured distributions and concurrent-request observations to decide whether
 
 Any such control should include a targeted test and a documented threshold derived from measurements.
 
+### Stage 11 Baseline
+
+The 2026-07-30 release profile exercised the real Axum endpoint with a generated 100,000-line snapshot, gzip negotiation, complete body consumption, and concurrency levels 1, 2, and 4. On the recorded Apple M5 release build, total completion time was approximately 37-45 ms for one request, 53-54 ms for two overlapping requests, and 93-94 ms for four. The complete profiling process, including serial 50,000-line, 100,000-line, header-heavy, and binary scenarios, peaked near 158 MB RSS.
+
+These controlled results do not justify an admission limit, response-size limit, delivery timeout, or cache at the current target scale. They also do not replace production distributions: no deployed usage-log corpus or slow-client sample was available. Continue collecting the existing endpoint timing and size fields. Add an in-flight gauge and queue-delay timing before considering concurrency controls, and measure slow-client retention before considering a delivery timeout. Revisit controls if production overlap materially increases blocking time or process RSS relative to the deployment memory budget.
+
 ## Backend Profiling
 
 The backend does not currently include an embedded sampling profiler or profiling endpoint. It has:

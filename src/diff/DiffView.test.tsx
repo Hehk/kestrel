@@ -536,6 +536,57 @@ describe("DiffView", () => {
     expect(rail.scrollLeft).toBe(400);
   });
 
+  it("bounds dense mounted highlights while keeping the active result rendered", async () => {
+    const diff = smallDiff();
+    const sourceLine = diff.files[0]?.hunks[0]?.lines[1];
+    if (sourceLine !== undefined) sourceLine.content = "x ".repeat(500);
+    const { container } = render(() => <DiffView diff={diff} />);
+    const input = await screen.findByRole("searchbox", { name: "Search diff" });
+
+    fireEvent.input(input, { target: { value: "x" } });
+    expect(await screen.findByText("1 of 500")).toBeInTheDocument();
+    let marks = container.querySelectorAll("mark");
+    expect(marks).toHaveLength(200);
+    expect(container.querySelector(".pr-diff-searchMatch--active")).toBe(marks[0]);
+    expect(
+      marks[0]?.closest(".pr-diff-sourceContent")?.textContent?.endsWith(sourceLine?.content ?? ""),
+    ).toBe(true);
+
+    input.focus();
+    await userEvent.setup().keyboard("{Shift>}{Enter}{/Shift}");
+    expect(await screen.findByText("500 of 500")).toBeInTheDocument();
+    marks = container.querySelectorAll("mark");
+    expect(marks).toHaveLength(200);
+    expect(container.querySelectorAll(".pr-diff-searchMatch--active")).toHaveLength(1);
+    expect(container.querySelector(".pr-diff-searchMatch--active")).toBe(marks[199]);
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Next search result" }));
+    expect(await screen.findByText("1 of 500")).toBeInTheDocument();
+    expect(container.querySelector(".pr-diff-searchMatch--active")).toBe(
+      container.querySelectorAll("mark")[0],
+    );
+  });
+
+  it("announces when dense full-Diff search results are limited", async () => {
+    const diff = smallDiff();
+    const hunk = diff.files[0]?.hunks[0];
+    if (hunk !== undefined) {
+      hunk.lines = Array.from({ length: 5 }, (_, index) =>
+        diffLine(index, "context", "a".repeat(400_001)),
+      );
+      hunk.oldCount = 5;
+      hunk.newCount = 5;
+    }
+    const { container } = render(() => <DiffView diff={diff} />);
+    const input = await screen.findByRole("searchbox", { name: "Search diff" });
+
+    fireEvent.input(input, { target: { value: "a" } });
+
+    const status = await screen.findByText("1 of 2000000+ (results limited)");
+    expect(status).toHaveAttribute("aria-live", "polite");
+    expect(container.querySelectorAll("mark")).toHaveLength(1_000);
+  }, 20_000);
+
   it("centers and mounts a distant search result", async () => {
     vi.spyOn(document.documentElement, "scrollHeight", "get").mockReturnValue(30_000);
     const { container } = render(() => <DiffView diff={largeDiff(1_000)} />);

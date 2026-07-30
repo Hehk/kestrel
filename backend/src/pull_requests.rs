@@ -2399,10 +2399,15 @@ mod tests {
         Json, Router,
     };
     use base64::{engine::general_purpose::STANDARD, Engine};
-    use flate2::read::GzDecoder;
+    use flate2::{read::GzDecoder, write::GzEncoder, Compression};
     use serde_json::Value;
     use sqlx::SqlitePool;
-    use std::{collections::HashMap, fmt::Write, io::Read};
+    use std::{
+        collections::HashMap,
+        fmt::Write,
+        io::Read,
+        time::{Duration, Instant},
+    };
     use tokio::net::TcpListener;
     use tower::ServiceExt;
 
@@ -3370,6 +3375,193 @@ mod tests {
             .expect("lines should be an array");
         assert_eq!(lines.len(), 50_000);
         assert_eq!(lines[49_999]["newLine"], 25_000);
+    }
+
+    #[test]
+    #[ignore = "release profiling scenario"]
+    fn profile_pull_request_diff_pipeline() {
+        for (scenario, raw) in [
+            ("text-50000", generated_profile_diff(1, 1, 25_000)),
+            ("text-100000", generated_profile_diff(1, 1, 50_000)),
+            (
+                "text-100000-many-files",
+                generated_profile_diff(100, 10, 50),
+            ),
+            ("binary-literal-delta", generated_profile_binary_diff()),
+        ] {
+            let mut parse_samples = Vec::new();
+            let mut dto_samples = Vec::new();
+            let mut serialize_samples = Vec::new();
+            let mut gzip_samples = Vec::new();
+            let mut response_bytes = 0;
+            let mut gzip_bytes = 0;
+            let sample_count = 20;
+
+            for sample_index in 0..=sample_count {
+                let parse_started_at = Instant::now();
+                let parsed = crate::pull_request_diff::parse_pull_request_diff(&raw)
+                    .expect("profile diff should parse");
+                let parse_duration = parse_started_at.elapsed();
+
+                let dto_started_at = Instant::now();
+                let files: Vec<super::PullRequestDiffFileDto> =
+                    parsed.into_iter().map(Into::into).collect();
+                let response = super::PullRequestDiffResponse {
+                    files,
+                    synced_at: "2026-01-04T00:00:00Z".to_string(),
+                };
+                let dto_duration = dto_started_at.elapsed();
+
+                let serialize_started_at = Instant::now();
+                let body =
+                    serde_json::to_vec(&response).expect("profile response should serialize");
+                let serialize_duration = serialize_started_at.elapsed();
+
+                let gzip_started_at = Instant::now();
+                let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+                std::io::Write::write_all(&mut encoder, &body)
+                    .expect("profile response should compress");
+                let compressed = encoder.finish().expect("gzip stream should finish");
+                let gzip_duration = gzip_started_at.elapsed();
+
+                response_bytes = body.len();
+                gzip_bytes = compressed.len();
+                std::hint::black_box((response, body, compressed));
+                if sample_index > 0 {
+                    parse_samples.push(parse_duration);
+                    dto_samples.push(dto_duration);
+                    serialize_samples.push(serialize_duration);
+                    gzip_samples.push(gzip_duration);
+                }
+            }
+
+            println!(
+                "DIFF_BACKEND_PROFILE {}",
+                serde_json::json!({
+                    "dtoMicros": duration_summary(&mut dto_samples),
+                    "gzipBytes": gzip_bytes,
+                    "gzipMicros": duration_summary(&mut gzip_samples),
+                    "parseMicros": duration_summary(&mut parse_samples),
+                    "rawBytes": raw.len(),
+                    "responseBytes": response_bytes,
+                    "samples": sample_count,
+                    "scenario": scenario,
+                    "serializeMicros": duration_summary(&mut serialize_samples),
+                })
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "release profiling scenario"]
+    async fn profile_pull_request_diff_endpoint_overlap() {
+        let config = test_config();
+        let db = test_db().await;
+        insert_tracked_repository(&db).await;
+        let raw = generated_profile_diff(1, 1, 50_000);
+        insert_pull_request_diff_snapshot(&db, Some(&raw)).await;
+        let cookie = session_cookie(&db, &config).await;
+        let router = app(&config, AppState::new(db, config.clone()));
+
+        for concurrency in [1_u32, 2, 4] {
+            let started_at = Instant::now();
+            let requests = (0..concurrency).map(|_| {
+                let service = router.clone();
+                let mut request = pull_request_diff_request(
+                    &cookie,
+                    "/api/repositories/kestrel/app/pull-requests/42/diff",
+                );
+                request.headers_mut().insert(
+                    header::ACCEPT_ENCODING,
+                    "gzip".parse().expect("gzip header should parse"),
+                );
+                async move {
+                    let response = service
+                        .oneshot(request)
+                        .await
+                        .expect("profile request should complete");
+                    assert_eq!(response.status(), StatusCode::OK);
+                    assert_eq!(
+                        response
+                            .headers()
+                            .get(header::CONTENT_ENCODING)
+                            .and_then(|value| value.to_str().ok()),
+                        Some("gzip")
+                    );
+                    to_bytes(response.into_body(), 2 * 1024 * 1024)
+                        .await
+                        .expect("compressed profile response should remain bounded")
+                        .len()
+                }
+            });
+            let response_sizes = futures_util::future::join_all(requests).await;
+            let elapsed = started_at.elapsed();
+            println!(
+                "DIFF_BACKEND_ENDPOINT_PROFILE {}",
+                serde_json::json!({
+                    "compressedBytesPerResponse": response_sizes,
+                    "concurrency": concurrency,
+                    "rawBytes": raw.len(),
+                    "totalMicros": elapsed.as_micros() as u64,
+                })
+            );
+        }
+    }
+
+    fn generated_profile_diff(
+        file_count: usize,
+        hunks_per_file: usize,
+        changes_per_side: usize,
+    ) -> String {
+        let mut raw = String::new();
+        for file_index in 0..file_count {
+            writeln!(
+                raw,
+                "diff --git a/file-{file_index}.txt b/file-{file_index}.txt"
+            )
+            .expect("diff header should write");
+            raw.push_str("index 1111111..2222222 100644\n");
+            writeln!(raw, "--- a/file-{file_index}.txt").expect("old path should write");
+            writeln!(raw, "+++ b/file-{file_index}.txt").expect("new path should write");
+            for hunk_index in 0..hunks_per_file {
+                let start = hunk_index * changes_per_side + 1;
+                writeln!(
+                    raw,
+                    "@@ -{start},{changes_per_side} +{start},{changes_per_side} @@"
+                )
+                .expect("hunk header should write");
+                for line_index in 0..changes_per_side {
+                    writeln!(raw, "-old-{file_index}-{hunk_index}-{line_index}")
+                        .expect("deletion should write");
+                }
+                for line_index in 0..changes_per_side {
+                    writeln!(raw, "+new-{file_index}-{hunk_index}-{line_index}")
+                        .expect("addition should write");
+                }
+            }
+        }
+        raw
+    }
+
+    fn generated_profile_binary_diff() -> String {
+        let literal_payload = "LcmZQzWcm*P0SW;F\n".repeat(16_384);
+        let delta_payload = "ccmV+t0PX*P2!IH%^Z^9`00000v-trB0x!=5aR2}S\n".repeat(16_384);
+        format!(
+            "diff --git a/large.bin b/large.bin\nindex 1111111..2222222 100644\nGIT binary patch\nliteral 1048576\n{literal_payload}\ndelta 1048576\n{delta_payload}\n"
+        )
+    }
+
+    fn duration_summary(samples: &mut [Duration]) -> Value {
+        samples.sort_unstable();
+        let percentile = |numerator: usize| {
+            let index = (samples.len() * numerator).div_ceil(100).saturating_sub(1);
+            samples[index].as_micros() as u64
+        };
+        serde_json::json!({
+            "median": percentile(50),
+            "p95": percentile(95),
+            "max": samples.last().map_or(0, |duration| duration.as_micros() as u64),
+        })
     }
 
     #[tokio::test]
