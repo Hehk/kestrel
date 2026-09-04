@@ -1,4 +1,5 @@
 import type { PullRequestDiffFile, PullRequestDiffHunk } from "./layout";
+import { diffFilePaths } from "./layout";
 
 const MISSING_NEWLINE = "\\ No newline at end of file";
 
@@ -6,65 +7,65 @@ export const buildHunkCopyText = (
   file: PullRequestDiffFile,
   hunk: PullRequestDiffHunk,
 ): string | null => {
-  if (file.binary) return null;
+  if (file.content.kind === "binary") return null;
   const chunks: string[] = [];
-  appendLines(chunks, fileHeaders(file));
+  for (const line of fileHeaders(file)) appendLine(chunks, line);
   appendHunk(chunks, hunk);
   return chunks.join("");
 };
 
 export const buildFileCopyText = (file: PullRequestDiffFile): string | null => {
-  if (file.binary) return null;
+  if (file.content.kind === "binary") return null;
   const chunks: string[] = [];
   appendLine(chunks, diffHeader(file));
-  appendLines(chunks, fileMetadata(file));
-  if (file.hunks.length > 0) appendLines(chunks, fileHeaders(file));
-  for (const hunk of file.hunks) appendHunk(chunks, hunk);
+  for (const line of fileMetadata(file)) appendLine(chunks, line);
+  if (file.content.hunks.length > 0) {
+    for (const line of fileHeaders(file)) appendLine(chunks, line);
+  }
+  for (const hunk of file.content.hunks) appendHunk(chunks, hunk);
   return chunks.join("");
 };
 
 const diffHeader = (file: PullRequestDiffFile): string => {
-  const oldPath = file.oldPath ?? file.newPath ?? "unknown";
-  const newPath = file.newPath ?? file.oldPath ?? "unknown";
-  return `diff --git ${quotePath(`a/${oldPath}`)} ${quotePath(`b/${newPath}`)}`;
+  const { oldPath, newPath } = diffFilePaths(file);
+  return `diff --git ${quotePath(`a/${oldPath ?? newPath ?? "unknown"}`)} ${quotePath(`b/${newPath ?? oldPath ?? "unknown"}`)}`;
 };
 
 const fileMetadata = (file: PullRequestDiffFile): string[] => {
   const lines: string[] = [];
-  switch (file.operation) {
+  const operation = file.operation;
+  switch (operation.kind) {
     case "added":
-      if (file.newMode !== null) lines.push(`new file mode ${file.newMode}`);
+      lines.push(`new file mode ${operation.mode}`);
       break;
     case "deleted":
-      if (file.oldMode !== null) lines.push(`deleted file mode ${file.oldMode}`);
+      lines.push(`deleted file mode ${operation.mode}`);
       break;
     case "renamed":
-      if (file.oldPath !== null) lines.push(`rename from ${quotePath(file.oldPath)}`);
-      if (file.newPath !== null) lines.push(`rename to ${quotePath(file.newPath)}`);
+      lines.push(`rename from ${quotePath(operation.oldPath)}`);
+      lines.push(`rename to ${quotePath(operation.newPath)}`);
       break;
     case "copied":
-      if (file.oldPath !== null) lines.push(`copy from ${quotePath(file.oldPath)}`);
-      if (file.newPath !== null) lines.push(`copy to ${quotePath(file.newPath)}`);
+      lines.push(`copy from ${quotePath(operation.oldPath)}`);
+      lines.push(`copy to ${quotePath(operation.newPath)}`);
       break;
     case "modified":
       break;
   }
-  if (
-    file.operation !== "added" &&
-    file.operation !== "deleted" &&
-    file.oldMode !== null &&
-    file.newMode !== null &&
-    file.oldMode !== file.newMode
-  ) {
-    lines.push(`old mode ${file.oldMode}`, `new mode ${file.newMode}`);
+  if ("modeChange" in operation && operation.modeChange.kind === "changed") {
+    const { oldMode, newMode } = operation.modeChange;
+    lines.push(`old mode ${oldMode}`, `new mode ${newMode}`);
   }
   return lines;
 };
 
-const fileHeaders = (file: PullRequestDiffFile): string[] => [
-  `--- ${file.oldPath === null ? "/dev/null" : quotePath(`a/${file.oldPath}`)}`,
-  `+++ ${file.newPath === null ? "/dev/null" : quotePath(`b/${file.newPath}`)}`,
-];
+const fileHeaders = (file: PullRequestDiffFile): string[] => {
+  const { oldPath, newPath } = diffFilePaths(file);
+  return [
+    `--- ${oldPath === null ? "/dev/null" : quotePath(`a/${oldPath}`)}`,
+    `+++ ${newPath === null ? "/dev/null" : quotePath(`b/${newPath}`)}`,
+  ];
+};
 
 const appendHunk = (chunks: string[], hunk: PullRequestDiffHunk) => {
   const context = hunk.context === null ? "" : ` ${hunk.context}`;
@@ -128,10 +129,6 @@ const quotePathCharacter = (character: string): string => {
         : character;
     }
   }
-};
-
-const appendLines = (chunks: string[], lines: string[]) => {
-  for (const line of lines) appendLine(chunks, line);
 };
 
 const appendLine = (chunks: string[], line: string) => chunks.push(line, "\n");

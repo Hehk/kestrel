@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
-import type { PullRequestDiff, PullRequestDiffFile, PullRequestDiffLine } from "./layout";
+import type {
+  PullRequestDiff,
+  PullRequestDiffFile,
+  PullRequestDiffHunk,
+  PullRequestDiffLine,
+} from "./layout";
 import {
   buildDiffLayout,
   DIFF_ROW_HEIGHT,
+  diffFileHunks,
   hunkStartRow,
   rowAt,
   rowHeight,
@@ -10,26 +16,33 @@ import {
   sourceVisualColumns,
 } from "./layout";
 
-const line = (index: number, kind: PullRequestDiffLine["kind"]): PullRequestDiffLine => ({
-  content: `line ${index}`,
-  kind,
-  missingNewline: false,
-  newLine: kind === "deletion" ? null : index + 1,
-  oldLine: kind === "addition" ? null : index + 1,
-});
+const line = (index: number, kind: PullRequestDiffLine["kind"]): PullRequestDiffLine => {
+  const fields = { content: `line ${index}`, missingNewline: false };
+  switch (kind) {
+    case "context":
+      return { ...fields, kind, newLine: index + 1, oldLine: index + 1 };
+    case "addition":
+      return { ...fields, kind, newLine: index + 1 };
+    case "deletion":
+      return { ...fields, kind, oldLine: index + 1 };
+  }
+};
 
-const file = (overrides: Partial<PullRequestDiffFile> = {}): PullRequestDiffFile => ({
-  additions: 0,
-  binary: false,
-  deletions: 0,
-  hunks: [],
-  newMode: "100644",
-  newPath: "src/file.ts",
-  oldMode: "100644",
-  oldPath: "src/file.ts",
-  operation: "modified",
-  ...overrides,
-});
+type FileOverrides = Omit<Partial<PullRequestDiffFile>, "content"> & {
+  binary?: boolean;
+  hunks?: PullRequestDiffHunk[];
+};
+
+const file = (overrides: FileOverrides = {}): PullRequestDiffFile => {
+  const { binary = false, hunks = [], ...fields } = overrides;
+  return {
+    additions: 0,
+    content: binary ? { kind: "binary" } : { hunks, kind: "text" },
+    deletions: 0,
+    operation: { kind: "modified", modeChange: { kind: "unchanged" }, path: "src/file.ts" },
+    ...fields,
+  };
+};
 
 const canonicalDiff = (): PullRequestDiff => ({
   files: [
@@ -53,8 +66,21 @@ const canonicalDiff = (): PullRequestDiff => ({
         },
       ],
     }),
-    file({ binary: true, hunks: [], newPath: "asset.bin", oldPath: "asset.bin" }),
-    file({ newMode: "100755", newPath: "script.sh", oldPath: "script.sh" }),
+    file({
+      binary: true,
+      operation: {
+        kind: "modified",
+        modeChange: { kind: "unchanged" },
+        path: "asset.bin",
+      },
+    }),
+    file({
+      operation: {
+        kind: "modified",
+        modeChange: { kind: "changed", newMode: "100755", oldMode: "100644" },
+        path: "script.sh",
+      },
+    }),
   ],
   syncedAt: "2026-01-04T00:00:00Z",
 });
@@ -89,7 +115,9 @@ describe("diff layout", () => {
     if (firstSourceRow.kind !== "context") {
       throw new Error("expected a context row");
     }
-    expect(firstSourceRow.line).toBe(diff.files[0]?.hunks[0]?.lines[0]);
+    expect(firstSourceRow.line).toBe(
+      diff.files[0] === undefined ? undefined : diffFileHunks(diff.files[0])[0]?.lines[0],
+    );
     expect(rowAt(layout, 7)).toMatchObject({ kind: "notice", notice: "binary" });
     expect(rowAt(layout, 9)).toMatchObject({ kind: "notice", notice: "hunkless" });
     expect(hunkStartRow(layout, 0, 1)).toBe(4);
@@ -147,7 +175,8 @@ describe("diff layout", () => {
     expect(sourceVisualColumns("𛀀𗀀")).toBe(5);
     expect(sourceVisualColumns("ꥠힰ")).toBe(5);
     const missingNewlineDiff = canonicalDiff();
-    const sourceLine = missingNewlineDiff.files[0]?.hunks[0]?.lines[0];
+    const firstFile = missingNewlineDiff.files[0];
+    const sourceLine = firstFile === undefined ? undefined : diffFileHunks(firstFile)[0]?.lines[0];
     if (sourceLine !== undefined) sourceLine.missingNewline = true;
     expect(buildDiffLayout(missingNewlineDiff).maxSourceColumns).toBeGreaterThan(
       sourceVisualColumns(sourceLine?.content ?? ""),
@@ -268,8 +297,11 @@ const generatedDiff = (
             oldStart: hunkIndex * linesPerHunk + 1,
           };
         }),
-        newPath: `src/file-${fileIndex}.ts`,
-        oldPath: `src/file-${fileIndex}.ts`,
+        operation: {
+          kind: "modified",
+          modeChange: { kind: "unchanged" },
+          path: `src/file-${fileIndex}.ts`,
+        },
       }),
     ),
     syncedAt: "2026-01-04T00:00:00Z",

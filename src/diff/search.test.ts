@@ -80,29 +80,27 @@ const diffWithLines = (contents: string[]): PullRequestDiff => ({
   files: [
     {
       additions: 0,
-      binary: false,
+      content: {
+        hunks: [
+          {
+            context: null,
+            lines: contents.map((content, index) => ({
+              content,
+              kind: "context" as const,
+              missingNewline: false,
+              newLine: index + 1,
+              oldLine: index + 1,
+            })),
+            newCount: contents.length,
+            newStart: 1,
+            oldCount: contents.length,
+            oldStart: 1,
+          },
+        ],
+        kind: "text",
+      },
       deletions: 0,
-      hunks: [
-        {
-          context: null,
-          lines: contents.map((content, index) => ({
-            content,
-            kind: "context" as const,
-            missingNewline: false,
-            newLine: index + 1,
-            oldLine: index + 1,
-          })),
-          newCount: contents.length,
-          newStart: 1,
-          oldCount: contents.length,
-          oldStart: 1,
-        },
-      ],
-      newMode: "100644",
-      newPath: "file.txt",
-      oldMode: "100644",
-      oldPath: "file.txt",
-      operation: "modified",
+      operation: { kind: "modified", modeChange: { kind: "unchanged" }, path: "file.txt" },
     },
   ],
   syncedAt: "2026-01-04T00:00:00Z",

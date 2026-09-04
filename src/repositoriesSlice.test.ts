@@ -45,45 +45,45 @@ const pullRequestDetail = (): Repositories.PullRequestDetail => ({
   statuses: [],
   syncedAt: "2026-01-04T00:00:00Z",
   timeline: [],
-  timelineHasOlder: false,
+  timelinePagination: { kind: "complete" },
 });
 
 const pullRequestDiff = (): Repositories.PullRequestDiff => ({
   files: [
     {
       additions: 2,
-      binary: false,
+      content: {
+        hunks: [
+          {
+            context: "fn main()",
+            lines: [
+              {
+                content: "old line",
+                kind: "deletion",
+                missingNewline: false,
+                oldLine: 1,
+              },
+              {
+                content: "new line",
+                kind: "addition",
+                missingNewline: false,
+                newLine: 1,
+              },
+            ],
+            newCount: 1,
+            newStart: 1,
+            oldCount: 1,
+            oldStart: 1,
+          },
+        ],
+        kind: "text",
+      },
       deletions: 1,
-      hunks: [
-        {
-          context: "fn main()",
-          lines: [
-            {
-              content: "old line",
-              kind: "deletion",
-              missingNewline: false,
-              newLine: null,
-              oldLine: 1,
-            },
-            {
-              content: "new line",
-              kind: "addition",
-              missingNewline: false,
-              newLine: 1,
-              oldLine: null,
-            },
-          ],
-          newCount: 1,
-          newStart: 1,
-          oldCount: 1,
-          oldStart: 1,
-        },
-      ],
-      newMode: "100644",
-      newPath: "src/main.rs",
-      oldMode: "100644",
-      oldPath: "src/main.rs",
-      operation: "modified",
+      operation: {
+        kind: "modified",
+        modeChange: { kind: "unchanged" },
+        path: "src/main.rs",
+      },
     },
   ],
   syncedAt: "2026-01-04T00:00:00Z",
@@ -239,17 +239,18 @@ describe("repositoriesSlice", () => {
     }).state;
 
     const result = update(state, {
-      complete: false,
       kind: "PullRequestsSynced",
-      nextPage: 2,
+      pagination: { kind: "hasMore", nextPage: 2 },
       pullRequests: [updatedPullRequest, newPullRequest],
       repository: repo,
     });
 
     const pullRequests = result.state.pullRequests["kestrel/app"];
 
-    expect(pullRequests?.complete).toBe(false);
-    expect(pullRequests?.nextPage).toBe(2);
+    expect(pullRequests?.status === "loaded" ? pullRequests.pagination : undefined).toEqual({
+      kind: "hasMore",
+      nextPage: 2,
+    });
     expect(pullRequests?.pullRequests).toEqual([newPullRequest, updatedPullRequest]);
     expect(pullRequests?.status).toBe("loaded");
     expect(result.cmds).toEqual([]);
@@ -375,7 +376,7 @@ describe("repositoriesSlice", () => {
 
   it("loads older timeline activity without discarding the current detail", () => {
     const repo = repository("kestrel/app");
-    const detail = { ...pullRequestDetail(), timelineHasOlder: true };
+    const detail = { ...pullRequestDetail(), timelinePagination: { kind: "hasOlder" as const } };
     const loaded = update(loadedState([repo]), {
       detail,
       kind: "PullRequestDetailLoaded",

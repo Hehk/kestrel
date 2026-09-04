@@ -118,41 +118,44 @@ const pullRequestDetail = (): PullRequestDetail => {
     timeline: [
       {
         actorLogin: "octocat",
-        body: "looks good",
-        event: "commented",
+        event: {
+          body: "looks good",
+          kind: "commented",
+          url: "https://github.com/kestrel/app/pull/42#issuecomment-1",
+        },
         id: "comment-1",
         occurredAt: "2026-01-04T00:00:00Z",
-        reviewComments: [],
-        url: "https://github.com/kestrel/app/pull/42#issuecomment-1",
       },
       {
         actorLogin: "reviewer",
-        body: "Approved after one small note.",
-        event: "reviewed",
+        event: {
+          body: "Approved after one small note.",
+          kind: "reviewed",
+          reviewComments: {
+            items: [
+              {
+                actorLogin: "reviewer",
+                body: "nit",
+                id: "review-comment-1",
+                occurredAt: "2026-01-03T00:01:00Z",
+              },
+            ],
+            kind: "truncated",
+          },
+          state: "APPROVED",
+          url: "https://github.com/kestrel/app/pull/42#pullrequestreview-1",
+        },
         id: "review-1",
         occurredAt: "2026-01-03T00:00:00Z",
-        reviewComments: [
-          {
-            actorLogin: "reviewer",
-            body: "nit",
-            id: "review-comment-1",
-            occurredAt: "2026-01-03T00:01:00Z",
-          },
-        ],
-        reviewCommentsHasMore: true,
-        state: "APPROVED",
-        url: "https://github.com/kestrel/app/pull/42#pullrequestreview-1",
       },
       {
         actorLogin: "octocat",
-        body: "Add syncing",
-        commitSha: "abcdef123456",
-        event: "committed",
+        event: { commitSha: "abcdef123456", kind: "committed", message: "Add syncing" },
         id: "commit-1",
         occurredAt: "2026-01-02T00:00:00Z",
       },
     ],
-    timelineHasOlder: true,
+    timelinePagination: { kind: "hasOlder" },
   };
 };
 
@@ -160,38 +163,38 @@ const pullRequestDiff = (): PullRequestDiff => ({
   files: [
     {
       additions: 1,
-      binary: false,
+      content: {
+        hunks: [
+          {
+            context: "fn main()",
+            lines: [
+              {
+                content: "old line",
+                kind: "deletion",
+                missingNewline: false,
+                oldLine: 1,
+              },
+              {
+                content: "new line",
+                kind: "addition",
+                missingNewline: false,
+                newLine: 1,
+              },
+            ],
+            newCount: 1,
+            newStart: 1,
+            oldCount: 1,
+            oldStart: 1,
+          },
+        ],
+        kind: "text",
+      },
       deletions: 1,
-      hunks: [
-        {
-          context: "fn main()",
-          lines: [
-            {
-              content: "old line",
-              kind: "deletion",
-              missingNewline: false,
-              newLine: null,
-              oldLine: 1,
-            },
-            {
-              content: "new line",
-              kind: "addition",
-              missingNewline: false,
-              newLine: 1,
-              oldLine: null,
-            },
-          ],
-          newCount: 1,
-          newStart: 1,
-          oldCount: 1,
-          oldStart: 1,
-        },
-      ],
-      newMode: "100644",
-      newPath: "src/main.rs",
-      oldMode: "100644",
-      oldPath: "src/main.rs",
-      operation: "modified",
+      operation: {
+        kind: "modified",
+        modeChange: { kind: "unchanged" },
+        path: "src/main.rs",
+      },
     },
   ],
   syncedAt: "2026-01-04T00:00:00Z",
@@ -274,7 +277,7 @@ const mockAuth = (
 
         const key = `${fullName}#${number}`;
         const detail = pullRequestDetailsByKey[key] ?? pullRequestDetail();
-        const updatedDetail = { ...detail, timelineHasOlder: false };
+        const updatedDetail = { ...detail, timelinePagination: { kind: "complete" as const } };
         pullRequestDetailsByKey = { ...pullRequestDetailsByKey, [key]: updatedDetail };
         return jsonResponse({ pullRequestDetail: updatedDetail });
       }
@@ -349,8 +352,7 @@ const mockAuth = (
           const synced = pullRequestsByRepository[fullName] ?? [];
           pullRequestsByRepository = { ...pullRequestsByRepository, [fullName]: synced };
           return jsonResponse({
-            complete: true,
-            nextPage: null,
+            pagination: { kind: "complete" },
             pullRequests: synced,
             syncedCount: synced.length,
           });
@@ -676,12 +678,12 @@ describe("App", () => {
             ...detail.timeline,
             {
               actorLogin: "octocat",
-              event: "closed",
+              event: { kind: "closed" },
               id: "closed-1",
               occurredAt: "2026-01-01T00:00:00Z",
             },
           ],
-          timelineHasOlder: false,
+          timelinePagination: { kind: "complete" },
         },
       }),
     );
@@ -1209,7 +1211,7 @@ describe("App", () => {
       (fullName) => {
         syncedRepositories.push(fullName);
         const pullRequests = [pullRequest(42, "Add syncing")];
-        return jsonResponse({ complete: true, nextPage: null, pullRequests, syncedCount: 1 });
+        return jsonResponse({ pagination: { kind: "complete" }, pullRequests, syncedCount: 1 });
       },
     );
 
@@ -1232,7 +1234,7 @@ describe("App", () => {
       (fullName) => {
         syncedRepositories.push(fullName);
         const pullRequests = [pullRequest(7, "Fix checkout")];
-        return jsonResponse({ complete: true, nextPage: null, pullRequests, syncedCount: 1 });
+        return jsonResponse({ pagination: { kind: "complete" }, pullRequests, syncedCount: 1 });
       },
     );
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildFileCopyText, buildHunkCopyText } from "./copy";
-import type { PullRequestDiffFile, PullRequestDiffHunk } from "./layout";
+import type { PullRequestDiffFile, PullRequestDiffHunk, PullRequestDiffLine } from "./layout";
 
 describe("diff copy text", () => {
   it("reconstructs file headers, hunks, prefixes, whitespace, and missing-newline markers", () => {
@@ -36,8 +36,11 @@ describe("diff copy text", () => {
     const selected = hunk({ lines: [line("addition", "selected")] });
     const file = diffFile({
       hunks: [selected, hunk({ lines: [line("deletion", "other")] })],
-      newMode: "100755",
-      oldMode: "100644",
+      operation: {
+        kind: "modified",
+        modeChange: { kind: "changed", newMode: "100755", oldMode: "100644" },
+        path: "src/file.ts",
+      },
     });
 
     expect(buildHunkCopyText(file, selected)).toBe(
@@ -50,11 +53,12 @@ describe("diff copy text", () => {
       buildFileCopyText(
         diffFile({
           hunks: [],
-          newMode: "100755",
-          newPath: "scripts/new.sh",
-          oldMode: "100644",
-          oldPath: "scripts/old.sh",
-          operation: "renamed",
+          operation: {
+            kind: "renamed",
+            modeChange: { kind: "changed", newMode: "100755", oldMode: "100644" },
+            newPath: "scripts/new.sh",
+            oldPath: "scripts/old.sh",
+          },
         }),
       ),
     ).toBe(
@@ -68,10 +72,7 @@ describe("diff copy text", () => {
       buildFileCopyText(
         diffFile({
           hunks: [],
-          newPath: "new.txt",
-          oldMode: null,
-          oldPath: null,
-          operation: "added",
+          operation: { kind: "added", mode: "100644", path: "new.txt" },
         }),
       ),
     ).toBe("diff --git a/new.txt b/new.txt\nnew file mode 100644\n");
@@ -79,10 +80,7 @@ describe("diff copy text", () => {
       buildFileCopyText(
         diffFile({
           hunks: [],
-          newMode: null,
-          newPath: null,
-          oldPath: "old.txt",
-          operation: "deleted",
+          operation: { kind: "deleted", mode: "100644", path: "old.txt" },
         }),
       ),
     ).toBe("diff --git a/old.txt b/old.txt\ndeleted file mode 100644\n");
@@ -90,18 +88,21 @@ describe("diff copy text", () => {
       buildFileCopyText(
         diffFile({
           hunks: [],
-          newPath: "copy.txt",
-          oldPath: "source.txt",
-          operation: "copied",
+          operation: {
+            kind: "copied",
+            modeChange: { kind: "unchanged" },
+            newPath: "copy.txt",
+            oldPath: "source.txt",
+          },
         }),
       ),
     ).toBe("diff --git a/source.txt b/copy.txt\ncopy from source.txt\ncopy to copy.txt\n");
   });
 
   it("quotes decoded control-heavy paths deterministically", () => {
+    const path = 'quote"-backslash\\-tab\t.txt';
     const file = diffFile({
-      newPath: 'quote"-backslash\\-tab\t.txt',
-      oldPath: 'quote"-backslash\\-tab\t.txt',
+      operation: { kind: "modified", modeChange: { kind: "unchanged" }, path },
     });
 
     expect(buildFileCopyText(file)).toMatch(
@@ -111,7 +112,9 @@ describe("diff copy text", () => {
 
   it("uses Git C-style escapes for control-heavy paths", () => {
     const path = 'control\u0001\u0007\b\t\n\v\f\r\u001b\u007f"\\-cafe.txt';
-    const file = diffFile({ newPath: path, oldPath: path });
+    const file = diffFile({
+      operation: { kind: "modified", modeChange: { kind: "unchanged" }, path },
+    });
 
     expect(buildFileCopyText(file)).toContain(
       '"a/control\\001\\a\\b\\t\\n\\v\\f\\r\\033\\177\\"\\\\-cafe.txt"',
@@ -119,7 +122,7 @@ describe("diff copy text", () => {
   });
 
   it("makes binary copy behavior explicitly unavailable", () => {
-    const file = diffFile({ binary: true, hunks: [] });
+    const file = diffFile({ binary: true });
     expect(buildFileCopyText(file)).toBeNull();
     expect(buildHunkCopyText(file, hunk())).toBeNull();
   });
@@ -163,7 +166,16 @@ const line = (
   kind: "context" | "addition" | "deletion",
   content: string,
   missingNewline = false,
-) => ({ content, kind, missingNewline, newLine: 1, oldLine: 1 });
+): PullRequestDiffLine => {
+  switch (kind) {
+    case "context":
+      return { content, kind, missingNewline, newLine: 1, oldLine: 1 };
+    case "addition":
+      return { content, kind, missingNewline, newLine: 1 };
+    case "deletion":
+      return { content, kind, missingNewline, oldLine: 1 };
+  }
+};
 
 const hunk = (overrides: Partial<PullRequestDiffHunk> = {}): PullRequestDiffHunk => ({
   context: null,
@@ -175,15 +187,18 @@ const hunk = (overrides: Partial<PullRequestDiffHunk> = {}): PullRequestDiffHunk
   ...overrides,
 });
 
-const diffFile = (overrides: Partial<PullRequestDiffFile> = {}): PullRequestDiffFile => ({
-  additions: 1,
-  binary: false,
-  deletions: 1,
-  hunks: [hunk()],
-  newMode: "100644",
-  newPath: "src/file.ts",
-  oldMode: "100644",
-  oldPath: "src/file.ts",
-  operation: "modified",
-  ...overrides,
-});
+type DiffFileOverrides = Omit<Partial<PullRequestDiffFile>, "content"> & {
+  binary?: boolean;
+  hunks?: PullRequestDiffHunk[];
+};
+
+const diffFile = (overrides: DiffFileOverrides = {}): PullRequestDiffFile => {
+  const { binary = false, hunks = [hunk()], ...fields } = overrides;
+  return {
+    additions: 1,
+    content: binary ? { kind: "binary" } : { hunks, kind: "text" },
+    deletions: 1,
+    operation: { kind: "modified", modeChange: { kind: "unchanged" }, path: "src/file.ts" },
+    ...fields,
+  };
+};

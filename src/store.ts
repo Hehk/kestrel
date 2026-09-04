@@ -228,7 +228,7 @@ const queuePullRequestRouteWork = (
     (pullRequest) => pullRequest.number === number,
   );
   if (!hasPullRequest) {
-    if (!options.syncMissing || pullRequests.complete) {
+    if (!options.syncMissing || pullRequests.pagination.kind === "complete") {
       return nextState;
     }
 

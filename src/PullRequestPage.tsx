@@ -17,6 +17,7 @@ import {
 import PullRequestsError from "./PullRequestError";
 import type { PullRequestView } from "./router";
 import { DiffView } from "./diff/DiffView";
+import { diffFileHunks } from "./diff/layout";
 
 // TODO: Figure out a better way to handle all the error cases
 const PullRequestPage = ({
@@ -287,7 +288,7 @@ const PullRequestDiffTotals = (props: { diff: Repositories.PullRequestDiff }) =>
   const lineCount = () =>
     props.diff.files.reduce(
       (total, file) =>
-        total + file.hunks.reduce((fileTotal, hunk) => fileTotal + hunk.lines.length, 0),
+        total + diffFileHunks(file).reduce((fileTotal, hunk) => fileTotal + hunk.lines.length, 0),
       0,
     );
 
@@ -588,7 +589,7 @@ const PullRequestTimeline = (props: { data: Accessor<PullRequestPageData> }) => 
           Older activity could not be loaded. Try again.
         </p>
       ) : null}
-      <Show when={detail()?.timelineHasOlder}>
+      <Show when={detail()?.timelinePagination.kind === "hasOlder"}>
         <button
           aria-busy={detailState()?.status === "loadingTimeline"}
           class="pr-activity-load-older"
@@ -619,15 +620,21 @@ type TimelineEvent = Repositories.PullRequestDetail["timeline"][number];
 const PullRequestTimelineItem = ({ event }: { event: TimelineEvent }) => {
   const action = timelineAction(event);
   const actor = event.actorLogin ?? "GitHub";
-  const reviewComments = event.reviewComments ?? [];
+  const payload = event.event;
+  const body =
+    "body" in payload ? payload.body : payload.kind === "committed" ? payload.message : undefined;
+  const url = "url" in payload ? payload.url : undefined;
+  const reviewComments = payload.kind === "reviewed" ? payload.reviewComments.items : [];
+  const reviewCommentsTruncated =
+    payload.kind === "reviewed" && payload.reviewComments.kind === "truncated";
 
   return (
     <li class="pr-activity-item">
       <div class="pr-activity-item-heading">
         <span>
           <strong>{actor}</strong>{" "}
-          {event.url ? (
-            <a href={event.url} rel="noreferrer" target="_blank">
+          {url ? (
+            <a href={url} rel="noreferrer" target="_blank">
               {action}
             </a>
           ) : (
@@ -640,7 +647,7 @@ const PullRequestTimelineItem = ({ event }: { event: TimelineEvent }) => {
           </time>
         ) : null}
       </div>
-      {event.body ? <p class="pr-activity-body">{event.body}</p> : null}
+      {body ? <p class="pr-activity-body">{body}</p> : null}
       {reviewComments.length === 0 ? null : (
         <ul aria-label="Review comments" class="pr-activity-review-comments">
           {reviewComments.map((comment) => (
@@ -658,11 +665,11 @@ const PullRequestTimelineItem = ({ event }: { event: TimelineEvent }) => {
           ))}
         </ul>
       )}
-      {event.reviewCommentsHasMore ? (
+      {reviewCommentsTruncated ? (
         <p class="pr-activity-truncated">
           Additional review comments are available.{" "}
-          {event.url ? (
-            <a href={event.url} rel="noreferrer" target="_blank">
+          {url ? (
+            <a href={url} rel="noreferrer" target="_blank">
               View the complete review on GitHub
             </a>
           ) : (
@@ -674,42 +681,45 @@ const PullRequestTimelineItem = ({ event }: { event: TimelineEvent }) => {
   );
 };
 
-const timelineAction = (event: TimelineEvent) => {
-  switch (event.event) {
+const timelineAction = (event: TimelineEvent): string => {
+  const payload = event.event;
+  switch (payload.kind) {
     case "commented":
       return "commented";
     case "committed":
-      return event.commitSha ? `committed ${event.commitSha.slice(0, 7)}` : "committed";
+      return payload.commitSha ? `committed ${payload.commitSha.slice(0, 7)}` : "committed";
     case "reviewed":
-      return reviewAction(event.state);
+      return reviewAction(payload.state);
     case "closed":
       return "closed the pull request";
     case "reopened":
       return "reopened the pull request";
     case "merged":
       return "merged the pull request";
-    case "ready_for_review":
+    case "readyForReview":
       return "marked the pull request ready for review";
-    case "converted_to_draft":
+    case "convertedToDraft":
       return "converted the pull request to draft";
-    case "review_requested":
-      return event.title ? `requested a review from ${event.title}` : "requested a review";
-    case "review_request_removed":
-      return event.title
-        ? `removed the review request for ${event.title}`
+    case "reviewRequested":
+      return payload.reviewer
+        ? `requested a review from ${payload.reviewer}`
+        : "requested a review";
+    case "reviewRequestRemoved":
+      return payload.reviewer
+        ? `removed the review request for ${payload.reviewer}`
         : "removed a review request";
-    case "review_dismissed":
+    case "reviewDismissed":
       return "dismissed a review";
-    case "head_ref_force_pushed":
+    case "headRefForcePushed":
       return "force-pushed the head branch";
-    case "base_ref_force_pushed":
+    case "baseRefForcePushed":
       return "force-pushed the base branch";
-    case "head_ref_deleted":
-      return event.title ? `deleted the ${event.title} branch` : "deleted the head branch";
-    case "head_ref_restored":
+    case "headRefDeleted":
+      return payload.name ? `deleted the ${payload.name} branch` : "deleted the head branch";
+    case "headRefRestored":
       return "restored the head branch";
-    default:
-      return event.title ? humanizeEvent(event.title) : humanizeEvent(event.event);
+    case "unknown":
+      return humanizeEvent(payload.name ?? "unknown");
   }
 };
 

@@ -5,6 +5,7 @@ export type Repository = components["schemas"]["RepositoryDto"];
 export type PullRequest = components["schemas"]["PullRequestDto"];
 export type PullRequestDetail = components["schemas"]["PullRequestDetailDto"];
 export type PullRequestDiff = components["schemas"]["PullRequestDiffResponse"];
+export type PullRequestSyncPagination = components["schemas"]["PullRequestSyncPaginationDto"];
 export type AddError = "duplicate" | "invalid" | "saveFailed";
 export type PullRequestsError =
   | "authorizationRequired"
@@ -14,23 +15,18 @@ export type PullRequestsError =
 
 export type PullRequestsState =
   | {
-      complete: false;
       error: null;
-      nextPage: null;
       pullRequests: PullRequest[];
       status: "loading" | "syncing";
     }
   | {
-      complete: boolean;
       error: null;
-      nextPage: number | null;
+      pagination: PullRequestSyncPagination | { kind: "unknown" };
       pullRequests: PullRequest[];
       status: "loaded";
     }
   | {
-      complete: false;
       error: PullRequestsError;
-      nextPage: null;
       pullRequests: PullRequest[];
       status: "error";
     };
@@ -158,9 +154,8 @@ export type Msg =
   | { kind: "PullRequestsLoadFailed"; error: PullRequestsError; repository: Repository }
   | { kind: "PullRequestsSyncRequested"; repository: Repository }
   | {
-      complete: boolean;
       kind: "PullRequestsSynced";
-      nextPage?: number | null | undefined;
+      pagination: PullRequestSyncPagination;
       pullRequests: PullRequest[];
       repository: Repository;
     }
@@ -307,27 +302,22 @@ export const update = (ctx: UpdateContext, msg: Msg, state: State): State => {
     case "PullRequestsLoadRequested": {
       ctx.runCmd({ kind: "LoadPullRequests", repository: msg.repository });
       return setPullRequestsState(state, msg.repository, {
-        complete: false,
         error: null,
-        nextPage: null,
         pullRequests: currentPullRequests(state, msg.repository),
         status: "loading",
       });
     }
     case "PullRequestsLoaded": {
       return setPullRequestsState(state, msg.repository, {
-        complete: false,
         error: null,
-        nextPage: null,
+        pagination: { kind: "unknown" },
         pullRequests: msg.pullRequests,
         status: "loaded",
       });
     }
     case "PullRequestsLoadFailed": {
       return setPullRequestsState(state, msg.repository, {
-        complete: false,
         error: msg.error,
-        nextPage: null,
         pullRequests: currentPullRequests(state, msg.repository),
         status: "error",
       });
@@ -335,18 +325,15 @@ export const update = (ctx: UpdateContext, msg: Msg, state: State): State => {
     case "PullRequestsSyncRequested": {
       ctx.runCmd({ kind: "SyncPullRequests", repository: msg.repository });
       return setPullRequestsState(state, msg.repository, {
-        complete: false,
         error: null,
-        nextPage: null,
         pullRequests: currentPullRequests(state, msg.repository),
         status: "syncing",
       });
     }
     case "PullRequestsSynced": {
       return setPullRequestsState(state, msg.repository, {
-        complete: msg.complete,
         error: null,
-        nextPage: msg.nextPage ?? null,
+        pagination: msg.pagination,
         pullRequests: upsertPullRequests(
           currentPullRequests(state, msg.repository),
           msg.pullRequests,
@@ -356,9 +343,7 @@ export const update = (ctx: UpdateContext, msg: Msg, state: State): State => {
     }
     case "PullRequestsSyncFailed": {
       return setPullRequestsState(state, msg.repository, {
-        complete: false,
         error: msg.error,
-        nextPage: null,
         pullRequests: currentPullRequests(state, msg.repository),
         status: "error",
       });
@@ -477,7 +462,7 @@ export const update = (ctx: UpdateContext, msg: Msg, state: State): State => {
       if (
         current?.detail === null ||
         current?.detail === undefined ||
-        !current.detail.timelineHasOlder ||
+        current.detail.timelinePagination.kind !== "hasOlder" ||
         current.status === "loadingTimeline"
       ) {
         return state;
@@ -594,9 +579,8 @@ const syncPullRequests = async (repository: Repository, send: (msg: Msg) => void
   }
 
   send({
-    complete: data.complete,
     kind: "PullRequestsSynced",
-    nextPage: data.nextPage,
+    pagination: data.pagination,
     pullRequests: data.pullRequests,
     repository,
   });

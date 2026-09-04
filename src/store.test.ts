@@ -47,7 +47,7 @@ const pullRequestDetail = (): Repositories.PullRequestDetail => ({
   statuses: [],
   syncedAt: "2026-01-04T00:00:00Z",
   timeline: [],
-  timelineHasOlder: false,
+  timelinePagination: { kind: "complete" },
 });
 
 const pullRequestDiff = (): Repositories.PullRequestDiff => ({
@@ -117,9 +117,8 @@ describe("store", () => {
     Store.send({
       kind: "Repositories",
       msg: {
-        complete: false,
         kind: "PullRequestsSynced",
-        nextPage: 2,
+        pagination: { kind: "hasMore", nextPage: 2 },
         pullRequests: [],
         repository: repo,
       },
@@ -159,9 +158,8 @@ describe("store", () => {
     Store.send({
       kind: "Repositories",
       msg: {
-        complete: false,
         kind: "PullRequestsSynced",
-        nextPage: 2,
+        pagination: { kind: "hasMore", nextPage: 2 },
         pullRequests: [pullRequest(42)],
         repository: repo,
       },

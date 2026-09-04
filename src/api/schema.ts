@@ -296,7 +296,7 @@ export interface components {
       statuses: components["schemas"]["PullRequestStatusDto"][];
       syncedAt: string;
       timeline: components["schemas"]["PullRequestTimelineEventDto"][];
-      timelineHasOlder: boolean;
+      timelinePagination: components["schemas"]["PullRequestTimelinePaginationDto"];
     };
     PullRequestDetailResponse: {
       pullRequestDetail: components["schemas"]["PullRequestDetailDto"];
@@ -366,17 +366,33 @@ export interface components {
       /** Format: int64 */
       oldStart: number;
     };
-    PullRequestDiffLineDto: {
-      content: string;
-      kind: components["schemas"]["PullRequestDiffLineKindDto"];
-      missingNewline: boolean;
-      /** Format: int64 */
-      newLine: number | null;
-      /** Format: int64 */
-      oldLine: number | null;
-    };
-    /** @enum {string} */
-    PullRequestDiffLineKindDto: "context" | "addition" | "deletion";
+    PullRequestDiffLineDto:
+      | {
+          content: string;
+          /** @enum {string} */
+          kind: "context";
+          missingNewline: boolean;
+          /** Format: int64 */
+          newLine: number;
+          /** Format: int64 */
+          oldLine: number;
+        }
+      | {
+          content: string;
+          /** @enum {string} */
+          kind: "addition";
+          missingNewline: boolean;
+          /** Format: int64 */
+          newLine: number;
+        }
+      | {
+          content: string;
+          /** @enum {string} */
+          kind: "deletion";
+          missingNewline: boolean;
+          /** Format: int64 */
+          oldLine: number;
+        };
     PullRequestDiffModeChangeDto:
       | {
           /** @enum {string} */
@@ -437,19 +453,117 @@ export interface components {
       state: string;
       url?: string | null;
     };
+    PullRequestSyncPaginationDto:
+      | {
+          /** @enum {string} */
+          kind: "complete";
+        }
+      | {
+          /** @enum {string} */
+          kind: "hasMore";
+          /** Format: int64 */
+          nextPage: number;
+        };
     PullRequestTimelineEventDto: {
       actorLogin?: string | null;
-      body?: string | null;
-      commitSha?: string | null;
-      event: string;
+      event: components["schemas"]["PullRequestTimelineEventKindDto"];
       id?: string | null;
       occurredAt?: string | null;
-      reviewComments?: components["schemas"]["PullRequestTimelineReviewCommentDto"][];
-      reviewCommentsHasMore?: boolean;
-      state?: string | null;
-      title?: string | null;
-      url?: string | null;
     };
+    PullRequestTimelineEventKindDto:
+      | {
+          body?: string | null;
+          /** @enum {string} */
+          kind: "commented";
+          url?: string | null;
+        }
+      | {
+          commitSha?: string | null;
+          /** @enum {string} */
+          kind: "committed";
+          message?: string | null;
+          title?: string | null;
+          url?: string | null;
+        }
+      | {
+          body?: string | null;
+          /** @enum {string} */
+          kind: "reviewed";
+          reviewComments: components["schemas"]["PullRequestTimelineReviewCommentsDto"];
+          state?: string | null;
+          url?: string | null;
+        }
+      | {
+          /** @enum {string} */
+          kind: "closed";
+        }
+      | {
+          /** @enum {string} */
+          kind: "reopened";
+        }
+      | {
+          commitSha?: string | null;
+          /** @enum {string} */
+          kind: "merged";
+        }
+      | {
+          /** @enum {string} */
+          kind: "readyForReview";
+        }
+      | {
+          /** @enum {string} */
+          kind: "convertedToDraft";
+        }
+      | {
+          /** @enum {string} */
+          kind: "reviewRequested";
+          reviewer?: string | null;
+        }
+      | {
+          /** @enum {string} */
+          kind: "reviewRequestRemoved";
+          reviewer?: string | null;
+        }
+      | {
+          body?: string | null;
+          /** @enum {string} */
+          kind: "reviewDismissed";
+          state?: string | null;
+          url?: string | null;
+        }
+      | {
+          commitSha?: string | null;
+          /** @enum {string} */
+          kind: "headRefForcePushed";
+        }
+      | {
+          commitSha?: string | null;
+          /** @enum {string} */
+          kind: "baseRefForcePushed";
+        }
+      | {
+          /** @enum {string} */
+          kind: "headRefDeleted";
+          name?: string | null;
+        }
+      | {
+          /** @enum {string} */
+          kind: "headRefRestored";
+        }
+      | {
+          /** @enum {string} */
+          kind: "unknown";
+          name?: string | null;
+        };
+    PullRequestTimelinePaginationDto:
+      | {
+          /** @enum {string} */
+          kind: "complete";
+        }
+      | {
+          /** @enum {string} */
+          kind: "hasOlder";
+        };
     PullRequestTimelineReviewCommentDto: {
       actorLogin?: string | null;
       body?: string | null;
@@ -457,6 +571,17 @@ export interface components {
       occurredAt?: string | null;
       url?: string | null;
     };
+    PullRequestTimelineReviewCommentsDto:
+      | {
+          items: components["schemas"]["PullRequestTimelineReviewCommentDto"][];
+          /** @enum {string} */
+          kind: "complete";
+        }
+      | {
+          items: components["schemas"]["PullRequestTimelineReviewCommentDto"][];
+          /** @enum {string} */
+          kind: "truncated";
+        };
     RepositoryDto: {
       createdAt: string;
       fullName: string;
@@ -479,9 +604,7 @@ export interface components {
       pullRequestDetail: components["schemas"]["PullRequestDetailDto"];
     };
     SyncPullRequestsResponse: {
-      complete: boolean;
-      /** Format: int64 */
-      nextPage?: number | null;
+      pagination: components["schemas"]["PullRequestSyncPaginationDto"];
       pullRequests: components["schemas"]["PullRequestDto"][];
       syncedCount: number;
     };

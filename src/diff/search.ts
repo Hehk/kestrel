@@ -51,9 +51,9 @@ const visitMatches = (
 ) => {
   for (let fileIndex = 0; fileIndex < layout.diff.files.length; fileIndex += 1) {
     const file = layout.diff.files[fileIndex];
-    if (file === undefined) continue;
-    for (let hunkIndex = 0; hunkIndex < file.hunks.length; hunkIndex += 1) {
-      const hunk = file.hunks[hunkIndex];
+    if (file === undefined || file.content.kind === "binary") continue;
+    for (let hunkIndex = 0; hunkIndex < file.content.hunks.length; hunkIndex += 1) {
+      const hunk = file.content.hunks[hunkIndex];
       if (hunk === undefined) continue;
       const firstSourceRow = hunkStartRow(layout, fileIndex, hunkIndex) + 1;
       for (let lineIndex = 0; lineIndex < hunk.lines.length; lineIndex += 1) {

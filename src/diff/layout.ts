@@ -5,6 +5,38 @@ export type PullRequestDiffFile = components["schemas"]["PullRequestDiffFileDto"
 export type PullRequestDiffHunk = components["schemas"]["PullRequestDiffHunkDto"];
 export type PullRequestDiffLine = components["schemas"]["PullRequestDiffLineDto"];
 
+export const diffFileHunks = (file: PullRequestDiffFile): PullRequestDiffHunk[] =>
+  file.content.kind === "text" ? file.content.hunks : [];
+
+export const diffFilePaths = (
+  file: PullRequestDiffFile,
+): { oldPath: string | null; newPath: string | null } => {
+  switch (file.operation.kind) {
+    case "added":
+      return { oldPath: null, newPath: file.operation.path };
+    case "deleted":
+      return { oldPath: file.operation.path, newPath: null };
+    case "modified":
+      return { oldPath: file.operation.path, newPath: file.operation.path };
+    case "renamed":
+    case "copied":
+      return { oldPath: file.operation.oldPath, newPath: file.operation.newPath };
+  }
+};
+
+export const diffLineNumbers = (
+  line: PullRequestDiffLine,
+): { oldLine: number | null; newLine: number | null } => {
+  switch (line.kind) {
+    case "context":
+      return { oldLine: line.oldLine, newLine: line.newLine };
+    case "addition":
+      return { oldLine: null, newLine: line.newLine };
+    case "deletion":
+      return { oldLine: line.oldLine, newLine: null };
+  }
+};
+
 export const DIFF_ROW_HEIGHT = {
   file: 40,
   hunk: 32,
@@ -74,16 +106,16 @@ export const buildDiffLayout = (diff: PullRequestDiff): DiffLayout => {
   const fileHunkOffsets = new Uint32Array(diff.files.length + 1);
   for (let fileIndex = 0; fileIndex < diff.files.length; fileIndex += 1) {
     const file = diff.files[fileIndex];
-    if (file === undefined || file.hunks.length > MAX_INDEX) {
-      throw new RangeError("Diff has too many hunks");
-    }
+    if (file === undefined) throw new RangeError("Diff has too many hunks");
+    const hunks = diffFileHunks(file);
+    if (hunks.length > MAX_INDEX) throw new RangeError("Diff has too many hunks");
     fileHunkOffsets[fileIndex] = hunkCount;
-    hunkCount = checkedAdd(hunkCount, file.hunks.length, "Diff has too many hunks");
+    hunkCount = checkedAdd(hunkCount, hunks.length, "Diff has too many hunks");
     rowCount = checkedAdd(rowCount, 1, "Diff has too many rows");
-    if (file.binary || file.hunks.length === 0) {
+    if (file.content.kind === "binary" || hunks.length === 0) {
       rowCount = checkedAdd(rowCount, 1, "Diff has too many rows");
     }
-    for (const hunk of file.hunks) {
+    for (const hunk of hunks) {
       if (hunk.lines.length > MAX_INDEX) {
         throw new RangeError("Diff hunk has too many lines");
       }
@@ -111,14 +143,15 @@ export const buildDiffLayout = (diff: PullRequestDiff): DiffLayout => {
     fileIndexes[rowIndex] = fileIndex;
     rowIndex += 1;
 
-    if (file.binary || file.hunks.length === 0) {
+    const hunks = diffFileHunks(file);
+    if (file.content.kind === "binary" || hunks.length === 0) {
       kinds[rowIndex] = ROW_NOTICE;
       fileIndexes[rowIndex] = fileIndex;
       rowIndex += 1;
     }
 
-    for (let hunkIndex = 0; hunkIndex < file.hunks.length; hunkIndex += 1) {
-      const hunk = file.hunks[hunkIndex] as PullRequestDiffHunk;
+    for (let hunkIndex = 0; hunkIndex < hunks.length; hunkIndex += 1) {
+      const hunk = hunks[hunkIndex] as PullRequestDiffHunk;
       hunkStartRows[flatHunkIndex] = rowIndex;
       flatHunkIndex += 1;
       kinds[rowIndex] = ROW_HUNK;
@@ -175,11 +208,16 @@ export const rowAt = (layout: DiffLayout, index: number): DiffRow => {
     return { file, fileIndex, kind: "file" };
   }
   if (kind === ROW_NOTICE) {
-    return { file, fileIndex, kind: "notice", notice: file.binary ? "binary" : "hunkless" };
+    return {
+      file,
+      fileIndex,
+      kind: "notice",
+      notice: file.content.kind === "binary" ? "binary" : "hunkless",
+    };
   }
 
   const hunkIndex = layout.hunkIndexes[index] as number;
-  const hunk = file.hunks[hunkIndex] as PullRequestDiffHunk;
+  const hunk = diffFileHunks(file)[hunkIndex] as PullRequestDiffHunk;
   if (kind === ROW_HUNK) {
     return { file, fileIndex, hunk, hunkIndex, kind: "hunk" };
   }

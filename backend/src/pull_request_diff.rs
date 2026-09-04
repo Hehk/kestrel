@@ -87,19 +87,23 @@ pub(crate) struct PullRequestDiffHunk {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct PullRequestDiffLine {
-    pub(crate) content: String,
-    pub(crate) kind: PullRequestDiffLineKind,
-    pub(crate) missing_newline: bool,
-    pub(crate) new_line: Option<u32>,
-    pub(crate) old_line: Option<u32>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PullRequestDiffLineKind {
-    Context,
-    Addition,
-    Deletion,
+pub(crate) enum PullRequestDiffLine {
+    Context {
+        content: String,
+        missing_newline: bool,
+        old_line: u32,
+        new_line: u32,
+    },
+    Addition {
+        content: String,
+        missing_newline: bool,
+        new_line: u32,
+    },
+    Deletion {
+        content: String,
+        missing_newline: bool,
+        old_line: u32,
+    },
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -353,49 +357,43 @@ fn map_hunk(
 
     for line in hunk.lines() {
         increment_with_limit(&mut budget.lines, MAX_SEMANTIC_LINES, DiffParseLimit::Lines)?;
-        let (content, kind, mapped_old_line, mapped_new_line) = match line {
+        let line = match line {
             Line::Context(content) => {
-                let mapped = (
+                let (content, missing_newline) = normalize_line(content)?;
+                let line = PullRequestDiffLine::Context {
                     content,
-                    PullRequestDiffLineKind::Context,
-                    Some(to_u32(old_line)?),
-                    Some(to_u32(new_line)?),
-                );
+                    missing_newline,
+                    old_line: to_u32(old_line)?,
+                    new_line: to_u32(new_line)?,
+                };
                 old_line += 1;
                 new_line += 1;
-                mapped
+                line
             }
             Line::Delete(content) => {
-                let mapped = (
+                let (content, missing_newline) = normalize_line(content)?;
+                let line = PullRequestDiffLine::Deletion {
                     content,
-                    PullRequestDiffLineKind::Deletion,
-                    Some(to_u32(old_line)?),
-                    None,
-                );
+                    missing_newline,
+                    old_line: to_u32(old_line)?,
+                };
                 old_line += 1;
                 *deletions = next_line_number(*deletions)?;
-                mapped
+                line
             }
             Line::Insert(content) => {
-                let mapped = (
+                let (content, missing_newline) = normalize_line(content)?;
+                let line = PullRequestDiffLine::Addition {
                     content,
-                    PullRequestDiffLineKind::Addition,
-                    None,
-                    Some(to_u32(new_line)?),
-                );
+                    missing_newline,
+                    new_line: to_u32(new_line)?,
+                };
                 new_line += 1;
                 *additions = next_line_number(*additions)?;
-                mapped
+                line
             }
         };
-        let (content, missing_newline) = normalize_line(content)?;
-        lines.push(PullRequestDiffLine {
-            content,
-            kind,
-            missing_newline,
-            new_line: mapped_new_line,
-            old_line: mapped_old_line,
-        });
+        lines.push(line);
     }
 
     Ok(PullRequestDiffHunk {
@@ -860,7 +858,7 @@ mod tests {
     use super::{
         ensure_at_most, increment_with_limit, parse_pull_request_diff, DiffParseError,
         DiffParseLimit, PullRequestDiffContent, PullRequestDiffFileMode,
-        PullRequestDiffFileOperation, PullRequestDiffLineKind, PullRequestDiffModeChange,
+        PullRequestDiffFileOperation, PullRequestDiffLine, PullRequestDiffModeChange,
         MAX_PATH_BYTES, MAX_PHYSICAL_LINES, MAX_SOURCE_LINE_BYTES, MAX_UNQUOTED_PATH_SPACES,
     };
 
@@ -901,6 +899,44 @@ mod tests {
         match &file.content {
             PullRequestDiffContent::Text { hunks } => hunks,
             PullRequestDiffContent::Binary => panic!("expected text diff"),
+        }
+    }
+
+    fn line_content(line: &PullRequestDiffLine) -> &str {
+        match line {
+            PullRequestDiffLine::Context { content, .. }
+            | PullRequestDiffLine::Addition { content, .. }
+            | PullRequestDiffLine::Deletion { content, .. } => content,
+        }
+    }
+
+    fn line_missing_newline(line: &PullRequestDiffLine) -> bool {
+        match line {
+            PullRequestDiffLine::Context {
+                missing_newline, ..
+            }
+            | PullRequestDiffLine::Addition {
+                missing_newline, ..
+            }
+            | PullRequestDiffLine::Deletion {
+                missing_newline, ..
+            } => *missing_newline,
+        }
+    }
+
+    fn old_line(line: &PullRequestDiffLine) -> Option<u32> {
+        match line {
+            PullRequestDiffLine::Context { old_line, .. }
+            | PullRequestDiffLine::Deletion { old_line, .. } => Some(*old_line),
+            PullRequestDiffLine::Addition { .. } => None,
+        }
+    }
+
+    fn new_line(line: &PullRequestDiffLine) -> Option<u32> {
+        match line {
+            PullRequestDiffLine::Context { new_line, .. }
+            | PullRequestDiffLine::Addition { new_line, .. } => Some(*new_line),
+            PullRequestDiffLine::Deletion { .. } => None,
         }
     }
 
@@ -979,19 +1015,26 @@ mod tests {
             hunks[0].context.as_deref(),
             Some("pub fn add(left: u32, right: u32) -> u32 {")
         );
-        assert_eq!(hunks[0].lines[0].kind, PullRequestDiffLineKind::Context);
-        assert_eq!(hunks[0].lines[0].old_line, Some(1));
-        assert_eq!(hunks[0].lines[0].new_line, Some(1));
-        assert_eq!(hunks[0].lines[1].kind, PullRequestDiffLineKind::Deletion);
-        assert_eq!(hunks[0].lines[1].old_line, Some(2));
-        assert_eq!(hunks[0].lines[1].new_line, None);
-        assert_eq!(hunks[0].lines[2].kind, PullRequestDiffLineKind::Addition);
-        assert_eq!(hunks[0].lines[2].old_line, None);
-        assert_eq!(hunks[0].lines[2].new_line, Some(2));
-        assert_eq!(hunks[0].lines[4].content, "");
-        assert!(!hunks[0].lines[4].missing_newline);
-        assert_eq!(hunks[1].lines[0].old_line, Some(5));
-        assert_eq!(hunks[1].lines[0].new_line, Some(6));
+        assert!(matches!(
+            hunks[0].lines[0],
+            PullRequestDiffLine::Context {
+                old_line: 1,
+                new_line: 1,
+                ..
+            }
+        ));
+        assert!(matches!(
+            hunks[0].lines[1],
+            PullRequestDiffLine::Deletion { old_line: 2, .. }
+        ));
+        assert!(matches!(
+            hunks[0].lines[2],
+            PullRequestDiffLine::Addition { new_line: 2, .. }
+        ));
+        assert_eq!(line_content(&hunks[0].lines[4]), "");
+        assert!(!line_missing_newline(&hunks[0].lines[4]));
+        assert_eq!(old_line(&hunks[1].lines[0]), Some(5));
+        assert_eq!(new_line(&hunks[1].lines[0]), Some(6));
     }
 
     #[test]
@@ -1005,9 +1048,9 @@ mod tests {
             }
         );
         let added_lines = &text_hunks(&added[0])[0].lines;
-        assert_eq!(added_lines[0].old_line, None);
-        assert_eq!(added_lines[0].new_line, Some(1));
-        assert_eq!(added_lines[3].new_line, Some(4));
+        assert_eq!(old_line(&added_lines[0]), None);
+        assert_eq!(new_line(&added_lines[0]), Some(1));
+        assert_eq!(new_line(&added_lines[3]), Some(4));
 
         let deleted = parse_pull_request_diff(DELETED_FILE).expect("deleted file should parse");
         assert_eq!(
@@ -1018,9 +1061,9 @@ mod tests {
             }
         );
         let deleted_lines = &text_hunks(&deleted[0])[0].lines;
-        assert_eq!(deleted_lines[0].old_line, Some(1));
-        assert_eq!(deleted_lines[0].new_line, None);
-        assert_eq!(deleted_lines[3].old_line, Some(4));
+        assert_eq!(old_line(&deleted_lines[0]), Some(1));
+        assert_eq!(new_line(&deleted_lines[0]), None);
+        assert_eq!(old_line(&deleted_lines[3]), Some(4));
 
         let renamed = parse_pull_request_diff(RENAMED_FILE).expect("renamed file should parse");
         assert_eq!(
@@ -1148,16 +1191,16 @@ mod tests {
             parse_pull_request_diff(MISSING_NEWLINE).expect("missing newlines should parse");
 
         let both_sides = &text_hunks(&files[0])[0].lines;
-        assert!(both_sides[0].missing_newline);
-        assert!(both_sides[1].missing_newline);
+        assert!(line_missing_newline(&both_sides[0]));
+        assert!(line_missing_newline(&both_sides[1]));
 
         let one_side = &text_hunks(&files[1])[0].lines;
-        assert!(!one_side[0].missing_newline);
-        assert!(one_side[1].missing_newline);
+        assert!(!line_missing_newline(&one_side[0]));
+        assert!(line_missing_newline(&one_side[1]));
 
         let context = &text_hunks(&files[2])[0].lines;
-        assert_eq!(context[2].kind, PullRequestDiffLineKind::Context);
-        assert!(context[2].missing_newline);
+        assert!(matches!(context[2], PullRequestDiffLine::Context { .. }));
+        assert!(line_missing_newline(&context[2]));
     }
 
     #[test]
@@ -1166,8 +1209,8 @@ mod tests {
         let lines = &text_hunks(&files[0])[0].lines;
 
         assert_eq!(text_hunks(&files[0])[0].context, None);
-        assert!(lines[1].content.len() > 150);
-        assert!(lines[1].content.ends_with("synchronized_at;"));
+        assert!(line_content(&lines[1]).len() > 150);
+        assert!(line_content(&lines[1]).ends_with("synchronized_at;"));
     }
 
     #[test]
@@ -1180,8 +1223,8 @@ mod tests {
 
         let files = parse_pull_request_diff(&raw).expect("generated long lines should parse");
         let lines = &text_hunks(&files[0])[0].lines;
-        assert_eq!(lines[0].content.len(), 64 * 1024);
-        assert_eq!(lines[1].content.len(), 64 * 1024 + 1);
+        assert_eq!(line_content(&lines[0]).len(), 64 * 1024);
+        assert_eq!(line_content(&lines[1]).len(), 64 * 1024 + 1);
     }
 
     #[test]
@@ -1193,7 +1236,7 @@ mod tests {
 
         let files = parse_pull_request_diff(&raw).expect("boundary source line should parse");
         assert_eq!(
-            text_hunks(&files[0])[0].lines[0].content.len(),
+            line_content(&text_hunks(&files[0])[0].lines[0]).len(),
             MAX_SOURCE_LINE_BYTES
         );
     }
@@ -1220,8 +1263,8 @@ mod tests {
         assert_eq!(lines.len(), 100_000);
         assert_eq!(one_hunk[0].additions, 50_000);
         assert_eq!(one_hunk[0].deletions, 50_000);
-        assert_eq!(lines[49_999].old_line, Some(50_000));
-        assert_eq!(lines[99_999].new_line, Some(50_000));
+        assert_eq!(old_line(&lines[49_999]), Some(50_000));
+        assert_eq!(new_line(&lines[99_999]), Some(50_000));
         drop(one_hunk);
         drop(one_hunk_raw);
 
@@ -1240,7 +1283,10 @@ mod tests {
             100_000
         );
         assert_eq!(text_hunks(&many_files[99]).len(), 10);
-        assert_eq!(text_hunks(&many_files[99])[9].lines[99].new_line, Some(500));
+        assert_eq!(
+            new_line(&text_hunks(&many_files[99])[9].lines[99]),
+            Some(500)
+        );
     }
 
     #[test]
@@ -1341,8 +1387,8 @@ mod tests {
         let files = parse_pull_request_diff(&maximum_line)
             .expect("the maximum representable line should parse");
         let lines = &text_hunks(&files[0])[0].lines;
-        assert_eq!(lines[0].old_line, Some(u32::MAX));
-        assert_eq!(lines[1].new_line, Some(u32::MAX));
+        assert_eq!(old_line(&lines[0]), Some(u32::MAX));
+        assert_eq!(new_line(&lines[1]), Some(u32::MAX));
     }
 
     #[test]
