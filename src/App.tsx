@@ -19,7 +19,9 @@ const Page = (props: { route: Router.AuthenticatedRoute }) => {
       case "Settings":
         return <SettingsPage />;
       case "PullRequest":
-        return <PullRequestPage repo={props.route.repo} id={props.route.id} />;
+        return (
+          <PullRequestPage repo={props.route.repo} id={props.route.id} view={props.route.view} />
+        );
       case "NotFound":
         return <NotFoundPage path={props.route.path} />;
     }
@@ -134,9 +136,9 @@ const RepositorySyncStatus = ({ repository }: { repository: Repositories.Reposit
 
 const repositorySyncErrorText = (error: string) => {
   switch (error) {
-    case "authorization_required":
+    case "authorizationRequired":
       return "GitHub App authorization required.";
-    case "sync_failed":
+    case "syncFailed":
       return "GitHub sync failed.";
     default:
       return "Unknown sync error.";
@@ -180,6 +182,7 @@ const PullRequestsSummary = (props: {
                     name: "PullRequest",
                     repo: props.repository.fullName,
                     id: String(pullRequest.number),
+                    view: "overview",
                   }}
                 >
                   #{pullRequest.number} {pullRequest.title}

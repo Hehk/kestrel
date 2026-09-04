@@ -1,0 +1,7 @@
+diff --git a/src/query.sql b/src/query.sql
+index 13579bd..2468ace 100644
+--- a/src/query.sql
++++ b/src/query.sql
+@@ -1 +1 @@
+-SELECT id, repository, pull_request_number FROM pull_requests WHERE synchronized = 0 ORDER BY repository, pull_request_number;
++SELECT id, repository, pull_request_number, synchronized_at, last_error FROM pull_requests WHERE synchronized = 0 AND archived = 0 ORDER BY repository, pull_request_number, synchronized_at;

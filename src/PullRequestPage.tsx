@@ -15,9 +15,20 @@ import {
   XIcon,
 } from "./icons/Icons";
 import PullRequestsError from "./PullRequestError";
+import type { PullRequestView } from "./router";
+import { DiffView } from "./diff/DiffView";
+import { diffFileHunks } from "./diff/layout";
 
 // TODO: Figure out a better way to handle all the error cases
-const PullRequestPage = ({ repo, id }: { repo: string; id: string }) => {
+const PullRequestPage = ({
+  repo,
+  id,
+  view,
+}: {
+  repo: string;
+  id: string;
+  view: PullRequestView;
+}) => {
   const repositories = appStore((state) => state.repositories);
   const page = createMemo<PullRequestPageData | PullRequestMessageData>(() => {
     const state = repositories();
@@ -95,7 +106,19 @@ const PullRequestPage = ({ repo, id }: { repo: string; id: string }) => {
 
     const pullRequestDetail =
       state.pullRequestDetails[Repositories.pullRequestDetailKey(repository, number)];
-    return { kind: "ready", number, pullRequest, pullRequestDetail, repository };
+    const currentPullRequestDiff = state.currentPullRequestDiff;
+    const pullRequestDiff =
+      currentPullRequestDiff?.key === Repositories.pullRequestDiffKey(repository, number)
+        ? currentPullRequestDiff.state
+        : undefined;
+    return {
+      kind: "ready",
+      number,
+      pullRequest,
+      pullRequestDetail,
+      pullRequestDiff,
+      repository,
+    };
   });
 
   const ready = () => (page().kind === "ready" ? (page() as PullRequestPageData) : undefined);
@@ -104,7 +127,7 @@ const PullRequestPage = ({ repo, id }: { repo: string; id: string }) => {
 
   return (
     <Switch>
-      <Match when={ready()}>{(data) => <PullRequestContent data={data} />}</Match>
+      <Match when={ready()}>{(data) => <PullRequestContent data={data} view={view} />}</Match>
       <Match when={message()}>
         {(data) => <PullRequestMessage title={data().title}>{data().content}</PullRequestMessage>}
       </Match>
@@ -117,6 +140,7 @@ type PullRequestPageData = {
   number: number;
   pullRequest: Repositories.PullRequest;
   pullRequestDetail: Repositories.PullRequestDetailState | undefined;
+  pullRequestDiff: Repositories.PullRequestDiffState | undefined;
   repository: Repositories.Repository;
 };
 
@@ -126,33 +150,188 @@ type PullRequestMessageData = {
   title: string;
 };
 
-const PullRequestContent = (props: { data: Accessor<PullRequestPageData> }) => {
+const PullRequestContent = (props: {
+  data: Accessor<PullRequestPageData>;
+  view: PullRequestView;
+}) => {
   const details = () => getDetails(props.data().pullRequestDetail);
 
   return (
-    <div class="PullRequestPage">
-      <aside aria-label="Pull request status" class="PullRequestPage-leftSidebar">
-        <PullRequestActions data={props.data} />
-        <PullRequestReviewStatus details={details} />
-        <PullRequestChecks details={details} />
-      </aside>
-      <section class="PullRequestPage-content">
-        <h1 class="PullRequestPage-title">{props.data().pullRequest.title}</h1>
-        <PullRequestDetailPanel data={props.data} />
-      </section>
-      <aside aria-label="Pull request metadata" class="PullRequestPage-rightSidebar">
-        <PullRequestMetadata data={props.data} />
-        <Show when={details()}>
-          {(detail) => (
-            <>
-              <PullRequestFiles files={() => detail().files} />
-              <PullRequestCommits commits={() => detail().commits} />
-            </>
-          )}
-        </Show>
-      </aside>
+    <div class="PullRequestPage" classList={{ "PullRequestPage--diff": props.view === "diff" }}>
+      <PullRequestHeader data={props.data} view={props.view} />
+      <Show when={props.view === "overview"} fallback={<PullRequestDiff data={props.data} />}>
+        <aside aria-label="Pull request status" class="PullRequestPage-leftSidebar">
+          <PullRequestReviewStatus details={details} />
+          <PullRequestChecks details={details} />
+        </aside>
+        <section class="PullRequestPage-content">
+          <PullRequestDetailPanel data={props.data} />
+        </section>
+        <aside aria-label="Pull request metadata" class="PullRequestPage-rightSidebar">
+          <PullRequestMetadata data={props.data} />
+          <Show when={details()}>
+            {(detail) => (
+              <>
+                <PullRequestFiles files={() => detail().files} />
+                <PullRequestCommits commits={() => detail().commits} />
+              </>
+            )}
+          </Show>
+        </aside>
+      </Show>
     </div>
   );
+};
+
+const PullRequestHeader = (props: {
+  data: Accessor<PullRequestPageData>;
+  view: PullRequestView;
+}) => (
+  <header class="PullRequestPage-header">
+    <div class="PullRequestPage-headerActions">
+      <PullRequestActions data={props.data} view={props.view} />
+    </div>
+    <div class="PullRequestPage-heading">
+      <h1 class="PullRequestPage-title">{props.data().pullRequest.title}</h1>
+      <nav aria-label="Pull request views" class="PullRequestPage-views">
+        <Link
+          aria-current={props.view === "overview" ? "page" : undefined}
+          to={{
+            name: "PullRequest",
+            repo: props.data().repository.fullName,
+            id: String(props.data().number),
+            view: "overview",
+          }}
+        >
+          Overview
+        </Link>
+        <Link
+          aria-current={props.view === "diff" ? "page" : undefined}
+          to={{
+            name: "PullRequest",
+            repo: props.data().repository.fullName,
+            id: String(props.data().number),
+            view: "diff",
+          }}
+        >
+          Diff
+        </Link>
+      </nav>
+    </div>
+  </header>
+);
+
+const PullRequestDiff = (props: { data: Accessor<PullRequestPageData> }) => {
+  const detailState = () => props.data().pullRequestDetail;
+  const diffState = () => props.data().pullRequestDiff;
+  const diff = () => diffState()?.diff;
+  const error = () => {
+    const state = diffState();
+    return state?.status === "error" ? state.error : undefined;
+  };
+
+  return (
+    <section aria-label="Pull request diff" class="PullRequestPage-diffContent">
+      <p class="eyebrow">Changed files</p>
+      <h2>Diff view</h2>
+      <div aria-live="polite">
+        <Switch>
+          <Match when={detailState()?.status === "syncing"}>
+            <p class="repo-pr-status">Syncing pull request details...</p>
+          </Match>
+          <Match when={detailState()?.status === "error"}>
+            <PullRequestDetailError
+              error={
+                (detailState() as Extract<Repositories.PullRequestDetailState, { status: "error" }>)
+                  .error
+              }
+            />
+          </Match>
+        </Switch>
+        <Show
+          when={diff()}
+          fallback={
+            <Switch fallback={<p class="repo-pr-status">Loading pull request diff...</p>}>
+              <Match when={error()}>
+                {(currentError) => <PullRequestDiffError error={currentError()} />}
+              </Match>
+            </Switch>
+          }
+        >
+          <>
+            <Show when={diffState()?.status === "loading"}>
+              <p class="repo-pr-status">Refreshing pull request diff...</p>
+            </Show>
+            <Show when={error()}>
+              {(currentError) => (
+                <>
+                  <PullRequestDiffError error={currentError()} />
+                  <p class="repo-pr-status">Showing the last successfully loaded diff.</p>
+                </>
+              )}
+            </Show>
+          </>
+        </Show>
+      </div>
+      <Show when={diff()}>
+        {(currentDiff) => (
+          <div class="PullRequestPage-diffSummary">
+            <PullRequestDiffTotals diff={currentDiff()} />
+          </div>
+        )}
+      </Show>
+    </section>
+  );
+};
+
+const PullRequestDiffTotals = (props: { diff: Repositories.PullRequestDiff }) => {
+  const lineCount = () =>
+    props.diff.files.reduce(
+      (total, file) =>
+        total + diffFileHunks(file).reduce((fileTotal, hunk) => fileTotal + hunk.lines.length, 0),
+      0,
+    );
+
+  return props.diff.files.length === 0 ? (
+    <p class="repo-pr-status">This pull request has no changed files.</p>
+  ) : (
+    <>
+      <p class="repo-pr-status">
+        {props.diff.files.length} changed {props.diff.files.length === 1 ? "file" : "files"},{" "}
+        {lineCount()} source {lineCount() === 1 ? "line" : "lines"}.
+      </p>
+      <DiffView diff={props.diff} />
+    </>
+  );
+};
+
+const PullRequestDiffError = ({ error }: { error: Repositories.PullRequestDiffError }) => {
+  switch (error) {
+    case "authenticationRequired":
+      return <p class="repo-pr-status">Authentication is required to load this diff.</p>;
+    case "authorizationRequired":
+      return (
+        <p class="repo-pr-status">
+          GitHub App authorization required.{" "}
+          <a href={apiUrl("/api/github-app/authorize")}>Authorize more repos</a>.
+        </p>
+      );
+    case "diffParseFailed":
+      return <p class="repo-pr-status">The stored diff could not be parsed.</p>;
+    case "diffResourceLimitExceeded":
+      return <p class="repo-pr-status">The stored diff is too large to display.</p>;
+    case "diffUnavailable":
+      return <p class="repo-pr-status">The stored pull request does not include a diff.</p>;
+    case "pullRequestNotFound":
+      return <p class="repo-pr-status">Pull request details are not stored yet.</p>;
+    case "repositoryNotTracked":
+      return <p class="repo-pr-status">Repository is not tracked.</p>;
+    case "invalidPullRequest":
+    case "invalidRepository":
+      return <p class="repo-pr-status">The pull request diff URL is invalid.</p>;
+    case "loadFailed":
+      return <p class="repo-pr-status">The pull request diff could not be loaded.</p>;
+  }
 };
 
 const PullRequestMessage = ({ children, title }: ParentProps<{ title: string }>) => (
@@ -170,7 +349,17 @@ const PullRequestMessage = ({ children, title }: ParentProps<{ title: string }>)
   </section>
 );
 
-const PullRequestActions = (props: { data: Accessor<PullRequestPageData> }) => {
+const PullRequestActions = (props: {
+  data: Accessor<PullRequestPageData>;
+  view: PullRequestView;
+}) => {
+  const diffLoading = () =>
+    props.view === "diff" && props.data().pullRequestDiff?.status === "loading";
+  const lastSyncedAt = () =>
+    props.data().pullRequestDetail?.detail?.syncedAt ??
+    props.data().pullRequestDiff?.diff?.syncedAt ??
+    props.data().pullRequest.syncedAt;
+
   return (
     <nav aria-label="Pull request actions" class="pr-sidebar-actions">
       <Tooltip closeDelay={150} gutter={8} ignoreSafeArea openDelay={0}>
@@ -203,7 +392,8 @@ const PullRequestActions = (props: { data: Accessor<PullRequestPageData> }) => {
           disabled={
             props.data().pullRequestDetail?.status === "loading" ||
             props.data().pullRequestDetail?.status === "loadingTimeline" ||
-            props.data().pullRequestDetail?.status === "syncing"
+            props.data().pullRequestDetail?.status === "syncing" ||
+            diffLoading()
           }
           onClick={() =>
             send({
@@ -229,9 +419,7 @@ const PullRequestActions = (props: { data: Accessor<PullRequestPageData> }) => {
           <span>Sync pull request from GitHub</span>
           <span class="pr-tooltip-secondary">
             Last synced:{" "}
-            {props.data().pullRequestDetail?.detail?.syncedAt === undefined
-              ? "Never"
-              : formatLocalDateTime(props.data().pullRequestDetail?.detail?.syncedAt ?? "")}
+            {lastSyncedAt() === undefined ? "Never" : formatLocalDateTime(lastSyncedAt() ?? "")}
           </span>
         </PullRequestTooltip>
       </Tooltip>
@@ -401,7 +589,7 @@ const PullRequestTimeline = (props: { data: Accessor<PullRequestPageData> }) => 
           Older activity could not be loaded. Try again.
         </p>
       ) : null}
-      <Show when={detail()?.timelineHasOlder}>
+      <Show when={detail()?.timelinePagination.kind === "hasOlder"}>
         <button
           aria-busy={detailState()?.status === "loadingTimeline"}
           class="pr-activity-load-older"
@@ -432,15 +620,21 @@ type TimelineEvent = Repositories.PullRequestDetail["timeline"][number];
 const PullRequestTimelineItem = ({ event }: { event: TimelineEvent }) => {
   const action = timelineAction(event);
   const actor = event.actorLogin ?? "GitHub";
-  const reviewComments = event.reviewComments ?? [];
+  const payload = event.event;
+  const body =
+    "body" in payload ? payload.body : payload.kind === "committed" ? payload.message : undefined;
+  const url = "url" in payload ? payload.url : undefined;
+  const reviewComments = payload.kind === "reviewed" ? payload.reviewComments.items : [];
+  const reviewCommentsTruncated =
+    payload.kind === "reviewed" && payload.reviewComments.kind === "truncated";
 
   return (
     <li class="pr-activity-item">
       <div class="pr-activity-item-heading">
         <span>
           <strong>{actor}</strong>{" "}
-          {event.url ? (
-            <a href={event.url} rel="noreferrer" target="_blank">
+          {url ? (
+            <a href={url} rel="noreferrer" target="_blank">
               {action}
             </a>
           ) : (
@@ -453,7 +647,7 @@ const PullRequestTimelineItem = ({ event }: { event: TimelineEvent }) => {
           </time>
         ) : null}
       </div>
-      {event.body ? <p class="pr-activity-body">{event.body}</p> : null}
+      {body ? <p class="pr-activity-body">{body}</p> : null}
       {reviewComments.length === 0 ? null : (
         <ul aria-label="Review comments" class="pr-activity-review-comments">
           {reviewComments.map((comment) => (
@@ -471,11 +665,11 @@ const PullRequestTimelineItem = ({ event }: { event: TimelineEvent }) => {
           ))}
         </ul>
       )}
-      {event.reviewCommentsHasMore ? (
+      {reviewCommentsTruncated ? (
         <p class="pr-activity-truncated">
           Additional review comments are available.{" "}
-          {event.url ? (
-            <a href={event.url} rel="noreferrer" target="_blank">
+          {url ? (
+            <a href={url} rel="noreferrer" target="_blank">
               View the complete review on GitHub
             </a>
           ) : (
@@ -487,42 +681,45 @@ const PullRequestTimelineItem = ({ event }: { event: TimelineEvent }) => {
   );
 };
 
-const timelineAction = (event: TimelineEvent) => {
-  switch (event.event) {
+const timelineAction = (event: TimelineEvent): string => {
+  const payload = event.event;
+  switch (payload.kind) {
     case "commented":
       return "commented";
     case "committed":
-      return event.commitSha ? `committed ${event.commitSha.slice(0, 7)}` : "committed";
+      return payload.commitSha ? `committed ${payload.commitSha.slice(0, 7)}` : "committed";
     case "reviewed":
-      return reviewAction(event.state);
+      return reviewAction(payload.state);
     case "closed":
       return "closed the pull request";
     case "reopened":
       return "reopened the pull request";
     case "merged":
       return "merged the pull request";
-    case "ready_for_review":
+    case "readyForReview":
       return "marked the pull request ready for review";
-    case "converted_to_draft":
+    case "convertedToDraft":
       return "converted the pull request to draft";
-    case "review_requested":
-      return event.title ? `requested a review from ${event.title}` : "requested a review";
-    case "review_request_removed":
-      return event.title
-        ? `removed the review request for ${event.title}`
+    case "reviewRequested":
+      return payload.reviewer
+        ? `requested a review from ${payload.reviewer}`
+        : "requested a review";
+    case "reviewRequestRemoved":
+      return payload.reviewer
+        ? `removed the review request for ${payload.reviewer}`
         : "removed a review request";
-    case "review_dismissed":
+    case "reviewDismissed":
       return "dismissed a review";
-    case "head_ref_force_pushed":
+    case "headRefForcePushed":
       return "force-pushed the head branch";
-    case "base_ref_force_pushed":
+    case "baseRefForcePushed":
       return "force-pushed the base branch";
-    case "head_ref_deleted":
-      return event.title ? `deleted the ${event.title} branch` : "deleted the head branch";
-    case "head_ref_restored":
+    case "headRefDeleted":
+      return payload.name ? `deleted the ${payload.name} branch` : "deleted the head branch";
+    case "headRefRestored":
       return "restored the head branch";
-    default:
-      return event.title ? humanizeEvent(event.title) : humanizeEvent(event.event);
+    case "unknown":
+      return humanizeEvent(payload.name ?? "unknown");
   }
 };
 

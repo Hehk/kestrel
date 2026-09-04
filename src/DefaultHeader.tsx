@@ -15,7 +15,9 @@ const DefaultHeader = () => {
         <span class="nav-separator" aria-hidden="true">
           |
         </span>
-        <Link to={{ name: "PullRequest", repo: "kestrel", id: "42" }}>Sample PR</Link>
+        <Link to={{ name: "PullRequest", repo: "kestrel", id: "42", view: "overview" }}>
+          Sample PR
+        </Link>
         <span class="nav-separator" aria-hidden="true">
           |
         </span>

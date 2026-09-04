@@ -1,0 +1,10 @@
+diff --git a/src/legacy.rs b/src/legacy.rs
+deleted file mode 100644
+index 63c72bc..0000000
+--- a/src/legacy.rs
++++ /dev/null
+@@ -1,4 +0,0 @@
+-pub fn legacy_mode() -> bool {
+-    true
+-}
+-

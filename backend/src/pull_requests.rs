@@ -1,16 +1,27 @@
 use axum::{
-    extract::{Path, State},
-    http::{HeaderMap, StatusCode},
+    body::Body,
+    extract::{rejection::PathRejection, Path, State},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
+    response::Response,
     Json,
 };
 use reqwest::StatusCode as ReqwestStatusCode;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sqlx::{Executor, Sqlite, SqlitePool};
-use std::collections::HashSet;
+use std::{collections::HashSet, time::Instant};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use utoipa::{IntoParams, ToSchema};
 
-use crate::{auth, github_app, http::AppState, repositories};
+use crate::{
+    auth, github_app,
+    http::AppState,
+    pull_request_diff::{
+        self, DiffParseError, PullRequestDiffContent, PullRequestDiffFile, PullRequestDiffFileMode,
+        PullRequestDiffFileOperation, PullRequestDiffHunk, PullRequestDiffLine,
+        PullRequestDiffModeChange, MAX_DIFF_BYTES,
+    },
+    repositories,
+};
 
 const GITHUB_PROVIDER: &str = "github";
 const PAGE_SIZE: u8 = 100;
@@ -125,10 +136,19 @@ pub struct ListPullRequestsResponse {
 #[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncPullRequestsResponse {
-    pub complete: bool,
-    pub next_page: Option<i64>,
+    pub pagination: PullRequestSyncPaginationDto,
     pub pull_requests: Vec<PullRequestDto>,
     pub synced_count: usize,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PullRequestSyncPaginationDto {
+    Complete,
+    #[serde(rename_all = "camelCase")]
+    HasMore {
+        next_page: i64,
+    },
 }
 
 #[derive(Clone, Deserialize, Serialize, ToSchema)]
@@ -194,28 +214,209 @@ pub struct PullRequestTimelineReviewCommentDto {
 }
 
 #[derive(Clone, Deserialize, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", from = "StoredPullRequestTimelineEvent")]
 pub struct PullRequestTimelineEventDto {
     pub actor_login: Option<String>,
-    pub event: String,
-    #[serde(default)]
-    pub body: Option<String>,
-    #[serde(default)]
-    pub commit_sha: Option<String>,
-    #[serde(default)]
+    pub event: PullRequestTimelineEventKindDto,
     pub id: Option<String>,
-    #[serde(default)]
     pub occurred_at: Option<String>,
+}
+
+#[derive(Clone, Deserialize, Serialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PullRequestTimelineEventKindDto {
+    #[serde(rename_all = "camelCase")]
+    Commented {
+        body: Option<String>,
+        url: Option<String>,
+    },
+    #[serde(rename_all = "camelCase")]
+    Committed {
+        commit_sha: Option<String>,
+        message: Option<String>,
+        title: Option<String>,
+        url: Option<String>,
+    },
+    #[serde(rename_all = "camelCase")]
+    Reviewed {
+        body: Option<String>,
+        review_comments: PullRequestTimelineReviewCommentsDto,
+        state: Option<String>,
+        url: Option<String>,
+    },
+    Closed,
+    Reopened,
+    #[serde(rename_all = "camelCase")]
+    Merged {
+        commit_sha: Option<String>,
+    },
+    ReadyForReview,
+    ConvertedToDraft,
+    #[serde(rename_all = "camelCase")]
+    ReviewRequested {
+        reviewer: Option<String>,
+    },
+    #[serde(rename_all = "camelCase")]
+    ReviewRequestRemoved {
+        reviewer: Option<String>,
+    },
+    #[serde(rename_all = "camelCase")]
+    ReviewDismissed {
+        body: Option<String>,
+        state: Option<String>,
+        url: Option<String>,
+    },
+    #[serde(rename_all = "camelCase")]
+    HeadRefForcePushed {
+        commit_sha: Option<String>,
+    },
+    #[serde(rename_all = "camelCase")]
+    BaseRefForcePushed {
+        commit_sha: Option<String>,
+    },
+    #[serde(rename_all = "camelCase")]
+    HeadRefDeleted {
+        name: Option<String>,
+    },
+    HeadRefRestored,
+    #[serde(rename_all = "camelCase")]
+    Unknown {
+        name: Option<String>,
+    },
+}
+
+#[derive(Clone, Deserialize, Serialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PullRequestTimelineReviewCommentsDto {
+    #[serde(rename_all = "camelCase")]
+    Complete {
+        items: Vec<PullRequestTimelineReviewCommentDto>,
+    },
+    #[serde(rename_all = "camelCase")]
+    Truncated {
+        items: Vec<PullRequestTimelineReviewCommentDto>,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredPullRequestTimelineEvent {
     #[serde(default)]
-    pub review_comments: Vec<PullRequestTimelineReviewCommentDto>,
+    actor_login: Option<String>,
+    event: StoredPullRequestTimelineEventKind,
     #[serde(default)]
-    pub review_comments_has_more: bool,
+    body: Option<String>,
     #[serde(default)]
-    pub state: Option<String>,
+    commit_sha: Option<String>,
     #[serde(default)]
-    pub title: Option<String>,
+    id: Option<String>,
     #[serde(default)]
-    pub url: Option<String>,
+    occurred_at: Option<String>,
+    #[serde(default)]
+    review_comments: Vec<PullRequestTimelineReviewCommentDto>,
+    #[serde(default)]
+    review_comments_has_more: bool,
+    #[serde(default)]
+    state: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StoredPullRequestTimelineEventKind {
+    Current(PullRequestTimelineEventKindDto),
+    Legacy(String),
+}
+
+impl From<StoredPullRequestTimelineEvent> for PullRequestTimelineEventDto {
+    fn from(stored: StoredPullRequestTimelineEvent) -> Self {
+        let event = match stored.event {
+            StoredPullRequestTimelineEventKind::Current(event) => event,
+            StoredPullRequestTimelineEventKind::Legacy(event) => {
+                let review_comments = if stored.review_comments_has_more {
+                    PullRequestTimelineReviewCommentsDto::Truncated {
+                        items: stored.review_comments,
+                    }
+                } else {
+                    PullRequestTimelineReviewCommentsDto::Complete {
+                        items: stored.review_comments,
+                    }
+                };
+                match event.as_str() {
+                    "commented" => PullRequestTimelineEventKindDto::Commented {
+                        body: stored.body,
+                        url: stored.url,
+                    },
+                    "committed" => PullRequestTimelineEventKindDto::Committed {
+                        commit_sha: stored.commit_sha,
+                        message: stored.body,
+                        title: stored.title,
+                        url: stored.url,
+                    },
+                    "reviewed" => PullRequestTimelineEventKindDto::Reviewed {
+                        body: stored.body,
+                        review_comments,
+                        state: stored.state,
+                        url: stored.url,
+                    },
+                    "closed" => PullRequestTimelineEventKindDto::Closed,
+                    "reopened" => PullRequestTimelineEventKindDto::Reopened,
+                    "merged" => PullRequestTimelineEventKindDto::Merged {
+                        commit_sha: stored.commit_sha,
+                    },
+                    "ready_for_review" | "readyForReview" => {
+                        PullRequestTimelineEventKindDto::ReadyForReview
+                    }
+                    "converted_to_draft" | "convertedToDraft" => {
+                        PullRequestTimelineEventKindDto::ConvertedToDraft
+                    }
+                    "review_requested" | "reviewRequested" => {
+                        PullRequestTimelineEventKindDto::ReviewRequested {
+                            reviewer: stored.title,
+                        }
+                    }
+                    "review_request_removed" | "reviewRequestRemoved" => {
+                        PullRequestTimelineEventKindDto::ReviewRequestRemoved {
+                            reviewer: stored.title,
+                        }
+                    }
+                    "review_dismissed" | "reviewDismissed" => {
+                        PullRequestTimelineEventKindDto::ReviewDismissed {
+                            body: stored.body,
+                            state: stored.state,
+                            url: stored.url,
+                        }
+                    }
+                    "head_ref_force_pushed" | "headRefForcePushed" => {
+                        PullRequestTimelineEventKindDto::HeadRefForcePushed {
+                            commit_sha: stored.commit_sha,
+                        }
+                    }
+                    "base_ref_force_pushed" | "baseRefForcePushed" => {
+                        PullRequestTimelineEventKindDto::BaseRefForcePushed {
+                            commit_sha: stored.commit_sha,
+                        }
+                    }
+                    "head_ref_deleted" | "headRefDeleted" => {
+                        PullRequestTimelineEventKindDto::HeadRefDeleted { name: stored.title }
+                    }
+                    "head_ref_restored" | "headRefRestored" => {
+                        PullRequestTimelineEventKindDto::HeadRefRestored
+                    }
+                    _ => PullRequestTimelineEventKindDto::Unknown { name: stored.title },
+                }
+            }
+        };
+        Self {
+            actor_login: stored.actor_login,
+            event,
+            id: stored.id,
+            occurred_at: stored.occurred_at,
+        }
+    }
 }
 
 #[derive(Serialize, ToSchema)]
@@ -224,7 +425,6 @@ pub struct PullRequestDetailDto {
     pub body: Option<String>,
     pub check_runs: Vec<PullRequestCheckRunDto>,
     pub commits: Vec<PullRequestCommitDto>,
-    pub diff: Option<String>,
     pub files: Vec<PullRequestFileDto>,
     pub issue_comments: Vec<PullRequestCommentDto>,
     pub review_comments: Vec<PullRequestCommentDto>,
@@ -233,7 +433,14 @@ pub struct PullRequestDetailDto {
     pub statuses: Vec<PullRequestStatusDto>,
     pub synced_at: String,
     pub timeline: Vec<PullRequestTimelineEventDto>,
-    pub timeline_has_older: bool,
+    pub timeline_pagination: PullRequestTimelinePaginationDto,
+}
+
+#[derive(Clone, Copy, Serialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PullRequestTimelinePaginationDto {
+    Complete,
+    HasOlder,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -251,14 +458,297 @@ pub struct SyncPullRequestResponse {
 
 #[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+pub struct PullRequestDiffResponse {
+    pub files: Vec<PullRequestDiffFileDto>,
+    pub synced_at: String,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestDiffFileDto {
+    pub additions: u64,
+    pub content: PullRequestDiffContentDto,
+    pub deletions: u64,
+    pub operation: PullRequestDiffFileOperationDto,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PullRequestDiffContentDto {
+    Binary,
+    #[serde(rename_all = "camelCase")]
+    Text {
+        hunks: Vec<PullRequestDiffHunkDto>,
+    },
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PullRequestDiffFileOperationDto {
+    #[serde(rename_all = "camelCase")]
+    Added {
+        path: String,
+        mode: PullRequestDiffFileModeDto,
+    },
+    #[serde(rename_all = "camelCase")]
+    Deleted {
+        path: String,
+        mode: PullRequestDiffFileModeDto,
+    },
+    #[serde(rename_all = "camelCase")]
+    Modified {
+        path: String,
+        mode_change: PullRequestDiffModeChangeDto,
+    },
+    #[serde(rename_all = "camelCase")]
+    Renamed {
+        old_path: String,
+        new_path: String,
+        mode_change: PullRequestDiffModeChangeDto,
+    },
+    #[serde(rename_all = "camelCase")]
+    Copied {
+        old_path: String,
+        new_path: String,
+        mode_change: PullRequestDiffModeChangeDto,
+    },
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PullRequestDiffModeChangeDto {
+    Unchanged,
+    #[serde(rename_all = "camelCase")]
+    Changed {
+        old_mode: PullRequestDiffFileModeDto,
+        new_mode: PullRequestDiffFileModeDto,
+    },
+}
+
+#[derive(Serialize, ToSchema)]
+pub enum PullRequestDiffFileModeDto {
+    #[serde(rename = "100644")]
+    Regular,
+    #[serde(rename = "100755")]
+    Executable,
+    #[serde(rename = "120000")]
+    Symlink,
+    #[serde(rename = "160000")]
+    Gitlink,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestDiffHunkDto {
+    #[schema(required)]
+    pub context: Option<String>,
+    pub lines: Vec<PullRequestDiffLineDto>,
+    pub new_count: u64,
+    pub new_start: u64,
+    pub old_count: u64,
+    pub old_start: u64,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PullRequestDiffLineDto {
+    #[serde(rename_all = "camelCase")]
+    Context {
+        content: String,
+        missing_newline: bool,
+        old_line: u64,
+        new_line: u64,
+    },
+    #[serde(rename_all = "camelCase")]
+    Addition {
+        content: String,
+        missing_newline: bool,
+        new_line: u64,
+    },
+    #[serde(rename_all = "camelCase")]
+    Deletion {
+        content: String,
+        missing_newline: bool,
+        old_line: u64,
+    },
+}
+
+impl PullRequestDiffContentDto {
+    fn hunks(&self) -> &[PullRequestDiffHunkDto] {
+        match self {
+            Self::Binary => &[],
+            Self::Text { hunks } => hunks,
+        }
+    }
+}
+
+impl From<PullRequestDiffFile> for PullRequestDiffFileDto {
+    fn from(file: PullRequestDiffFile) -> Self {
+        Self {
+            additions: u64::from(file.additions),
+            content: file.content.into(),
+            deletions: u64::from(file.deletions),
+            operation: file.operation.into(),
+        }
+    }
+}
+
+impl From<PullRequestDiffContent> for PullRequestDiffContentDto {
+    fn from(content: PullRequestDiffContent) -> Self {
+        match content {
+            PullRequestDiffContent::Binary => Self::Binary,
+            PullRequestDiffContent::Text { hunks } => Self::Text {
+                hunks: hunks.into_iter().map(Into::into).collect(),
+            },
+        }
+    }
+}
+
+impl From<PullRequestDiffFileOperation> for PullRequestDiffFileOperationDto {
+    fn from(operation: PullRequestDiffFileOperation) -> Self {
+        match operation {
+            PullRequestDiffFileOperation::Added { path, mode } => Self::Added {
+                path,
+                mode: mode.into(),
+            },
+            PullRequestDiffFileOperation::Deleted { path, mode } => Self::Deleted {
+                path,
+                mode: mode.into(),
+            },
+            PullRequestDiffFileOperation::Modified { path, mode_change } => Self::Modified {
+                path,
+                mode_change: mode_change.into(),
+            },
+            PullRequestDiffFileOperation::Renamed {
+                old_path,
+                new_path,
+                mode_change,
+            } => Self::Renamed {
+                old_path,
+                new_path,
+                mode_change: mode_change.into(),
+            },
+            PullRequestDiffFileOperation::Copied {
+                old_path,
+                new_path,
+                mode_change,
+            } => Self::Copied {
+                old_path,
+                new_path,
+                mode_change: mode_change.into(),
+            },
+        }
+    }
+}
+
+impl From<PullRequestDiffModeChange> for PullRequestDiffModeChangeDto {
+    fn from(mode_change: PullRequestDiffModeChange) -> Self {
+        match mode_change {
+            PullRequestDiffModeChange::Unchanged => Self::Unchanged,
+            PullRequestDiffModeChange::Changed { old_mode, new_mode } => Self::Changed {
+                old_mode: old_mode.into(),
+                new_mode: new_mode.into(),
+            },
+        }
+    }
+}
+
+impl From<PullRequestDiffFileMode> for PullRequestDiffFileModeDto {
+    fn from(mode: PullRequestDiffFileMode) -> Self {
+        match mode {
+            PullRequestDiffFileMode::Regular => Self::Regular,
+            PullRequestDiffFileMode::Executable => Self::Executable,
+            PullRequestDiffFileMode::Symlink => Self::Symlink,
+            PullRequestDiffFileMode::Gitlink => Self::Gitlink,
+        }
+    }
+}
+
+impl From<PullRequestDiffHunk> for PullRequestDiffHunkDto {
+    fn from(hunk: PullRequestDiffHunk) -> Self {
+        Self {
+            context: hunk.context,
+            lines: hunk.lines.into_iter().map(Into::into).collect(),
+            new_count: u64::from(hunk.new_count),
+            new_start: u64::from(hunk.new_start),
+            old_count: u64::from(hunk.old_count),
+            old_start: u64::from(hunk.old_start),
+        }
+    }
+}
+
+impl From<PullRequestDiffLine> for PullRequestDiffLineDto {
+    fn from(line: PullRequestDiffLine) -> Self {
+        match line {
+            PullRequestDiffLine::Context {
+                content,
+                missing_newline,
+                old_line,
+                new_line,
+            } => Self::Context {
+                content,
+                missing_newline,
+                old_line: u64::from(old_line),
+                new_line: u64::from(new_line),
+            },
+            PullRequestDiffLine::Addition {
+                content,
+                missing_newline,
+                new_line,
+            } => Self::Addition {
+                content,
+                missing_newline,
+                new_line: u64::from(new_line),
+            },
+            PullRequestDiffLine::Deletion {
+                content,
+                missing_newline,
+                old_line,
+            } => Self::Deletion {
+                content,
+                missing_newline,
+                old_line: u64::from(old_line),
+            },
+        }
+    }
+}
+
+struct PullRequestDiffBuild {
+    body: Vec<u8>,
+    dto_millis: u64,
+    files: usize,
+    hunks: usize,
+    lines: usize,
+    parse_millis: u64,
+    serialize_millis: u64,
+}
+
+enum PullRequestDiffResponseError {
+    Parse {
+        error: DiffParseError,
+        parse_millis: u64,
+    },
+    Serialize,
+}
+
+fn elapsed_millis(started_at: Instant) -> u64 {
+    u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct PullRequestErrorResponse {
     pub error: PullRequestErrorCode,
 }
 
 #[derive(Serialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum PullRequestErrorCode {
+    AuthenticationRequired,
     AuthorizationRequired,
+    DiffParseFailed,
+    DiffResourceLimitExceeded,
+    DiffUnavailable,
     InvalidPullRequest,
     InvalidRepository,
     PullRequestNotFound,
@@ -269,12 +759,16 @@ pub enum PullRequestErrorCode {
 impl PullRequestErrorCode {
     fn as_str(&self) -> &'static str {
         match self {
-            Self::AuthorizationRequired => "authorization_required",
-            Self::InvalidPullRequest => "invalid_pull_request",
-            Self::InvalidRepository => "invalid_repository",
-            Self::PullRequestNotFound => "pull_request_not_found",
-            Self::RepositoryNotTracked => "repository_not_tracked",
-            Self::SyncFailed => "sync_failed",
+            Self::AuthenticationRequired => "authenticationRequired",
+            Self::AuthorizationRequired => "authorizationRequired",
+            Self::DiffParseFailed => "diffParseFailed",
+            Self::DiffResourceLimitExceeded => "diffResourceLimitExceeded",
+            Self::DiffUnavailable => "diffUnavailable",
+            Self::InvalidPullRequest => "invalidPullRequest",
+            Self::InvalidRepository => "invalidRepository",
+            Self::PullRequestNotFound => "pullRequestNotFound",
+            Self::RepositoryNotTracked => "repositoryNotTracked",
+            Self::SyncFailed => "syncFailed",
         }
     }
 }
@@ -391,7 +885,13 @@ pub(crate) async fn sync_pull_requests(
             PullRequestErrorCode::SyncFailed,
         )
     })?;
-    let complete = github_pull_requests.len() < usize::from(PAGE_SIZE);
+    let pagination = if github_pull_requests.len() < usize::from(PAGE_SIZE) {
+        PullRequestSyncPaginationDto::Complete
+    } else {
+        PullRequestSyncPaginationDto::HasMore {
+            next_page: tracked.sync_page + 1,
+        }
+    };
     let pull_requests =
         upsert_pull_requests(&state.db, &tracked, &github_pull_requests, &synced_at)
             .await
@@ -402,12 +902,7 @@ pub(crate) async fn sync_pull_requests(
                     PullRequestErrorCode::SyncFailed,
                 )
             })?;
-    let next_page = if complete {
-        None
-    } else {
-        Some(tracked.sync_page + 1)
-    };
-    update_sync_state(&state.db, &tracked, next_page, &synced_at)
+    update_sync_state(&state.db, &tracked, &pagination, &synced_at)
         .await
         .map_err(|error| {
             tracing::error!(%error, "failed to update pull request sync state");
@@ -418,8 +913,7 @@ pub(crate) async fn sync_pull_requests(
         })?;
 
     Ok(Json(SyncPullRequestsResponse {
-        complete,
-        next_page,
+        pagination,
         synced_count: pull_requests.len(),
         pull_requests,
     }))
@@ -479,6 +973,294 @@ pub(crate) async fn get_pull_request_detail(
     Ok(Json(PullRequestDetailResponse {
         pull_request_detail,
     }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/repositories/{owner}/{name}/pull-requests/{number}/diff",
+    params(PullRequestPath),
+    responses(
+        (status = 200, description = "Parsed pull request diff", body = PullRequestDiffResponse),
+        (status = 400, description = "Invalid repository or pull request", body = PullRequestErrorResponse),
+        (status = 401, description = "Authentication required", body = PullRequestErrorResponse),
+        (status = 404, description = "Repository or pull request detail is not stored", body = PullRequestErrorResponse),
+        (status = 409, description = "Stored pull request diff is unavailable", body = PullRequestErrorResponse),
+        (status = 422, description = "Stored pull request diff exceeds parser limits", body = PullRequestErrorResponse),
+        (status = 500, description = "Stored pull request diff could not be loaded or processed", body = PullRequestErrorResponse)
+    )
+)]
+pub(crate) async fn get_pull_request_diff(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    path: Result<Path<PullRequestPath>, PathRejection>,
+) -> Result<Response, (StatusCode, Json<PullRequestErrorResponse>)> {
+    let request_started_at = Instant::now();
+    let user_id = require_user_id(&state, &headers).await.map_err(|status| {
+        tracing::info!(
+            outcome = "authentication_failed",
+            status = status.as_u16(),
+            total_millis = elapsed_millis(request_started_at),
+            "pull request diff request completed"
+        );
+        let code = if status == StatusCode::UNAUTHORIZED {
+            PullRequestErrorCode::AuthenticationRequired
+        } else {
+            PullRequestErrorCode::SyncFailed
+        };
+        api_error(status, code)
+    })?;
+    let Path(path) = path.map_err(|_| {
+        tracing::info!(
+            outcome = "invalid_path",
+            total_millis = elapsed_millis(request_started_at),
+            "pull request diff request completed"
+        );
+        api_error(
+            StatusCode::BAD_REQUEST,
+            PullRequestErrorCode::InvalidPullRequest,
+        )
+    })?;
+    let (repository, number) = parse_pull_request_path(path).inspect_err(|_| {
+        tracing::info!(
+            outcome = "invalid_path",
+            total_millis = elapsed_millis(request_started_at),
+            "pull request diff request completed"
+        );
+    })?;
+    let tracked = load_tracked_repository(&state.db, &user_id, &repository)
+        .await
+        .map_err(|error| {
+            tracing::error!(
+                %error,
+                outcome = "repository_load_failed",
+                total_millis = elapsed_millis(request_started_at),
+                "pull request diff request completed"
+            );
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                PullRequestErrorCode::SyncFailed,
+            )
+        })?
+        .ok_or_else(|| {
+            tracing::info!(
+                owner = %repository.owner,
+                name = %repository.name,
+                number,
+                outcome = "repositoryNotTracked",
+                total_millis = elapsed_millis(request_started_at),
+                "pull request diff request completed"
+            );
+            api_error(
+                StatusCode::NOT_FOUND,
+                PullRequestErrorCode::RepositoryNotTracked,
+            )
+        })?;
+    let snapshot = load_pull_request_diff(&state.db, &tracked, number)
+        .await
+        .map_err(|error| {
+            tracing::error!(
+                %error,
+                owner = %tracked.owner,
+                name = %tracked.name,
+                number,
+                outcome = "snapshot_load_failed",
+                total_millis = elapsed_millis(request_started_at),
+                "pull request diff request completed"
+            );
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                PullRequestErrorCode::SyncFailed,
+            )
+        })?
+        .ok_or_else(|| {
+            tracing::info!(
+                owner = %tracked.owner,
+                name = %tracked.name,
+                number,
+                outcome = "snapshot_not_found",
+                total_millis = elapsed_millis(request_started_at),
+                "pull request diff request completed"
+            );
+            api_error(
+                StatusCode::NOT_FOUND,
+                PullRequestErrorCode::PullRequestNotFound,
+            )
+        })?;
+    let raw = match snapshot.content {
+        StoredPullRequestDiff::Available(raw) => raw,
+        StoredPullRequestDiff::Unavailable => {
+            tracing::info!(
+                owner = %tracked.owner,
+                name = %tracked.name,
+                number,
+                outcome = "diffUnavailable",
+                total_millis = elapsed_millis(request_started_at),
+                "pull request diff request completed"
+            );
+            return Err(api_error(
+                StatusCode::CONFLICT,
+                PullRequestErrorCode::DiffUnavailable,
+            ));
+        }
+        StoredPullRequestDiff::TooLarge { bytes } => {
+            tracing::warn!(
+                owner = %tracked.owner,
+                name = %tracked.name,
+                number,
+                outcome = "storage_limit",
+                raw_bytes = bytes,
+                total_millis = elapsed_millis(request_started_at),
+                "stored pull request diff exceeded the byte limit"
+            );
+            return Err(api_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                PullRequestErrorCode::DiffResourceLimitExceeded,
+            ));
+        }
+    };
+    let raw_bytes = raw.len();
+    let synced_at = snapshot.synced_at;
+    let blocking_started_at = Instant::now();
+    let built = tokio::task::spawn_blocking(move || {
+        let parse_started_at = Instant::now();
+        let parsed = pull_request_diff::parse_pull_request_diff(&raw);
+        let parse_millis = elapsed_millis(parse_started_at);
+        drop(raw);
+        let parsed = parsed.map_err(|error| PullRequestDiffResponseError::Parse {
+            error,
+            parse_millis,
+        })?;
+
+        let dto_started_at = Instant::now();
+        let files: Vec<PullRequestDiffFileDto> = parsed.into_iter().map(Into::into).collect();
+        let hunks = files.iter().map(|file| file.content.hunks().len()).sum();
+        let lines = files
+            .iter()
+            .flat_map(|file| file.content.hunks())
+            .map(|hunk| hunk.lines.len())
+            .sum();
+        let file_count = files.len();
+        let response = PullRequestDiffResponse { files, synced_at };
+        let dto_millis = elapsed_millis(dto_started_at);
+
+        let serialize_started_at = Instant::now();
+        let body =
+            serde_json::to_vec(&response).map_err(|_| PullRequestDiffResponseError::Serialize)?;
+        let serialize_millis = elapsed_millis(serialize_started_at);
+        Ok(PullRequestDiffBuild {
+            body,
+            dto_millis,
+            files: file_count,
+            hunks,
+            lines,
+            parse_millis,
+            serialize_millis,
+        })
+    })
+    .await;
+
+    let build = match built {
+        Ok(Ok(response)) => response,
+        Ok(Err(PullRequestDiffResponseError::Parse {
+            error: DiffParseError::LimitExceeded(limit),
+            parse_millis,
+        })) => {
+            tracing::warn!(
+                owner = %tracked.owner,
+                name = %tracked.name,
+                number,
+                ?limit,
+                outcome = "parser_limit",
+                raw_bytes,
+                parse_millis,
+                blocking_millis = elapsed_millis(blocking_started_at),
+                total_millis = elapsed_millis(request_started_at),
+                "stored pull request diff exceeded a parser resource limit"
+            );
+            return Err(api_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                PullRequestErrorCode::DiffResourceLimitExceeded,
+            ));
+        }
+        Ok(Err(PullRequestDiffResponseError::Parse {
+            error: DiffParseError::InvalidDiff(_) | DiffParseError::NumberOutOfRange,
+            parse_millis,
+        })) => {
+            tracing::error!(
+                owner = %tracked.owner,
+                name = %tracked.name,
+                number,
+                outcome = "parse_failed",
+                raw_bytes,
+                parse_millis,
+                blocking_millis = elapsed_millis(blocking_started_at),
+                total_millis = elapsed_millis(request_started_at),
+                "stored pull request diff is malformed"
+            );
+            return Err(api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                PullRequestErrorCode::DiffParseFailed,
+            ));
+        }
+        Ok(Err(PullRequestDiffResponseError::Serialize)) => {
+            tracing::error!(
+                owner = %tracked.owner,
+                name = %tracked.name,
+                number,
+                outcome = "serialize_failed",
+                raw_bytes,
+                blocking_millis = elapsed_millis(blocking_started_at),
+                total_millis = elapsed_millis(request_started_at),
+                "failed to serialize pull request diff response"
+            );
+            return Err(api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                PullRequestErrorCode::SyncFailed,
+            ));
+        }
+        Err(error) => {
+            tracing::error!(
+                owner = %tracked.owner,
+                name = %tracked.name,
+                number,
+                cancelled = error.is_cancelled(),
+                panicked = error.is_panic(),
+                outcome = "blocking_task_failed",
+                raw_bytes,
+                blocking_millis = elapsed_millis(blocking_started_at),
+                total_millis = elapsed_millis(request_started_at),
+                "pull request diff blocking task failed"
+            );
+            return Err(api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                PullRequestErrorCode::SyncFailed,
+            ));
+        }
+    };
+
+    tracing::info!(
+        owner = %tracked.owner,
+        name = %tracked.name,
+        number,
+        outcome = "success",
+        raw_bytes,
+        response_bytes = build.body.len(),
+        files = build.files,
+        hunks = build.hunks,
+        lines = build.lines,
+        parse_millis = build.parse_millis,
+        dto_millis = build.dto_millis,
+        serialize_millis = build.serialize_millis,
+        blocking_millis = elapsed_millis(blocking_started_at),
+        total_millis = elapsed_millis(request_started_at),
+        "served pull request diff"
+    );
+    let mut response = Response::new(Body::from(build.body));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    Ok(response)
 }
 
 #[utoipa::path(
@@ -645,7 +1427,7 @@ pub(crate) async fn load_older_pull_request_timeline(
                 PullRequestErrorCode::PullRequestNotFound,
             )
         })?;
-    let (cursor, has_older) = load_timeline_page_state(&state.db, &tracked, number)
+    let pagination = load_timeline_page_state(&state.db, &tracked, number)
         .await
         .map_err(|error| {
             tracing::error!(%error, "failed to load older timeline cursor");
@@ -660,18 +1442,14 @@ pub(crate) async fn load_older_pull_request_timeline(
                 PullRequestErrorCode::PullRequestNotFound,
             )
         })?;
-    if !has_older {
-        return Ok(Json(PullRequestDetailResponse {
-            pull_request_detail: detail,
-        }));
-    }
-    let cursor = cursor.ok_or_else(|| {
-        tracing::error!(number, "stored timeline has older items but no cursor");
-        api_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            PullRequestErrorCode::SyncFailed,
-        )
-    })?;
+    let cursor = match pagination {
+        PullRequestTimelinePagination::Complete => {
+            return Ok(Json(PullRequestDetailResponse {
+                pull_request_detail: detail,
+            }));
+        }
+        PullRequestTimelinePagination::HasOlder { cursor } => cursor,
+    };
     let page =
         match fetch_timeline_page_with_installation(&state, &user_id, &tracked, number, &cursor)
             .await
@@ -704,15 +1482,14 @@ pub(crate) async fn load_older_pull_request_timeline(
                 .as_ref()
                 .is_none_or(|id| stable_ids.insert(id.clone()))
         }));
-    detail.timeline_has_older = page.has_older;
+    detail.timeline_pagination = page.pagination.as_dto();
     let updated = update_pull_request_timeline_if_current(
         &state.db,
         &tracked,
         number,
         &cursor,
         &detail.timeline,
-        page.cursor.as_deref(),
-        page.has_older,
+        &page.pagination,
     )
     .await
     .map_err(|error| {
@@ -832,7 +1609,7 @@ async fn load_pull_request_detail(
     number: i64,
 ) -> Result<Option<PullRequestDetailDto>, PullRequestDataError> {
     let row = sqlx::query_as::<_, PullRequestDetailRow>(
-        "SELECT body, files_json, commits_json, reviews_json, review_comments_json, review_decision, issue_comments_json, timeline_json, timeline_has_older, check_runs_json, statuses_json, diff, synced_at FROM tracked_repository_pull_request_details WHERE user_id = ? AND provider = ? AND owner = ? AND name = ? AND number = ?",
+        "SELECT body, files_json, commits_json, reviews_json, review_comments_json, review_decision, issue_comments_json, timeline_json, timeline_has_older, check_runs_json, statuses_json, synced_at FROM tracked_repository_pull_request_details WHERE user_id = ? AND provider = ? AND owner = ? AND name = ? AND number = ?",
     )
     .bind(&repository.user_id)
     .bind(GITHUB_PROVIDER)
@@ -845,12 +1622,32 @@ async fn load_pull_request_detail(
     row.map(PullRequestDetailRow::into_dto).transpose()
 }
 
+async fn load_pull_request_diff(
+    db: &SqlitePool,
+    repository: &TrackedRepository,
+    number: i64,
+) -> Result<Option<PullRequestDiffSnapshot>, PullRequestDataError> {
+    sqlx::query_as::<_, PullRequestDiffRow>(
+        "SELECT CASE WHEN octet_length(diff) <= ? THEN diff END AS diff, octet_length(diff) AS diff_bytes, synced_at FROM tracked_repository_pull_request_details WHERE user_id = ? AND provider = ? AND owner = ? AND name = ? AND number = ?",
+    )
+    .bind(MAX_DIFF_BYTES as i64)
+    .bind(&repository.user_id)
+    .bind(GITHUB_PROVIDER)
+    .bind(&repository.owner)
+    .bind(&repository.name)
+    .bind(number)
+    .fetch_optional(db)
+    .await?
+    .map(PullRequestDiffRow::into_snapshot)
+    .transpose()
+}
+
 async fn load_timeline_page_state(
     db: &SqlitePool,
     repository: &TrackedRepository,
     number: i64,
-) -> Result<Option<(Option<String>, bool)>, PullRequestDataError> {
-    Ok(sqlx::query_as::<_, (Option<String>, bool)>(
+) -> Result<Option<PullRequestTimelinePagination>, PullRequestDataError> {
+    let row = sqlx::query_as::<_, (Option<String>, bool)>(
         "SELECT timeline_cursor, timeline_has_older FROM tracked_repository_pull_request_details WHERE user_id = ? AND provider = ? AND owner = ? AND name = ? AND number = ?",
     )
     .bind(&repository.user_id)
@@ -859,7 +1656,22 @@ async fn load_timeline_page_state(
     .bind(&repository.name)
     .bind(number)
     .fetch_optional(db)
-    .await?)
+    .await?;
+
+    row.map(|(cursor, has_older)| {
+        if has_older {
+            cursor
+                .map(|cursor| PullRequestTimelinePagination::HasOlder { cursor })
+                .ok_or_else(|| {
+                    PullRequestDataError::InvalidStoredData(
+                        "timeline has older items but no cursor".to_string(),
+                    )
+                })
+        } else {
+            Ok(PullRequestTimelinePagination::Complete)
+        }
+    })
+    .transpose()
 }
 
 async fn update_pull_request_timeline_if_current(
@@ -868,10 +1680,10 @@ async fn update_pull_request_timeline_if_current(
     number: i64,
     expected_cursor: &str,
     timeline: &[PullRequestTimelineEventDto],
-    next_cursor: Option<&str>,
-    has_older: bool,
+    pagination: &PullRequestTimelinePagination,
 ) -> Result<bool, PullRequestDataError> {
     let timeline_json = serde_json::to_string(timeline)?;
+    let (next_cursor, has_older) = pagination.parts();
     let update = sqlx::query(
         "UPDATE tracked_repository_pull_request_details SET timeline_json = ?, timeline_cursor = ?, timeline_has_older = ? WHERE user_id = ? AND provider = ? AND owner = ? AND name = ? AND number = ? AND timeline_cursor = ? AND timeline_has_older = 1",
     )
@@ -1065,13 +1877,7 @@ async fn fetch_github_pull_request_detail(
         ),
     )
     .await?;
-    let diff = fetch_github_text(
-        state,
-        token,
-        &pull_request_url,
-        "application/vnd.github.v3.diff",
-    )
-    .await?;
+    let diff = fetch_github_diff(state, token, &pull_request_url).await?;
 
     Ok(PullRequestSyncSnapshot {
         detail: PullRequestDetailSnapshot {
@@ -1097,8 +1903,7 @@ async fn fetch_github_pull_request_detail(
                 .map(PullRequestStatusDto::from)
                 .collect(),
             timeline: timeline_page.items,
-            timeline_cursor: timeline_page.cursor,
-            timeline_has_older: timeline_page.has_older,
+            timeline_pagination: timeline_page.pagination,
         },
         pull_request: pull_request.pull_request,
     })
@@ -1166,10 +1971,22 @@ async fn fetch_github_timeline_page(
         .collect::<Vec<_>>();
     items.reverse();
 
+    let page_info = pull_request.timeline_items.page_info;
+    let pagination = if page_info.has_previous_page {
+        PullRequestTimelinePagination::HasOlder {
+            cursor: page_info.start_cursor.ok_or_else(|| {
+                PullRequestDataError::GitHubGraphQl(
+                    "GitHub timeline has older items but no cursor".to_string(),
+                )
+            })?,
+        }
+    } else {
+        PullRequestTimelinePagination::Complete
+    };
+
     Ok(GitHubTimelinePage {
-        cursor: pull_request.timeline_items.page_info.start_cursor,
-        has_older: pull_request.timeline_items.page_info.has_previous_page,
         items,
+        pagination,
         review_decision: pull_request.review_decision,
     })
 }
@@ -1204,17 +2021,17 @@ async fn fetch_github_json<T: DeserializeOwned>(
     Ok(response.error_for_status()?.json::<T>().await?)
 }
 
-async fn fetch_github_text(
+async fn fetch_github_diff(
     state: &AppState,
     token: &str,
     url: &str,
-    accept: &str,
 ) -> Result<String, PullRequestDataError> {
     let response = state
         .http_client
         .get(url)
         .bearer_auth(token)
-        .header("Accept", accept)
+        .header("Accept", "application/vnd.github.v3.diff")
+        .header("Accept-Encoding", "identity")
         .header("User-Agent", USER_AGENT)
         .send()
         .await?;
@@ -1224,7 +2041,47 @@ async fn fetch_github_text(
         return Err(PullRequestDataError::GitHubAccessDenied);
     }
 
-    Ok(response.error_for_status()?.text().await?)
+    collect_github_diff(response.error_for_status()?, MAX_DIFF_BYTES).await
+}
+
+async fn collect_github_diff(
+    mut response: reqwest::Response,
+    limit: usize,
+) -> Result<String, PullRequestDataError> {
+    if response
+        .headers()
+        .get_all(reqwest::header::CONTENT_ENCODING)
+        .iter()
+        .any(|encoding| {
+            encoding.to_str().map_or(true, |encoding| {
+                encoding
+                    .split(',')
+                    .any(|coding| !coding.trim().eq_ignore_ascii_case("identity"))
+            })
+        })
+    {
+        return Err(PullRequestDataError::GitHubDiffUnsupportedEncoding);
+    }
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err(PullRequestDataError::GitHubDiffTooLarge);
+    }
+
+    let capacity = response
+        .content_length()
+        .and_then(|length| usize::try_from(length).ok())
+        .unwrap_or(0);
+    let mut bytes = Vec::with_capacity(capacity);
+    while let Some(chunk) = response.chunk().await? {
+        if chunk.len() > limit.saturating_sub(bytes.len()) {
+            return Err(PullRequestDataError::GitHubDiffTooLarge);
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+
+    String::from_utf8(bytes).map_err(PullRequestDataError::GitHubDiffInvalidUtf8)
 }
 
 async fn upsert_pull_requests(
@@ -1306,6 +2163,7 @@ where
     let timeline_json = serde_json::to_string(&detail.timeline)?;
     let check_runs_json = serde_json::to_string(&detail.check_runs)?;
     let statuses_json = serde_json::to_string(&detail.statuses)?;
+    let (timeline_cursor, timeline_has_older) = detail.timeline_pagination.parts();
 
     sqlx::query(
         "INSERT INTO tracked_repository_pull_request_details (user_id, provider, owner, name, number, body, files_json, commits_json, reviews_json, review_comments_json, review_decision, issue_comments_json, timeline_json, timeline_cursor, timeline_has_older, check_runs_json, statuses_json, diff, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, provider, owner, name, number) DO UPDATE SET body = excluded.body, files_json = excluded.files_json, commits_json = excluded.commits_json, reviews_json = excluded.reviews_json, review_comments_json = excluded.review_comments_json, review_decision = excluded.review_decision, issue_comments_json = excluded.issue_comments_json, timeline_json = excluded.timeline_json, timeline_cursor = excluded.timeline_cursor, timeline_has_older = excluded.timeline_has_older, check_runs_json = excluded.check_runs_json, statuses_json = excluded.statuses_json, diff = excluded.diff, synced_at = excluded.synced_at",
@@ -1323,8 +2181,8 @@ where
     .bind(&detail.review_decision)
     .bind(&issue_comments_json)
     .bind(&timeline_json)
-    .bind(&detail.timeline_cursor)
-    .bind(detail.timeline_has_older)
+    .bind(timeline_cursor)
+    .bind(timeline_has_older)
     .bind(&check_runs_json)
     .bind(&statuses_json)
     .bind(&detail.diff)
@@ -1336,7 +2194,6 @@ where
         body: detail.body.clone(),
         check_runs: detail.check_runs.clone(),
         commits: detail.commits.clone(),
-        diff: detail.diff.clone(),
         files: detail.files.clone(),
         issue_comments: detail.issue_comments.clone(),
         review_comments: detail.review_comments.clone(),
@@ -1345,20 +2202,24 @@ where
         statuses: detail.statuses.clone(),
         synced_at: synced_at.to_string(),
         timeline: detail.timeline.clone(),
-        timeline_has_older: detail.timeline_has_older,
+        timeline_pagination: detail.timeline_pagination.as_dto(),
     })
 }
 
 async fn update_sync_state(
     db: &SqlitePool,
     repository: &TrackedRepository,
-    next_page: Option<i64>,
+    pagination: &PullRequestSyncPaginationDto,
     synced_at: &str,
 ) -> Result<(), PullRequestDataError> {
+    let next_page = match pagination {
+        PullRequestSyncPaginationDto::Complete => 1,
+        PullRequestSyncPaginationDto::HasMore { next_page } => *next_page,
+    };
     sqlx::query(
         "UPDATE tracked_repositories SET pull_requests_sync_page = ?, pull_requests_synced_at = ?, pull_requests_sync_error = NULL WHERE user_id = ? AND provider = ? AND owner = ? AND name = ?",
     )
-    .bind(next_page.unwrap_or(1))
+    .bind(next_page)
     .bind(synced_at)
     .bind(&repository.user_id)
     .bind(GITHUB_PROVIDER)
@@ -1410,7 +2271,11 @@ enum PullRequestSyncError {
 enum PullRequestDataError {
     GitHubAccessDenied,
     GitHubApp(github_app::GitHubAppError),
+    GitHubDiffInvalidUtf8(std::string::FromUtf8Error),
+    GitHubDiffTooLarge,
+    GitHubDiffUnsupportedEncoding,
     GitHubGraphQl(String),
+    InvalidStoredData(String),
     Reqwest(reqwest::Error),
     Serde(serde_json::Error),
     Sql(sqlx::Error),
@@ -1452,7 +2317,20 @@ impl std::fmt::Display for PullRequestDataError {
         match self {
             Self::GitHubAccessDenied => write!(f, "GitHub App cannot access repository"),
             Self::GitHubApp(error) => write!(f, "GitHub App operation failed: {error}"),
+            Self::GitHubDiffInvalidUtf8(error) => {
+                write!(f, "GitHub pull request diff is not valid UTF-8: {error}")
+            }
+            Self::GitHubDiffTooLarge => write!(f, "GitHub pull request diff exceeds byte limit"),
+            Self::GitHubDiffUnsupportedEncoding => {
+                write!(
+                    f,
+                    "GitHub pull request diff uses unsupported content encoding"
+                )
+            }
             Self::GitHubGraphQl(error) => write!(f, "GitHub GraphQL operation failed: {error}"),
+            Self::InvalidStoredData(error) => {
+                write!(f, "invalid stored pull request data: {error}")
+            }
             Self::Reqwest(error) => write!(f, "GitHub pull request HTTP request failed: {error}"),
             Self::Serde(error) => write!(f, "pull request JSON operation failed: {error}"),
             Self::Sql(error) => write!(f, "pull request database operation failed: {error}"),
@@ -1499,8 +2377,29 @@ struct PullRequestDetailSnapshot {
     reviews: Vec<PullRequestReviewDto>,
     statuses: Vec<PullRequestStatusDto>,
     timeline: Vec<PullRequestTimelineEventDto>,
-    timeline_cursor: Option<String>,
-    timeline_has_older: bool,
+    timeline_pagination: PullRequestTimelinePagination,
+}
+
+#[derive(Clone)]
+enum PullRequestTimelinePagination {
+    Complete,
+    HasOlder { cursor: String },
+}
+
+impl PullRequestTimelinePagination {
+    fn as_dto(&self) -> PullRequestTimelinePaginationDto {
+        match self {
+            Self::Complete => PullRequestTimelinePaginationDto::Complete,
+            Self::HasOlder { .. } => PullRequestTimelinePaginationDto::HasOlder,
+        }
+    }
+
+    fn parts(&self) -> (Option<&str>, bool) {
+        match self {
+            Self::Complete => (None, false),
+            Self::HasOlder { cursor } => (Some(cursor), true),
+        }
+    }
 }
 
 struct PullRequestSyncSnapshot {
@@ -1513,7 +2412,6 @@ struct PullRequestDetailRow {
     body: Option<String>,
     check_runs_json: String,
     commits_json: String,
-    diff: Option<String>,
     files_json: String,
     issue_comments_json: String,
     review_comments_json: String,
@@ -1525,13 +2423,51 @@ struct PullRequestDetailRow {
     timeline_has_older: bool,
 }
 
+#[derive(sqlx::FromRow)]
+struct PullRequestDiffRow {
+    diff: Option<String>,
+    diff_bytes: Option<i64>,
+    synced_at: String,
+}
+
+struct PullRequestDiffSnapshot {
+    content: StoredPullRequestDiff,
+    synced_at: String,
+}
+
+enum StoredPullRequestDiff {
+    Unavailable,
+    Available(String),
+    TooLarge { bytes: i64 },
+}
+
+impl PullRequestDiffRow {
+    fn into_snapshot(self) -> Result<PullRequestDiffSnapshot, PullRequestDataError> {
+        let content = match (self.diff, self.diff_bytes) {
+            (None, None) => StoredPullRequestDiff::Unavailable,
+            (None, Some(bytes)) if bytes > MAX_DIFF_BYTES as i64 => {
+                StoredPullRequestDiff::TooLarge { bytes }
+            }
+            (Some(diff), Some(bytes)) if bytes >= 0 => StoredPullRequestDiff::Available(diff),
+            _ => {
+                return Err(PullRequestDataError::InvalidStoredData(
+                    "diff content and byte count are inconsistent".to_string(),
+                ));
+            }
+        };
+        Ok(PullRequestDiffSnapshot {
+            content,
+            synced_at: self.synced_at,
+        })
+    }
+}
+
 impl PullRequestDetailRow {
     fn into_dto(self) -> Result<PullRequestDetailDto, PullRequestDataError> {
         Ok(PullRequestDetailDto {
             body: self.body,
             check_runs: serde_json::from_str(&self.check_runs_json)?,
             commits: serde_json::from_str(&self.commits_json)?,
-            diff: self.diff,
             files: serde_json::from_str(&self.files_json)?,
             issue_comments: serde_json::from_str(&self.issue_comments_json)?,
             review_comments: serde_json::from_str(&self.review_comments_json)?,
@@ -1540,7 +2476,11 @@ impl PullRequestDetailRow {
             statuses: serde_json::from_str(&self.statuses_json)?,
             synced_at: self.synced_at,
             timeline: serde_json::from_str(&self.timeline_json)?,
-            timeline_has_older: self.timeline_has_older,
+            timeline_pagination: if self.timeline_has_older {
+                PullRequestTimelinePaginationDto::HasOlder
+            } else {
+                PullRequestTimelinePaginationDto::Complete
+            },
         })
     }
 }
@@ -1565,9 +2505,8 @@ impl PullRequestRow {
 }
 
 struct GitHubTimelinePage {
-    cursor: Option<String>,
-    has_older: bool,
     items: Vec<PullRequestTimelineEventDto>,
+    pagination: PullRequestTimelinePagination,
     review_decision: Option<String>,
 }
 
@@ -1688,78 +2627,95 @@ impl From<GitHubPullRequestCommit> for PullRequestCommitDto {
 
 fn map_github_timeline_item(item: serde_json::Value) -> PullRequestTimelineEventDto {
     let typename = json_string(&item, &["__typename"]);
-    let event = match typename.as_deref() {
-        Some("IssueComment") => "commented",
-        Some("PullRequestCommit") => "committed",
-        Some("PullRequestReview") => "reviewed",
-        Some("ClosedEvent") => "closed",
-        Some("ReopenedEvent") => "reopened",
-        Some("MergedEvent") => "merged",
-        Some("ReadyForReviewEvent") => "ready_for_review",
-        Some("ConvertToDraftEvent") => "converted_to_draft",
-        Some("ReviewRequestedEvent") => "review_requested",
-        Some("ReviewRequestRemovedEvent") => "review_request_removed",
-        Some("ReviewDismissedEvent") => "review_dismissed",
-        Some("HeadRefForcePushedEvent") => "head_ref_force_pushed",
-        Some("BaseRefForcePushedEvent") => "base_ref_force_pushed",
-        Some("HeadRefDeletedEvent") => "head_ref_deleted",
-        Some("HeadRefRestoredEvent") => "head_ref_restored",
-        _ => "unknown",
-    }
-    .to_string();
     let actor_login = json_string(&item, &["actor", "login"])
         .or_else(|| json_string(&item, &["author", "login"]))
         .or_else(|| json_string(&item, &["commit", "author", "user", "login"]))
         .or_else(|| json_string(&item, &["review", "author", "login"]));
-    let body = json_string(&item, &["body"])
-        .or_else(|| json_string(&item, &["commit", "message"]))
-        .or_else(|| json_string(&item, &["review", "body"]));
-    let commit_sha = json_string(&item, &["commit", "oid"])
-        .or_else(|| json_string(&item, &["afterCommit", "oid"]));
     let occurred_at = json_string(&item, &["createdAt"])
         .or_else(|| json_string(&item, &["submittedAt"]))
         .or_else(|| json_string(&item, &["commit", "committedDate"]));
-    let review_comments = item
-        .pointer("/comments/nodes")
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .map(|comment| PullRequestTimelineReviewCommentDto {
-            actor_login: json_string(comment, &["author", "login"]),
-            body: json_string(comment, &["body"]),
-            id: json_string(comment, &["id"]),
-            occurred_at: json_string(comment, &["createdAt"]),
-            url: json_string(comment, &["url"]),
-        })
-        .collect();
-    let review_comments_has_more = item
-        .pointer("/comments/pageInfo/hasNextPage")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false);
-    let state = json_string(&item, &["state"])
-        .or_else(|| json_string(&item, &["review", "state"]))
-        .or_else(|| json_string(&item, &["previousReviewState"]));
-    let title = json_string(&item, &["requestedReviewer", "login"])
-        .or_else(|| json_string(&item, &["requestedReviewer", "name"]))
-        .or_else(|| json_string(&item, &["headRefName"]))
-        .or_else(|| json_string(&item, &["commit", "messageHeadline"]))
-        .or_else(|| (event == "unknown").then_some(typename).flatten());
-    let url = json_string(&item, &["url"])
-        .or_else(|| json_string(&item, &["commit", "url"]))
-        .or_else(|| json_string(&item, &["review", "url"]));
+    let event = match typename.as_deref() {
+        Some("IssueComment") => PullRequestTimelineEventKindDto::Commented {
+            body: json_string(&item, &["body"]),
+            url: json_string(&item, &["url"]),
+        },
+        Some("PullRequestCommit") => PullRequestTimelineEventKindDto::Committed {
+            commit_sha: json_string(&item, &["commit", "oid"]),
+            message: json_string(&item, &["commit", "message"]),
+            title: json_string(&item, &["commit", "messageHeadline"]),
+            url: json_string(&item, &["commit", "url"]),
+        },
+        Some("PullRequestReview") => {
+            let items = item
+                .pointer("/comments/nodes")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .map(|comment| PullRequestTimelineReviewCommentDto {
+                    actor_login: json_string(comment, &["author", "login"]),
+                    body: json_string(comment, &["body"]),
+                    id: json_string(comment, &["id"]),
+                    occurred_at: json_string(comment, &["createdAt"]),
+                    url: json_string(comment, &["url"]),
+                })
+                .collect();
+            let review_comments = if item
+                .pointer("/comments/pageInfo/hasNextPage")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+            {
+                PullRequestTimelineReviewCommentsDto::Truncated { items }
+            } else {
+                PullRequestTimelineReviewCommentsDto::Complete { items }
+            };
+            PullRequestTimelineEventKindDto::Reviewed {
+                body: json_string(&item, &["body"]),
+                review_comments,
+                state: json_string(&item, &["state"]),
+                url: json_string(&item, &["url"]),
+            }
+        }
+        Some("ClosedEvent") => PullRequestTimelineEventKindDto::Closed,
+        Some("ReopenedEvent") => PullRequestTimelineEventKindDto::Reopened,
+        Some("MergedEvent") => PullRequestTimelineEventKindDto::Merged {
+            commit_sha: json_string(&item, &["commit", "oid"]),
+        },
+        Some("ReadyForReviewEvent") => PullRequestTimelineEventKindDto::ReadyForReview,
+        Some("ConvertToDraftEvent") => PullRequestTimelineEventKindDto::ConvertedToDraft,
+        Some("ReviewRequestedEvent") => PullRequestTimelineEventKindDto::ReviewRequested {
+            reviewer: json_string(&item, &["requestedReviewer", "login"])
+                .or_else(|| json_string(&item, &["requestedReviewer", "name"])),
+        },
+        Some("ReviewRequestRemovedEvent") => {
+            PullRequestTimelineEventKindDto::ReviewRequestRemoved {
+                reviewer: json_string(&item, &["requestedReviewer", "login"])
+                    .or_else(|| json_string(&item, &["requestedReviewer", "name"])),
+            }
+        }
+        Some("ReviewDismissedEvent") => PullRequestTimelineEventKindDto::ReviewDismissed {
+            body: json_string(&item, &["review", "body"]),
+            state: json_string(&item, &["previousReviewState"])
+                .or_else(|| json_string(&item, &["review", "state"])),
+            url: json_string(&item, &["review", "url"]),
+        },
+        Some("HeadRefForcePushedEvent") => PullRequestTimelineEventKindDto::HeadRefForcePushed {
+            commit_sha: json_string(&item, &["afterCommit", "oid"]),
+        },
+        Some("BaseRefForcePushedEvent") => PullRequestTimelineEventKindDto::BaseRefForcePushed {
+            commit_sha: json_string(&item, &["afterCommit", "oid"]),
+        },
+        Some("HeadRefDeletedEvent") => PullRequestTimelineEventKindDto::HeadRefDeleted {
+            name: json_string(&item, &["headRefName"]),
+        },
+        Some("HeadRefRestoredEvent") => PullRequestTimelineEventKindDto::HeadRefRestored,
+        _ => PullRequestTimelineEventKindDto::Unknown { name: typename },
+    };
 
     PullRequestTimelineEventDto {
         actor_login,
-        body,
-        commit_sha,
         event,
         id: json_string(&item, &["id"]),
         occurred_at,
-        review_comments,
-        review_comments_has_more,
-        state,
-        title,
-        url,
     }
 }
 
@@ -1843,19 +2799,28 @@ mod tests {
         Json, Router,
     };
     use base64::{engine::general_purpose::STANDARD, Engine};
+    use flate2::{read::GzDecoder, write::GzEncoder, Compression};
     use serde_json::Value;
     use sqlx::SqlitePool;
-    use std::collections::HashMap;
+    use std::{
+        collections::HashMap,
+        fmt::Write,
+        io::Read,
+        time::{Duration, Instant},
+    };
     use tokio::net::TcpListener;
     use tower::ServiceExt;
 
     use super::{
-        fetch_github_pull_request_detail, fetch_github_pull_requests, load_pull_request_detail,
-        load_pull_requests, load_tracked_repository, update_pull_request_timeline_if_current,
-        update_sync_error, update_sync_state, upsert_pull_request_detail, upsert_pull_requests,
-        GitHubPullRequest, GitHubUser, PullRequestCheckRunDto, PullRequestCommentDto,
-        PullRequestCommitDto, PullRequestDetailSnapshot, PullRequestFileDto, PullRequestReviewDto,
-        PullRequestStatusDto, PullRequestTimelineEventDto, TrackedRepository,
+        collect_github_diff, fetch_github_pull_request_detail, fetch_github_pull_requests,
+        load_pull_request_detail, load_pull_requests, load_tracked_repository,
+        update_pull_request_timeline_if_current, update_sync_error, update_sync_state,
+        upsert_pull_request_detail, upsert_pull_requests, GitHubPullRequest, GitHubUser,
+        PullRequestCheckRunDto, PullRequestCommentDto, PullRequestCommitDto, PullRequestDataError,
+        PullRequestDetailSnapshot, PullRequestFileDto, PullRequestReviewDto, PullRequestStatusDto,
+        PullRequestSyncPaginationDto, PullRequestTimelineEventDto, PullRequestTimelineEventKindDto,
+        PullRequestTimelinePagination, PullRequestTimelinePaginationDto,
+        PullRequestTimelineReviewCommentsDto, TrackedRepository,
     };
     use crate::{
         config::{Config, Environment, SessionConfig, TokenEncryptionKey},
@@ -1863,6 +2828,11 @@ mod tests {
         http::{app, AppState},
         repositories, session,
     };
+
+    const MULTI_FILE_DIFF: &str =
+        include_str!("../tests/fixtures/pull_request_diffs/multi-file.diff");
+    const MALFORMED_DIFF: &str =
+        include_str!("../tests/fixtures/pull_request_diffs/malformed.diff");
 
     fn test_config() -> Config {
         Config {
@@ -1992,6 +2962,12 @@ mod tests {
                 .and_then(|value| value.to_str().ok())
                 .is_some_and(|value| value.contains("application/vnd.github.v3.diff"))
             {
+                assert_eq!(
+                    headers
+                        .get(header::ACCEPT_ENCODING)
+                        .and_then(|value| value.to_str().ok()),
+                    Some("identity")
+                );
                 return "diff --git a/app.rs b/app.rs".into_response();
             }
 
@@ -2099,6 +3075,114 @@ mod tests {
         (format!("http://{address}"), handle)
     }
 
+    async fn mock_diff_response(
+        body: Vec<u8>,
+        content_encodings: &[&str],
+        chunked: bool,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        let content_encodings = content_encodings
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        let app = Router::new().route(
+            "/diff",
+            get(move || {
+                let body = body.clone();
+                let content_encodings = content_encodings.clone();
+                async move {
+                    let body = if chunked {
+                        let midpoint = body.len() / 2;
+                        Body::from_stream(futures_util::stream::iter([
+                            Ok::<_, std::convert::Infallible>(body[..midpoint].to_vec()),
+                            Ok::<_, std::convert::Infallible>(body[midpoint..].to_vec()),
+                        ]))
+                    } else {
+                        Body::from(body)
+                    };
+                    let mut response = axum::response::Response::new(body);
+                    for content_encoding in content_encodings {
+                        response.headers_mut().append(
+                            header::CONTENT_ENCODING,
+                            content_encoding
+                                .parse()
+                                .expect("content encoding should be valid"),
+                        );
+                    }
+                    response
+                }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("mock diff listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("mock diff address should load");
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("mock diff server should run");
+        });
+        (format!("http://{address}/diff"), handle)
+    }
+
+    #[tokio::test]
+    async fn collect_github_diff_preserves_bytes_and_enforces_chunked_limit() {
+        let raw = "diff --git a/café.txt b/café.txt\n-no\n+yes";
+        let (url, server) = mock_diff_response(raw.as_bytes().to_vec(), &[], true).await;
+        let response = reqwest::Client::new()
+            .get(&url)
+            .send()
+            .await
+            .expect("mock diff request should complete");
+        let collected = collect_github_diff(response, raw.len())
+            .await
+            .expect("boundary-sized diff should collect");
+        assert_eq!(collected.as_bytes(), raw.as_bytes());
+        server.abort();
+
+        let (url, server) = mock_diff_response(raw.as_bytes().to_vec(), &[], true).await;
+        let response = reqwest::Client::new()
+            .get(&url)
+            .send()
+            .await
+            .expect("mock diff request should complete");
+        assert!(matches!(
+            collect_github_diff(response, raw.len() - 1).await,
+            Err(PullRequestDataError::GitHubDiffTooLarge)
+        ));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn collect_github_diff_rejects_invalid_utf8_and_content_encoding() {
+        let (url, server) = mock_diff_response(vec![0xff], &[], false).await;
+        let response = reqwest::Client::new()
+            .get(&url)
+            .send()
+            .await
+            .expect("mock diff request should complete");
+        assert!(matches!(
+            collect_github_diff(response, 1).await,
+            Err(PullRequestDataError::GitHubDiffInvalidUtf8(_))
+        ));
+        server.abort();
+
+        for encodings in [&["identity", "gzip"][..], &["identity, gzip"][..]] {
+            let (url, server) = mock_diff_response(b"diff".to_vec(), encodings, false).await;
+            let response = reqwest::Client::new()
+                .get(&url)
+                .send()
+                .await
+                .expect("mock diff request should complete");
+            assert!(matches!(
+                collect_github_diff(response, 4).await,
+                Err(PullRequestDataError::GitHubDiffUnsupportedEncoding)
+            ));
+            server.abort();
+        }
+    }
+
     async fn test_db() -> SqlitePool {
         let config = test_config();
         let db = db::connect(&config).await.expect("test db should connect");
@@ -2143,6 +3227,716 @@ mod tests {
         .execute(db)
         .await
         .expect("tracked repository should insert");
+    }
+
+    async fn insert_pull_request_diff_snapshot(db: &SqlitePool, diff: Option<&str>) {
+        sqlx::query(
+            "INSERT INTO tracked_repository_pull_request_details (user_id, provider, owner, name, number, body, files_json, commits_json, reviews_json, review_comments_json, review_decision, issue_comments_json, timeline_json, timeline_cursor, timeline_has_older, check_runs_json, statuses_json, diff, synced_at) VALUES (?, ?, ?, ?, ?, NULL, '[]', '[]', '[]', '[]', NULL, '[]', '[]', NULL, 0, '[]', '[]', ?, ?)",
+        )
+        .bind("user_1")
+        .bind("github")
+        .bind("kestrel")
+        .bind("app")
+        .bind(42_i64)
+        .bind(diff)
+        .bind("2026-01-04T00:00:00Z")
+        .execute(db)
+        .await
+        .expect("pull request diff snapshot should insert");
+    }
+
+    fn pull_request_diff_request(cookie: &str, uri: &str) -> Request<Body> {
+        Request::builder()
+            .uri(uri)
+            .header(header::COOKIE, cookie)
+            .body(Body::empty())
+            .expect("request should build")
+    }
+
+    #[tokio::test]
+    async fn pull_request_diff_requires_authentication() {
+        let config = test_config();
+        let db = test_db().await;
+        let response = app(&config, AppState::new(db, config.clone()))
+            .oneshot(
+                Request::builder()
+                    .uri("/api/repositories/kestrel/app/pull-requests/42/diff")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            response_json(response).await,
+            serde_json::json!({ "error": "authenticationRequired" })
+        );
+    }
+
+    #[tokio::test]
+    async fn pull_request_diff_rejects_invalid_paths() {
+        let config = test_config();
+        let db = test_db().await;
+        let cookie = session_cookie(&db, &config).await;
+        let router = app(&config, AppState::new(db, config.clone()));
+
+        let invalid_repository = router
+            .clone()
+            .oneshot(pull_request_diff_request(
+                &cookie,
+                "/api/repositories/bad%20owner/app/pull-requests/42/diff",
+            ))
+            .await
+            .expect("request should complete");
+        assert_eq!(invalid_repository.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response_json(invalid_repository).await,
+            serde_json::json!({ "error": "invalidRepository" })
+        );
+
+        let invalid_number = router
+            .clone()
+            .oneshot(pull_request_diff_request(
+                &cookie,
+                "/api/repositories/kestrel/app/pull-requests/0/diff",
+            ))
+            .await
+            .expect("request should complete");
+        assert_eq!(invalid_number.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response_json(invalid_number).await,
+            serde_json::json!({ "error": "invalidPullRequest" })
+        );
+
+        let nonnumeric_number = router
+            .oneshot(pull_request_diff_request(
+                &cookie,
+                "/api/repositories/kestrel/app/pull-requests/not-a-number/diff",
+            ))
+            .await
+            .expect("request should complete");
+        assert_eq!(nonnumeric_number.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response_json(nonnumeric_number).await,
+            serde_json::json!({ "error": "invalidPullRequest" })
+        );
+    }
+
+    #[tokio::test]
+    async fn pull_request_diff_requires_a_tracked_repository_and_snapshot() {
+        let config = test_config();
+        let db = test_db().await;
+        let cookie = session_cookie(&db, &config).await;
+        let router = app(&config, AppState::new(db.clone(), config.clone()));
+
+        let untracked = router
+            .clone()
+            .oneshot(pull_request_diff_request(
+                &cookie,
+                "/api/repositories/kestrel/app/pull-requests/42/diff",
+            ))
+            .await
+            .expect("request should complete");
+        assert_eq!(untracked.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response_json(untracked).await,
+            serde_json::json!({ "error": "repositoryNotTracked" })
+        );
+
+        insert_tracked_repository(&db).await;
+        let missing = router
+            .oneshot(pull_request_diff_request(
+                &cookie,
+                "/api/repositories/kestrel/app/pull-requests/42/diff",
+            ))
+            .await
+            .expect("request should complete");
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response_json(missing).await,
+            serde_json::json!({ "error": "pullRequestNotFound" })
+        );
+    }
+
+    #[tokio::test]
+    async fn pull_request_detail_response_omits_the_stored_diff() {
+        let config = test_config();
+        let db = test_db().await;
+        insert_tracked_repository(&db).await;
+        let raw = "diff --git a/private.txt b/private.txt\n";
+        insert_pull_request_diff_snapshot(&db, Some(raw)).await;
+        let cookie = session_cookie(&db, &config).await;
+        let response = app(&config, AppState::new(db.clone(), config.clone()))
+            .oneshot(
+                Request::builder()
+                    .uri("/api/repositories/kestrel/app/pull-requests/42")
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = response_json(response).await;
+        assert!(json["pullRequestDetail"].get("diff").is_none());
+        let stored: String = sqlx::query_scalar(
+            "SELECT diff FROM tracked_repository_pull_request_details WHERE user_id = 'user_1' AND provider = 'github' AND owner = 'kestrel' AND name = 'app' AND number = 42",
+        )
+        .fetch_one(&db)
+        .await
+        .expect("stored diff should load");
+        assert_eq!(stored.as_bytes(), raw.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn pull_request_diff_is_scoped_to_the_authenticated_user() {
+        let config = test_config();
+        let db = test_db().await;
+        insert_tracked_repository(&db).await;
+        insert_pull_request_diff_snapshot(&db, Some(MULTI_FILE_DIFF)).await;
+        sqlx::query(
+            "INSERT INTO users (id, display_name, avatar_url, created_at, updated_at) VALUES (?, ?, NULL, ?, ?)",
+        )
+        .bind("user_2")
+        .bind("User Two")
+        .bind("2026-01-01T00:00:00Z")
+        .bind("2026-01-01T00:00:00Z")
+        .execute(&db)
+        .await
+        .expect("second user should insert");
+        sqlx::query(
+            "INSERT INTO tracked_repositories (user_id, provider, owner, name, created_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind("user_2")
+        .bind("github")
+        .bind("kestrel")
+        .bind("app")
+        .bind("2026-01-01T00:00:00Z")
+        .execute(&db)
+        .await
+        .expect("second user's tracked repository should insert");
+        sqlx::query(
+            "INSERT INTO tracked_repository_pull_request_details (user_id, provider, owner, name, number, body, files_json, commits_json, reviews_json, review_comments_json, review_decision, issue_comments_json, timeline_json, timeline_cursor, timeline_has_older, check_runs_json, statuses_json, diff, synced_at) VALUES (?, ?, ?, ?, ?, NULL, '[]', '[]', '[]', '[]', NULL, '[]', '[]', NULL, 0, '[]', '[]', ?, ?)",
+        )
+        .bind("user_2")
+        .bind("github")
+        .bind("kestrel")
+        .bind("app")
+        .bind(42_i64)
+        .bind("")
+        .bind("2026-01-05T00:00:00Z")
+        .execute(&db)
+        .await
+        .expect("second user's pull request diff snapshot should insert");
+        let session = session::create_session(&db, "user_2", &config.session)
+            .await
+            .expect("second user session should create");
+        let cookie = format!("test_session={}", session.token.expose());
+        let response = app(&config, AppState::new(db, config.clone()))
+            .oneshot(pull_request_diff_request(
+                &cookie,
+                "/api/repositories/kestrel/app/pull-requests/42/diff",
+            ))
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(response).await,
+            serde_json::json!({
+                "files": [],
+                "syncedAt": "2026-01-05T00:00:00Z"
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn pull_request_diff_distinguishes_unavailable_and_empty_diffs() {
+        let config = test_config();
+        let null_db = test_db().await;
+        insert_tracked_repository(&null_db).await;
+        insert_pull_request_diff_snapshot(&null_db, None).await;
+        let null_cookie = session_cookie(&null_db, &config).await;
+        let unavailable = app(&config, AppState::new(null_db.clone(), config.clone()))
+            .oneshot(pull_request_diff_request(
+                &null_cookie,
+                "/api/repositories/kestrel/app/pull-requests/42/diff",
+            ))
+            .await
+            .expect("request should complete");
+        assert_eq!(unavailable.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            response_json(unavailable).await,
+            serde_json::json!({ "error": "diffUnavailable" })
+        );
+
+        let empty_db = test_db().await;
+        insert_tracked_repository(&empty_db).await;
+        insert_pull_request_diff_snapshot(&empty_db, Some("")).await;
+        let empty_cookie = session_cookie(&empty_db, &config).await;
+        let empty = app(&config, AppState::new(empty_db, config.clone()))
+            .oneshot(pull_request_diff_request(
+                &empty_cookie,
+                "/api/repositories/kestrel/app/pull-requests/42/diff",
+            ))
+            .await
+            .expect("request should complete");
+        assert_eq!(empty.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(empty).await,
+            serde_json::json!({
+                "files": [],
+                "syncedAt": "2026-01-04T00:00:00Z"
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn pull_request_diff_returns_semantic_files_in_source_order() {
+        let config = test_config();
+        let db = test_db().await;
+        insert_tracked_repository(&db).await;
+        insert_pull_request_diff_snapshot(&db, Some(MULTI_FILE_DIFF)).await;
+        let cookie = session_cookie(&db, &config).await;
+        let response = app(&config, AppState::new(db, config.clone()))
+            .oneshot(pull_request_diff_request(
+                &cookie,
+                "/api/repositories/kestrel/app/pull-requests/42/diff",
+            ))
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["syncedAt"], "2026-01-04T00:00:00Z");
+        assert_eq!(body["files"].as_array().map(Vec::len), Some(2));
+        assert_eq!(body["files"][0]["operation"]["kind"], "modified");
+        assert_eq!(body["files"][0]["operation"]["path"], "src/math.rs");
+        assert_eq!(
+            body["files"][0]["operation"]["modeChange"]["kind"],
+            "unchanged"
+        );
+        assert_eq!(body["files"][0]["additions"], 3);
+        assert_eq!(body["files"][0]["deletions"], 2);
+        assert_eq!(body["files"][0]["content"]["kind"], "text");
+        assert_eq!(body["files"][0]["content"]["hunks"][0]["oldStart"], 1);
+        assert_eq!(body["files"][0]["content"]["hunks"][0]["newCount"], 4);
+        assert_eq!(
+            body["files"][0]["content"]["hunks"][0]["context"],
+            "pub fn add(left: u32, right: u32) -> u32 {"
+        );
+        assert_eq!(
+            body["files"][0]["content"]["hunks"][0]["lines"][1],
+            serde_json::json!({
+                "content": "    left + right",
+                "kind": "deletion",
+                "missingNewline": false,
+                "oldLine": 2
+            })
+        );
+        assert_eq!(body["files"][1]["operation"]["path"], "README.md");
+    }
+
+    #[tokio::test]
+    async fn pull_request_diff_supports_gzip_compression() {
+        let config = test_config();
+        let db = test_db().await;
+        insert_tracked_repository(&db).await;
+        insert_pull_request_diff_snapshot(&db, Some(MULTI_FILE_DIFF)).await;
+        let cookie = session_cookie(&db, &config).await;
+        let router = app(&config, AppState::new(db, config.clone()));
+
+        let identity = router
+            .clone()
+            .oneshot(pull_request_diff_request(
+                &cookie,
+                "/api/repositories/kestrel/app/pull-requests/42/diff",
+            ))
+            .await
+            .expect("identity request should complete");
+        assert_eq!(identity.status(), StatusCode::OK);
+        assert!(identity.headers().get(header::CONTENT_ENCODING).is_none());
+        let identity_body = to_bytes(identity.into_body(), 1024 * 1024)
+            .await
+            .expect("identity response should collect");
+
+        let compressed = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/repositories/kestrel/app/pull-requests/42/diff")
+                    .header(header::COOKIE, &cookie)
+                    .header(header::ACCEPT_ENCODING, "gzip")
+                    .body(Body::empty())
+                    .expect("compressed request should build"),
+            )
+            .await
+            .expect("compressed request should complete");
+        assert_eq!(compressed.status(), StatusCode::OK);
+        assert_eq!(
+            compressed
+                .headers()
+                .get(header::CONTENT_ENCODING)
+                .and_then(|value| value.to_str().ok()),
+            Some("gzip")
+        );
+        assert!(compressed.headers().get(header::CONTENT_LENGTH).is_none());
+        assert!(compressed
+            .headers()
+            .get_all(header::VARY)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .any(|value| value
+                .split(',')
+                .any(|part| part.trim().eq_ignore_ascii_case("accept-encoding"))));
+        let compressed_body = to_bytes(compressed.into_body(), 1024 * 1024)
+            .await
+            .expect("compressed response should collect");
+        assert!(compressed_body.len() < identity_body.len());
+        let mut decoder = GzDecoder::new(compressed_body.as_ref());
+        let mut decoded = Vec::new();
+        decoder
+            .read_to_end(&mut decoded)
+            .expect("gzip response should decode");
+        assert_eq!(decoded, identity_body);
+    }
+
+    #[tokio::test]
+    async fn pull_request_diff_parse_failure_preserves_stored_raw_diff() {
+        let config = test_config();
+        let db = test_db().await;
+        insert_tracked_repository(&db).await;
+        insert_pull_request_diff_snapshot(&db, Some(MALFORMED_DIFF)).await;
+        let cookie = session_cookie(&db, &config).await;
+        let response = app(&config, AppState::new(db.clone(), config.clone()))
+            .oneshot(pull_request_diff_request(
+                &cookie,
+                "/api/repositories/kestrel/app/pull-requests/42/diff",
+            ))
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            response_json(response).await,
+            serde_json::json!({ "error": "diffParseFailed" })
+        );
+        let stored: String = sqlx::query_scalar(
+            "SELECT diff FROM tracked_repository_pull_request_details WHERE user_id = 'user_1' AND provider = 'github' AND owner = 'kestrel' AND name = 'app' AND number = 42",
+        )
+        .fetch_one(&db)
+        .await
+        .expect("stored diff should load");
+        assert_eq!(stored.as_bytes(), MALFORMED_DIFF.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn pull_request_diff_reports_resource_limits_separately() {
+        let config = test_config();
+        let db = test_db().await;
+        insert_tracked_repository(&db).await;
+        let oversized = "\n".repeat(300_001);
+        insert_pull_request_diff_snapshot(&db, Some(&oversized)).await;
+        let cookie = session_cookie(&db, &config).await;
+        let response = app(&config, AppState::new(db, config.clone()))
+            .oneshot(pull_request_diff_request(
+                &cookie,
+                "/api/repositories/kestrel/app/pull-requests/42/diff",
+            ))
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            response_json(response).await,
+            serde_json::json!({ "error": "diffResourceLimitExceeded" })
+        );
+    }
+
+    #[tokio::test]
+    async fn pull_request_diff_rejects_oversized_storage_before_loading_it() {
+        let config = test_config();
+        let db = test_db().await;
+        insert_tracked_repository(&db).await;
+        insert_pull_request_diff_snapshot(&db, Some("")).await;
+        sqlx::query(
+            "UPDATE tracked_repository_pull_request_details SET diff = CAST(zeroblob(?) AS TEXT) WHERE user_id = 'user_1' AND provider = 'github' AND owner = 'kestrel' AND name = 'app' AND number = 42",
+        )
+        .bind((crate::pull_request_diff::MAX_DIFF_BYTES + 1) as i64)
+        .execute(&db)
+        .await
+        .expect("oversized stored diff should insert");
+        let cookie = session_cookie(&db, &config).await;
+        let response = app(&config, AppState::new(db, config.clone()))
+            .oneshot(pull_request_diff_request(
+                &cookie,
+                "/api/repositories/kestrel/app/pull-requests/42/diff",
+            ))
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            response_json(response).await,
+            serde_json::json!({ "error": "diffResourceLimitExceeded" })
+        );
+    }
+
+    #[tokio::test]
+    async fn pull_request_diff_serialization_excludes_binary_payloads() {
+        let config = test_config();
+        let db = test_db().await;
+        insert_tracked_repository(&db).await;
+        let literal_payload = "LcmZQzWcm*P0SW;F\n".repeat(16_384);
+        let delta_payload = "ccmV+t0PX*P2!IH%^Z^9`00000v-trB0x!=5aR2}S\n".repeat(16_384);
+        let raw = format!(
+            "diff --git a/large.bin b/large.bin\nindex 1111111..2222222 100644\nGIT binary patch\nliteral 1048576\n{literal_payload}\ndelta 1048576\n{delta_payload}\n"
+        );
+        assert!(raw.len() > 500_000);
+        insert_pull_request_diff_snapshot(&db, Some(&raw)).await;
+        let cookie = session_cookie(&db, &config).await;
+        let response = app(&config, AppState::new(db, config.clone()))
+            .oneshot(pull_request_diff_request(
+                &cookie,
+                "/api/repositories/kestrel/app/pull-requests/42/diff",
+            ))
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 4 * 1024)
+            .await
+            .expect("binary response should remain small");
+        assert!(!body.windows(16).any(|window| window == b"LcmZQzWcm*P0SW;F"));
+        let json: Value = serde_json::from_slice(&body).expect("body should be json");
+        assert_eq!(json["files"].as_array().map(Vec::len), Some(1));
+        assert!(json["files"].as_array().is_some_and(|files| files
+            .iter()
+            .all(|file| file["content"] == serde_json::json!({ "kind": "binary" }))));
+    }
+
+    #[tokio::test]
+    async fn pull_request_diff_serializes_50_000_semantic_lines() {
+        let config = test_config();
+        let db = test_db().await;
+        insert_tracked_repository(&db).await;
+        let mut raw = String::from(
+            "diff --git a/large.txt b/large.txt\nindex 1111111..2222222 100644\n--- a/large.txt\n+++ b/large.txt\n@@ -1,25000 +1,25000 @@\n",
+        );
+        for index in 0..25_000 {
+            writeln!(raw, "-old-{index}").expect("deletion should write");
+        }
+        for index in 0..25_000 {
+            writeln!(raw, "+new-{index}").expect("addition should write");
+        }
+        insert_pull_request_diff_snapshot(&db, Some(&raw)).await;
+        let cookie = session_cookie(&db, &config).await;
+        let response = app(&config, AppState::new(db, config.clone()))
+            .oneshot(pull_request_diff_request(
+                &cookie,
+                "/api/repositories/kestrel/app/pull-requests/42/diff",
+            ))
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 8 * 1024 * 1024)
+            .await
+            .expect("large response should stay within the expected bound");
+        let json: Value = serde_json::from_slice(&body).expect("body should be json");
+        let lines = json["files"][0]["content"]["hunks"][0]["lines"]
+            .as_array()
+            .expect("lines should be an array");
+        assert_eq!(lines.len(), 50_000);
+        assert_eq!(lines[49_999]["newLine"], 25_000);
+    }
+
+    #[test]
+    #[ignore = "release profiling scenario"]
+    fn profile_pull_request_diff_pipeline() {
+        for (scenario, raw) in [
+            ("text-50000", generated_profile_diff(1, 1, 25_000)),
+            ("text-100000", generated_profile_diff(1, 1, 50_000)),
+            (
+                "text-100000-many-files",
+                generated_profile_diff(100, 10, 50),
+            ),
+            ("binary-literal-delta", generated_profile_binary_diff()),
+        ] {
+            let mut parse_samples = Vec::new();
+            let mut dto_samples = Vec::new();
+            let mut serialize_samples = Vec::new();
+            let mut gzip_samples = Vec::new();
+            let mut response_bytes = 0;
+            let mut gzip_bytes = 0;
+            let sample_count = 20;
+
+            for sample_index in 0..=sample_count {
+                let parse_started_at = Instant::now();
+                let parsed = crate::pull_request_diff::parse_pull_request_diff(&raw)
+                    .expect("profile diff should parse");
+                let parse_duration = parse_started_at.elapsed();
+
+                let dto_started_at = Instant::now();
+                let files: Vec<super::PullRequestDiffFileDto> =
+                    parsed.into_iter().map(Into::into).collect();
+                let response = super::PullRequestDiffResponse {
+                    files,
+                    synced_at: "2026-01-04T00:00:00Z".to_string(),
+                };
+                let dto_duration = dto_started_at.elapsed();
+
+                let serialize_started_at = Instant::now();
+                let body =
+                    serde_json::to_vec(&response).expect("profile response should serialize");
+                let serialize_duration = serialize_started_at.elapsed();
+
+                let gzip_started_at = Instant::now();
+                let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+                std::io::Write::write_all(&mut encoder, &body)
+                    .expect("profile response should compress");
+                let compressed = encoder.finish().expect("gzip stream should finish");
+                let gzip_duration = gzip_started_at.elapsed();
+
+                response_bytes = body.len();
+                gzip_bytes = compressed.len();
+                std::hint::black_box((response, body, compressed));
+                if sample_index > 0 {
+                    parse_samples.push(parse_duration);
+                    dto_samples.push(dto_duration);
+                    serialize_samples.push(serialize_duration);
+                    gzip_samples.push(gzip_duration);
+                }
+            }
+
+            println!(
+                "DIFF_BACKEND_PROFILE {}",
+                serde_json::json!({
+                    "dtoMicros": duration_summary(&mut dto_samples),
+                    "gzipBytes": gzip_bytes,
+                    "gzipMicros": duration_summary(&mut gzip_samples),
+                    "parseMicros": duration_summary(&mut parse_samples),
+                    "rawBytes": raw.len(),
+                    "responseBytes": response_bytes,
+                    "samples": sample_count,
+                    "scenario": scenario,
+                    "serializeMicros": duration_summary(&mut serialize_samples),
+                })
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "release profiling scenario"]
+    async fn profile_pull_request_diff_endpoint_overlap() {
+        let config = test_config();
+        let db = test_db().await;
+        insert_tracked_repository(&db).await;
+        let raw = generated_profile_diff(1, 1, 50_000);
+        insert_pull_request_diff_snapshot(&db, Some(&raw)).await;
+        let cookie = session_cookie(&db, &config).await;
+        let router = app(&config, AppState::new(db, config.clone()));
+
+        for concurrency in [1_u32, 2, 4] {
+            let started_at = Instant::now();
+            let requests = (0..concurrency).map(|_| {
+                let service = router.clone();
+                let mut request = pull_request_diff_request(
+                    &cookie,
+                    "/api/repositories/kestrel/app/pull-requests/42/diff",
+                );
+                request.headers_mut().insert(
+                    header::ACCEPT_ENCODING,
+                    "gzip".parse().expect("gzip header should parse"),
+                );
+                async move {
+                    let response = service
+                        .oneshot(request)
+                        .await
+                        .expect("profile request should complete");
+                    assert_eq!(response.status(), StatusCode::OK);
+                    assert_eq!(
+                        response
+                            .headers()
+                            .get(header::CONTENT_ENCODING)
+                            .and_then(|value| value.to_str().ok()),
+                        Some("gzip")
+                    );
+                    to_bytes(response.into_body(), 2 * 1024 * 1024)
+                        .await
+                        .expect("compressed profile response should remain bounded")
+                        .len()
+                }
+            });
+            let response_sizes = futures_util::future::join_all(requests).await;
+            let elapsed = started_at.elapsed();
+            println!(
+                "DIFF_BACKEND_ENDPOINT_PROFILE {}",
+                serde_json::json!({
+                    "compressedBytesPerResponse": response_sizes,
+                    "concurrency": concurrency,
+                    "rawBytes": raw.len(),
+                    "totalMicros": elapsed.as_micros() as u64,
+                })
+            );
+        }
+    }
+
+    fn generated_profile_diff(
+        file_count: usize,
+        hunks_per_file: usize,
+        changes_per_side: usize,
+    ) -> String {
+        let mut raw = String::new();
+        for file_index in 0..file_count {
+            writeln!(
+                raw,
+                "diff --git a/file-{file_index}.txt b/file-{file_index}.txt"
+            )
+            .expect("diff header should write");
+            raw.push_str("index 1111111..2222222 100644\n");
+            writeln!(raw, "--- a/file-{file_index}.txt").expect("old path should write");
+            writeln!(raw, "+++ b/file-{file_index}.txt").expect("new path should write");
+            for hunk_index in 0..hunks_per_file {
+                let start = hunk_index * changes_per_side + 1;
+                writeln!(
+                    raw,
+                    "@@ -{start},{changes_per_side} +{start},{changes_per_side} @@"
+                )
+                .expect("hunk header should write");
+                for line_index in 0..changes_per_side {
+                    writeln!(raw, "-old-{file_index}-{hunk_index}-{line_index}")
+                        .expect("deletion should write");
+                }
+                for line_index in 0..changes_per_side {
+                    writeln!(raw, "+new-{file_index}-{hunk_index}-{line_index}")
+                        .expect("addition should write");
+                }
+            }
+        }
+        raw
+    }
+
+    fn generated_profile_binary_diff() -> String {
+        let literal_payload = "LcmZQzWcm*P0SW;F\n".repeat(16_384);
+        let delta_payload = "ccmV+t0PX*P2!IH%^Z^9`00000v-trB0x!=5aR2}S\n".repeat(16_384);
+        format!(
+            "diff --git a/large.bin b/large.bin\nindex 1111111..2222222 100644\nGIT binary patch\nliteral 1048576\n{literal_payload}\ndelta 1048576\n{delta_payload}\n"
+        )
+    }
+
+    fn duration_summary(samples: &mut [Duration]) -> Value {
+        samples.sort_unstable();
+        let percentile = |numerator: usize| {
+            let index = (samples.len() * numerator).div_ceil(100).saturating_sub(1);
+            samples[index].as_micros() as u64
+        };
+        serde_json::json!({
+            "median": percentile(50),
+            "p95": percentile(95),
+            "max": samples.last().map_or(0, |duration| duration.as_micros() as u64),
+        })
     }
 
     #[tokio::test]
@@ -2203,8 +3997,9 @@ mod tests {
         let config = test_config();
         let db = test_db().await;
         insert_tracked_repository(&db).await;
+        let raw = "diff --git a/timeline.txt b/timeline.txt\n";
         sqlx::query(
-            "INSERT INTO tracked_repository_pull_request_details (user_id, provider, owner, name, number, body, files_json, commits_json, reviews_json, review_comments_json, review_decision, issue_comments_json, timeline_json, timeline_cursor, timeline_has_older, check_runs_json, statuses_json, diff, synced_at) VALUES (?, ?, ?, ?, ?, ?, '[]', '[]', '[]', '[]', NULL, '[]', '[]', NULL, 0, '[]', '[]', NULL, ?)",
+            "INSERT INTO tracked_repository_pull_request_details (user_id, provider, owner, name, number, body, files_json, commits_json, reviews_json, review_comments_json, review_decision, issue_comments_json, timeline_json, timeline_cursor, timeline_has_older, check_runs_json, statuses_json, diff, synced_at) VALUES (?, ?, ?, ?, ?, ?, '[]', '[]', '[]', '[]', NULL, '[]', '[]', NULL, 0, '[]', '[]', ?, ?)",
         )
         .bind("user_1")
         .bind("github")
@@ -2212,12 +4007,13 @@ mod tests {
         .bind("app")
         .bind(42_i64)
         .bind("Stored description")
+        .bind(raw)
         .bind("2026-01-03T00:00:00Z")
         .execute(&db)
         .await
         .expect("pull request detail should insert");
         let cookie = session_cookie(&db, &config).await;
-        let response = app(&config, AppState::new(db, config.clone()))
+        let response = app(&config, AppState::new(db.clone(), config.clone()))
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -2232,7 +4028,18 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let json = response_json(response).await;
         assert_eq!(json["pullRequestDetail"]["body"], "Stored description");
-        assert_eq!(json["pullRequestDetail"]["timelineHasOlder"], false);
+        assert_eq!(
+            json["pullRequestDetail"]["timelinePagination"]["kind"],
+            "complete"
+        );
+        assert!(json["pullRequestDetail"].get("diff").is_none());
+        let stored: String = sqlx::query_scalar(
+            "SELECT diff FROM tracked_repository_pull_request_details WHERE user_id = 'user_1' AND provider = 'github' AND owner = 'kestrel' AND name = 'app' AND number = 42",
+        )
+        .fetch_one(&db)
+        .await
+        .expect("stored diff should load");
+        assert_eq!(stored.as_bytes(), raw.as_bytes());
     }
 
     #[tokio::test]
@@ -2254,7 +4061,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert_eq!(
             response_json(response).await,
-            serde_json::json!({ "error": "invalid_repository" }),
+            serde_json::json!({ "error": "invalidRepository" }),
         );
     }
 
@@ -2278,7 +4085,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert_eq!(
             response_json(response).await,
-            serde_json::json!({ "error": "invalid_repository" }),
+            serde_json::json!({ "error": "invalidRepository" }),
         );
     }
 
@@ -2363,7 +4170,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         assert_eq!(
             response_json(response).await,
-            serde_json::json!({ "error": "repository_not_tracked" }),
+            serde_json::json!({ "error": "repositoryNotTracked" }),
         );
     }
 
@@ -2388,7 +4195,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
         assert_eq!(
             response_json(response).await,
-            serde_json::json!({ "error": "authorization_required" }),
+            serde_json::json!({ "error": "authorizationRequired" }),
         );
         assert_eq!(
             sqlx::query_scalar::<_, String>(
@@ -2401,7 +4208,7 @@ mod tests {
             .fetch_one(&db)
             .await
             .expect("sync error should load"),
-            "authorization_required",
+            "authorizationRequired",
         );
     }
 
@@ -2470,12 +4277,21 @@ mod tests {
             detail.body.as_deref(),
             Some("This pull request adds syncing.")
         );
-        assert_eq!(detail.timeline[0].event, "committed");
+        assert!(matches!(
+            &detail.timeline[0].event,
+            PullRequestTimelineEventKindDto::Committed { commit_sha, .. }
+                if commit_sha.as_deref() == Some("head-sha")
+        ));
         assert_eq!(detail.timeline[0].id.as_deref(), Some("commit-1"));
-        assert_eq!(detail.timeline[0].commit_sha.as_deref(), Some("head-sha"));
-        assert_eq!(detail.timeline[1].event, "commented");
-        assert!(detail.timeline_has_older);
-        assert_eq!(detail.timeline_cursor.as_deref(), Some("older-cursor"));
+        assert!(matches!(
+            detail.timeline[1].event,
+            PullRequestTimelineEventKindDto::Commented { .. }
+        ));
+        assert!(matches!(
+            detail.timeline_pagination,
+            PullRequestTimelinePagination::HasOlder { ref cursor }
+                if cursor == "older-cursor"
+        ));
         assert_eq!(detail.check_runs[0].state, "success");
         assert_eq!(
             detail.check_runs[0].url.as_deref(),
@@ -2540,12 +4356,17 @@ mod tests {
         let saved = upsert_pull_requests(&db, &repository, &pull_requests, "2026-01-03T00:00:00Z")
             .await
             .expect("pull requests should upsert");
-        update_sync_error(&db, &repository, "sync_failed")
+        update_sync_error(&db, &repository, "syncFailed")
             .await
             .expect("sync error should update");
-        update_sync_state(&db, &repository, Some(2), "2026-01-03T00:00:00Z")
-            .await
-            .expect("sync state should update");
+        update_sync_state(
+            &db,
+            &repository,
+            &PullRequestSyncPaginationDto::HasMore { next_page: 2 },
+            "2026-01-03T00:00:00Z",
+        )
+        .await
+        .expect("sync state should update");
 
         assert_eq!(saved.len(), 1);
         assert_eq!(saved[0].number, 42);
@@ -2636,19 +4457,18 @@ mod tests {
             }],
             timeline: vec![PullRequestTimelineEventDto {
                 actor_login: Some("octocat".to_string()),
-                body: None,
-                commit_sha: Some("head-sha".to_string()),
-                event: "committed".to_string(),
+                event: PullRequestTimelineEventKindDto::Committed {
+                    commit_sha: Some("head-sha".to_string()),
+                    message: None,
+                    title: Some("Add syncing".to_string()),
+                    url: None,
+                },
                 id: Some("timeline-1".to_string()),
                 occurred_at: Some("2026-01-02T00:00:00Z".to_string()),
-                review_comments: Vec::new(),
-                review_comments_has_more: false,
-                state: None,
-                title: Some("Add syncing".to_string()),
-                url: None,
             }],
-            timeline_cursor: Some("cursor-1".to_string()),
-            timeline_has_older: true,
+            timeline_pagination: PullRequestTimelinePagination::HasOlder {
+                cursor: "cursor-1".to_string(),
+            },
         };
 
         let saved =
@@ -2685,8 +4505,33 @@ mod tests {
             loaded.statuses[0].url.as_deref(),
             Some("https://ci.example.test/builds/42")
         );
-        assert_eq!(loaded.diff.as_deref(), Some("diff --git a/app.rs b/app.rs"));
-        assert!(loaded.timeline_has_older);
+        let stored_diff: Option<String> = sqlx::query_scalar(
+            "SELECT diff FROM tracked_repository_pull_request_details WHERE user_id = ? AND provider = ? AND owner = ? AND name = ? AND number = ?",
+        )
+        .bind("user_1")
+        .bind("github")
+        .bind("kestrel")
+        .bind("app")
+        .bind(42_i64)
+        .fetch_one(&db)
+        .await
+        .expect("stored diff should load");
+        assert_eq!(
+            stored_diff.as_deref().map(str::as_bytes),
+            Some("diff --git a/app.rs b/app.rs".as_bytes())
+        );
+        assert!(serde_json::to_value(&saved)
+            .expect("saved detail should serialize")
+            .get("diff")
+            .is_none());
+        assert!(serde_json::to_value(&loaded)
+            .expect("loaded detail should serialize")
+            .get("diff")
+            .is_none());
+        assert!(matches!(
+            loaded.timeline_pagination,
+            PullRequestTimelinePaginationDto::HasOlder
+        ));
         assert_eq!(loaded.timeline[0].id.as_deref(), Some("timeline-1"));
         assert_eq!(
             sqlx::query_scalar::<_, Option<String>>(
@@ -2737,16 +4582,16 @@ mod tests {
         .expect("pull request detail should insert");
         let replacement = vec![PullRequestTimelineEventDto {
             actor_login: Some("reviewer".to_string()),
-            body: None,
-            commit_sha: None,
-            event: "reviewed".to_string(),
+            event: PullRequestTimelineEventKindDto::Reviewed {
+                body: None,
+                review_comments: PullRequestTimelineReviewCommentsDto::Complete {
+                    items: Vec::new(),
+                },
+                state: Some("APPROVED".to_string()),
+                url: None,
+            },
             id: Some("review-1".to_string()),
             occurred_at: Some("2026-01-02T00:00:00Z".to_string()),
-            review_comments: Vec::new(),
-            review_comments_has_more: false,
-            state: Some("APPROVED".to_string()),
-            title: None,
-            url: None,
         }];
 
         let stale_update = update_pull_request_timeline_if_current(
@@ -2755,21 +4600,20 @@ mod tests {
             42,
             "stale-cursor",
             &replacement,
-            None,
-            false,
+            &PullRequestTimelinePagination::Complete,
         )
         .await
         .expect("stale update should complete");
         assert!(!stale_update);
-        assert_eq!(
+        assert!(matches!(
             load_pull_request_detail(&db, &repository, 42)
                 .await
                 .expect("detail should load")
                 .expect("detail should exist")
                 .timeline[0]
                 .event,
-            "commented",
-        );
+            PullRequestTimelineEventKindDto::Commented { .. }
+        ));
 
         let current_update = update_pull_request_timeline_if_current(
             &db,
@@ -2777,8 +4621,7 @@ mod tests {
             42,
             "current-cursor",
             &replacement,
-            None,
-            false,
+            &PullRequestTimelinePagination::Complete,
         )
         .await
         .expect("current update should complete");
@@ -2787,8 +4630,14 @@ mod tests {
             .await
             .expect("detail should load")
             .expect("detail should exist");
-        assert_eq!(loaded.timeline[0].event, "reviewed");
-        assert!(!loaded.timeline_has_older);
+        assert!(matches!(
+            loaded.timeline[0].event,
+            PullRequestTimelineEventKindDto::Reviewed { .. }
+        ));
+        assert!(matches!(
+            loaded.timeline_pagination,
+            PullRequestTimelinePaginationDto::Complete
+        ));
     }
 
     #[test]
@@ -2814,11 +4663,12 @@ mod tests {
                 .expect("legacy timeline should deserialize");
 
         assert_eq!(timeline[0].actor_login.as_deref(), Some("octocat"));
-        assert_eq!(timeline[0].event, "closed");
+        assert!(matches!(
+            timeline[0].event,
+            PullRequestTimelineEventKindDto::Closed
+        ));
         assert_eq!(timeline[0].id, None);
         assert_eq!(timeline[0].occurred_at, None);
-        assert!(timeline[0].review_comments.is_empty());
-        assert!(!timeline[0].review_comments_has_more);
     }
 
     #[test]
@@ -2839,9 +4689,13 @@ mod tests {
             }
         }));
 
-        assert_eq!(item.event, "reviewed");
-        assert_eq!(item.review_comments.len(), 1);
-        assert!(item.review_comments_has_more);
+        assert!(matches!(
+            item.event,
+            PullRequestTimelineEventKindDto::Reviewed {
+                review_comments: PullRequestTimelineReviewCommentsDto::Truncated { ref items },
+                ..
+            } if items.len() == 1
+        ));
     }
 
     #[test]
@@ -2851,8 +4705,11 @@ mod tests {
             "id": "future-1"
         }));
 
-        assert_eq!(item.event, "unknown");
+        assert!(matches!(
+            item.event,
+            PullRequestTimelineEventKindDto::Unknown { ref name }
+                if name.as_deref() == Some("FutureTimelineEvent")
+        ));
         assert_eq!(item.id.as_deref(), Some("future-1"));
-        assert_eq!(item.title.as_deref(), Some("FutureTimelineEvent"));
     }
 }

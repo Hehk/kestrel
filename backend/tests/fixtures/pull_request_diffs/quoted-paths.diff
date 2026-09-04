@@ -1,0 +1,21 @@
+diff --git a/docs/setup guide.md b/docs/setup guide.md
+index aaaaaaa..bbbbbbb 100644
+--- a/docs/setup guide.md
++++ b/docs/setup guide.md
+@@ -1 +1 @@
+-Run the old setup command.
++Run the new setup command.
+diff --git "a/docs/caf\303\251.txt" "b/docs/caf\303\251.txt"
+index ccccccc..ddddddd 100644
+--- "a/docs/caf\303\251.txt"
++++ "b/docs/caf\303\251.txt"
+@@ -1 +1 @@
+-ASCII content under a quoted path.
++Updated content under a quoted path.
+diff --git "a/docs/quote\"-backslash\\-tab\t.txt" "b/docs/quote\"-backslash\\-tab\t.txt"
+index eeeeeee..fffffff 100644
+--- "a/docs/quote\"-backslash\\-tab\t.txt"
++++ "b/docs/quote\"-backslash\\-tab\t.txt"
+@@ -1 +1 @@
+-Escaped path syntax before.
++Escaped path syntax after.

@@ -2,7 +2,7 @@ use axum::{extract::State, http::StatusCode, routing::get, Json, Router};
 use reqwest::Client;
 use serde::Serialize;
 use sqlx::SqlitePool;
-use tower_http::{cors::CorsLayer, trace::TraceLayer};
+use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
 use utoipa::{OpenApi, ToSchema};
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -95,6 +95,10 @@ pub fn app(config: &Config, state: AppState) -> Router {
         get(pull_requests::get_pull_request_detail),
     );
     let api = api.route(
+        "/repositories/{owner}/{name}/pull-requests/{number}/diff",
+        get(pull_requests::get_pull_request_diff),
+    );
+    let api = api.route(
         "/repositories/{owner}/{name}/pull-requests/{number}/sync",
         axum::routing::post(pull_requests::sync_pull_request_detail),
     );
@@ -106,6 +110,7 @@ pub fn app(config: &Config, state: AppState) -> Router {
     let router = Router::new()
         .nest("/api", api)
         .layer(TraceLayer::new_for_http())
+        .layer(CompressionLayer::new())
         .layer(CorsLayer::permissive())
         .with_state(state);
 
