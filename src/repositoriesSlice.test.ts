@@ -478,16 +478,16 @@ describe("repositoriesSlice", () => {
   });
 
   it.each([
-    ["authentication_required", "authenticationRequired"],
-    ["authorization_required", "authorizationRequired"],
-    ["diff_parse_failed", "diffParseFailed"],
-    ["diff_resource_limit_exceeded", "diffResourceLimitExceeded"],
-    ["diff_unavailable", "diffUnavailable"],
-    ["invalid_pull_request", "invalidPullRequest"],
-    ["invalid_repository", "invalidRepository"],
-    ["pull_request_not_found", "pullRequestNotFound"],
-    ["repository_not_tracked", "repositoryNotTracked"],
-    ["sync_failed", "loadFailed"],
+    ["authenticationRequired", "authenticationRequired"],
+    ["authorizationRequired", "authorizationRequired"],
+    ["diffParseFailed", "diffParseFailed"],
+    ["diffResourceLimitExceeded", "diffResourceLimitExceeded"],
+    ["diffUnavailable", "diffUnavailable"],
+    ["invalidPullRequest", "invalidPullRequest"],
+    ["invalidRepository", "invalidRepository"],
+    ["pullRequestNotFound", "pullRequestNotFound"],
+    ["repositoryNotTracked", "repositoryNotTracked"],
+    ["syncFailed", "loadFailed"],
   ] as const)("maps Diff endpoint error %s", async (apiError, expectedError) => {
     const repo = repository("kestrel/app");
     vi.stubGlobal(
@@ -550,7 +550,7 @@ describe("repositoriesSlice", () => {
     const repo = repository("kestrel/app");
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => jsonResponse({ error: "authorization_required" }, 403)),
+      vi.fn(async () => jsonResponse({ error: "authorizationRequired" }, 403)),
     );
     const messages: Repositories.Msg[] = [];
 
@@ -629,7 +629,7 @@ describe("repositoriesSlice", () => {
   it("maps duplicate add failures", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => jsonResponse({ error: "duplicate_repository" }, 409)),
+      vi.fn(async () => jsonResponse({ error: "duplicateRepository" }, 409)),
     );
     const messages: Repositories.Msg[] = [];
 

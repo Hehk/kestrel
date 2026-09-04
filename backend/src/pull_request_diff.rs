@@ -24,10 +24,6 @@ pub(crate) struct PullRequestDiffFile {
     pub(crate) additions: u32,
     pub(crate) content: PullRequestDiffContent,
     pub(crate) deletions: u32,
-    pub(crate) new_mode: Option<PullRequestDiffFileMode>,
-    pub(crate) new_path: Option<String>,
-    pub(crate) old_mode: Option<PullRequestDiffFileMode>,
-    pub(crate) old_path: Option<String>,
     pub(crate) operation: PullRequestDiffFileOperation,
 }
 
@@ -37,13 +33,39 @@ pub(crate) enum PullRequestDiffContent {
     Binary,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum PullRequestDiffFileOperation {
-    Added,
-    Deleted,
-    Modified,
-    Renamed,
-    Copied,
+    Added {
+        path: String,
+        mode: PullRequestDiffFileMode,
+    },
+    Deleted {
+        path: String,
+        mode: PullRequestDiffFileMode,
+    },
+    Modified {
+        path: String,
+        mode_change: PullRequestDiffModeChange,
+    },
+    Renamed {
+        old_path: String,
+        new_path: String,
+        mode_change: PullRequestDiffModeChange,
+    },
+    Copied {
+        old_path: String,
+        new_path: String,
+        mode_change: PullRequestDiffModeChange,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PullRequestDiffModeChange {
+    Unchanged,
+    Changed {
+        old_mode: PullRequestDiffFileMode,
+        new_mode: PullRequestDiffFileMode,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -160,17 +182,16 @@ fn map_file(
     file: FilePatch<'_, str>,
     budget: &mut ParseBudget,
 ) -> Result<PullRequestDiffFile, DiffParseError> {
-    let (operation, old_path, new_path) = map_operation(file.operation())?;
     let old_mode = file.old_mode().copied().map(map_mode);
     let new_mode = file.new_mode().copied().map(map_mode);
-    validate_operation_modes(operation, old_mode, new_mode)?;
+    let operation = map_operation(file.operation(), old_mode, new_mode)?;
     let mut additions = 0;
     let mut deletions = 0;
 
     let content = match file.patch() {
         PatchKind::Binary(_) => PullRequestDiffContent::Binary,
         PatchKind::Text(patch) => {
-            validate_text_paths(operation, old_path.as_deref(), new_path.as_deref(), patch)?;
+            validate_text_paths(&operation, patch)?;
             let hunks = patch
                 .hunks()
                 .iter()
@@ -184,38 +205,12 @@ fn map_file(
         additions,
         content,
         deletions,
-        new_mode,
-        new_path,
-        old_mode,
-        old_path,
         operation,
     })
 }
 
-fn validate_operation_modes(
-    operation: PullRequestDiffFileOperation,
-    old_mode: Option<PullRequestDiffFileMode>,
-    new_mode: Option<PullRequestDiffFileMode>,
-) -> Result<(), DiffParseError> {
-    let invalid = match operation {
-        PullRequestDiffFileOperation::Added => old_mode.is_some(),
-        PullRequestDiffFileOperation::Deleted => new_mode.is_some(),
-        PullRequestDiffFileOperation::Modified
-        | PullRequestDiffFileOperation::Renamed
-        | PullRequestDiffFileOperation::Copied => old_mode.is_some() != new_mode.is_some(),
-    };
-    if invalid {
-        return Err(DiffParseError::InvalidDiff(
-            "file operation has inconsistent mode headers".to_string(),
-        ));
-    }
-    Ok(())
-}
-
 fn validate_text_paths(
-    operation: PullRequestDiffFileOperation,
-    old_path: Option<&str>,
-    new_path: Option<&str>,
+    operation: &PullRequestDiffFileOperation,
     patch: &diffy::Patch<'_, str>,
 ) -> Result<(), DiffParseError> {
     if patch.hunks().is_empty() {
@@ -224,17 +219,21 @@ fn validate_text_paths(
     let patch_old_path = normalize_patch_path(patch.original(), "a/");
     let patch_new_path = normalize_patch_path(patch.modified(), "b/");
     let paths_match = match operation {
-        PullRequestDiffFileOperation::Added => {
-            patch_old_path.is_none() && patch_new_path == new_path
+        PullRequestDiffFileOperation::Added { path, .. } => {
+            patch_old_path.is_none() && patch_new_path == Some(path.as_str())
         }
-        PullRequestDiffFileOperation::Deleted => {
-            patch_old_path == old_path && patch_new_path.is_none()
+        PullRequestDiffFileOperation::Deleted { path, .. } => {
+            patch_old_path == Some(path.as_str()) && patch_new_path.is_none()
         }
-        PullRequestDiffFileOperation::Modified
-        | PullRequestDiffFileOperation::Renamed
-        | PullRequestDiffFileOperation::Copied => {
-            patch_old_path == old_path && patch_new_path == new_path
+        PullRequestDiffFileOperation::Modified { path, .. } => {
+            patch_old_path == Some(path.as_str()) && patch_new_path == Some(path.as_str())
         }
+        PullRequestDiffFileOperation::Renamed {
+            old_path, new_path, ..
+        }
+        | PullRequestDiffFileOperation::Copied {
+            old_path, new_path, ..
+        } => patch_old_path == Some(old_path.as_str()) && patch_new_path == Some(new_path.as_str()),
     };
     if !paths_match {
         return Err(DiffParseError::InvalidDiff(
@@ -251,18 +250,24 @@ fn normalize_patch_path<'a>(path: Option<&'a str>, prefix: &str) -> Option<&'a s
 
 fn map_operation(
     operation: &FileOperation<'_, str>,
-) -> Result<(PullRequestDiffFileOperation, Option<String>, Option<String>), DiffParseError> {
+    old_mode: Option<PullRequestDiffFileMode>,
+    new_mode: Option<PullRequestDiffFileMode>,
+) -> Result<PullRequestDiffFileOperation, DiffParseError> {
     match operation {
-        FileOperation::Create(path) => Ok((
-            PullRequestDiffFileOperation::Added,
-            None,
-            Some(owned_path(path, "b/")?),
-        )),
-        FileOperation::Delete(path) => Ok((
-            PullRequestDiffFileOperation::Deleted,
-            Some(owned_path(path, "a/")?),
-            None,
-        )),
+        FileOperation::Create(path) => match (old_mode, new_mode) {
+            (None, Some(mode)) => Ok(PullRequestDiffFileOperation::Added {
+                path: owned_path(path, "b/")?,
+                mode,
+            }),
+            _ => inconsistent_mode_headers(),
+        },
+        FileOperation::Delete(path) => match (old_mode, new_mode) {
+            (Some(mode), None) => Ok(PullRequestDiffFileOperation::Deleted {
+                path: owned_path(path, "a/")?,
+                mode,
+            }),
+            _ => inconsistent_mode_headers(),
+        },
         FileOperation::Modify { original, modified } => {
             let old_path = checked_path(original, "a/")?;
             let new_path = checked_path(modified, "b/")?;
@@ -271,23 +276,41 @@ fn map_operation(
                     "different paths require explicit rename or copy metadata".to_string(),
                 ));
             }
-            Ok((
-                PullRequestDiffFileOperation::Modified,
-                Some(old_path.to_owned()),
-                Some(new_path.to_owned()),
-            ))
+            Ok(PullRequestDiffFileOperation::Modified {
+                path: old_path.to_owned(),
+                mode_change: map_mode_change(old_mode, new_mode)?,
+            })
         }
-        FileOperation::Rename { from, to } => Ok((
-            PullRequestDiffFileOperation::Renamed,
-            Some(owned_path(from, "")?),
-            Some(owned_path(to, "")?),
-        )),
-        FileOperation::Copy { from, to } => Ok((
-            PullRequestDiffFileOperation::Copied,
-            Some(owned_path(from, "")?),
-            Some(owned_path(to, "")?),
-        )),
+        FileOperation::Rename { from, to } => Ok(PullRequestDiffFileOperation::Renamed {
+            old_path: owned_path(from, "")?,
+            new_path: owned_path(to, "")?,
+            mode_change: map_mode_change(old_mode, new_mode)?,
+        }),
+        FileOperation::Copy { from, to } => Ok(PullRequestDiffFileOperation::Copied {
+            old_path: owned_path(from, "")?,
+            new_path: owned_path(to, "")?,
+            mode_change: map_mode_change(old_mode, new_mode)?,
+        }),
     }
+}
+
+fn map_mode_change(
+    old_mode: Option<PullRequestDiffFileMode>,
+    new_mode: Option<PullRequestDiffFileMode>,
+) -> Result<PullRequestDiffModeChange, DiffParseError> {
+    match (old_mode, new_mode) {
+        (None, None) => Ok(PullRequestDiffModeChange::Unchanged),
+        (Some(old_mode), Some(new_mode)) => {
+            Ok(PullRequestDiffModeChange::Changed { old_mode, new_mode })
+        }
+        _ => inconsistent_mode_headers(),
+    }
+}
+
+fn inconsistent_mode_headers<T>() -> Result<T, DiffParseError> {
+    Err(DiffParseError::InvalidDiff(
+        "file operation has inconsistent mode headers".to_string(),
+    ))
 }
 
 fn owned_path(path: &str, prefix: &str) -> Result<String, DiffParseError> {
@@ -837,8 +860,8 @@ mod tests {
     use super::{
         ensure_at_most, increment_with_limit, parse_pull_request_diff, DiffParseError,
         DiffParseLimit, PullRequestDiffContent, PullRequestDiffFileMode,
-        PullRequestDiffFileOperation, PullRequestDiffLineKind, MAX_PATH_BYTES, MAX_PHYSICAL_LINES,
-        MAX_SOURCE_LINE_BYTES, MAX_UNQUOTED_PATH_SPACES,
+        PullRequestDiffFileOperation, PullRequestDiffLineKind, PullRequestDiffModeChange,
+        MAX_PATH_BYTES, MAX_PHYSICAL_LINES, MAX_SOURCE_LINE_BYTES, MAX_UNQUOTED_PATH_SPACES,
     };
 
     const ADDED_FILE: &str = include_str!("../tests/fixtures/pull_request_diffs/added-file.diff");
@@ -936,13 +959,15 @@ mod tests {
 
         assert_eq!(files.len(), 2);
         let file = &files[0];
-        assert_eq!(file.operation, PullRequestDiffFileOperation::Modified);
-        assert_eq!(file.old_path.as_deref(), Some("src/math.rs"));
-        assert_eq!(file.new_path.as_deref(), Some("src/math.rs"));
+        assert_eq!(
+            file.operation,
+            PullRequestDiffFileOperation::Modified {
+                path: "src/math.rs".to_string(),
+                mode_change: PullRequestDiffModeChange::Unchanged,
+            }
+        );
         assert_eq!(file.additions, 3);
         assert_eq!(file.deletions, 2);
-        assert_eq!(file.old_mode, None);
-        assert_eq!(file.new_mode, None);
 
         let hunks = text_hunks(file);
         assert_eq!(hunks.len(), 2);
@@ -972,48 +997,61 @@ mod tests {
     #[test]
     fn parse_pull_request_diff_maps_file_operations_and_explicit_modes() {
         let added = parse_pull_request_diff(ADDED_FILE).expect("added file should parse");
-        assert_eq!(added[0].operation, PullRequestDiffFileOperation::Added);
-        assert_eq!(added[0].old_path, None);
-        assert_eq!(added[0].new_path.as_deref(), Some("src/greeting.rs"));
-        assert_eq!(added[0].old_mode, None);
-        assert_eq!(added[0].new_mode, Some(PullRequestDiffFileMode::Regular));
+        assert_eq!(
+            added[0].operation,
+            PullRequestDiffFileOperation::Added {
+                path: "src/greeting.rs".to_string(),
+                mode: PullRequestDiffFileMode::Regular,
+            }
+        );
         let added_lines = &text_hunks(&added[0])[0].lines;
         assert_eq!(added_lines[0].old_line, None);
         assert_eq!(added_lines[0].new_line, Some(1));
         assert_eq!(added_lines[3].new_line, Some(4));
 
         let deleted = parse_pull_request_diff(DELETED_FILE).expect("deleted file should parse");
-        assert_eq!(deleted[0].operation, PullRequestDiffFileOperation::Deleted);
-        assert_eq!(deleted[0].old_path.as_deref(), Some("src/legacy.rs"));
-        assert_eq!(deleted[0].new_path, None);
-        assert_eq!(deleted[0].old_mode, Some(PullRequestDiffFileMode::Regular));
-        assert_eq!(deleted[0].new_mode, None);
+        assert_eq!(
+            deleted[0].operation,
+            PullRequestDiffFileOperation::Deleted {
+                path: "src/legacy.rs".to_string(),
+                mode: PullRequestDiffFileMode::Regular,
+            }
+        );
         let deleted_lines = &text_hunks(&deleted[0])[0].lines;
         assert_eq!(deleted_lines[0].old_line, Some(1));
         assert_eq!(deleted_lines[0].new_line, None);
         assert_eq!(deleted_lines[3].old_line, Some(4));
 
         let renamed = parse_pull_request_diff(RENAMED_FILE).expect("renamed file should parse");
-        assert_eq!(renamed[0].operation, PullRequestDiffFileOperation::Renamed);
-        assert_eq!(renamed[0].old_path.as_deref(), Some("docs/old-name.md"));
-        assert_eq!(renamed[0].new_path.as_deref(), Some("docs/new-name.md"));
+        assert_eq!(
+            renamed[0].operation,
+            PullRequestDiffFileOperation::Renamed {
+                old_path: "docs/old-name.md".to_string(),
+                new_path: "docs/new-name.md".to_string(),
+                mode_change: PullRequestDiffModeChange::Unchanged,
+            }
+        );
 
         let copied = parse_pull_request_diff(COPIED_FILE).expect("copied file should parse");
-        assert_eq!(copied[0].operation, PullRequestDiffFileOperation::Copied);
-        assert_eq!(copied[0].old_path.as_deref(), Some("config/example.toml"));
         assert_eq!(
-            copied[0].new_path.as_deref(),
-            Some("config/development.toml")
+            copied[0].operation,
+            PullRequestDiffFileOperation::Copied {
+                old_path: "config/example.toml".to_string(),
+                new_path: "config/development.toml".to_string(),
+                mode_change: PullRequestDiffModeChange::Unchanged,
+            }
         );
 
         let mode_only = parse_pull_request_diff(MODE_ONLY).expect("mode-only file should parse");
         assert_eq!(
-            mode_only[0].old_mode,
-            Some(PullRequestDiffFileMode::Regular)
-        );
-        assert_eq!(
-            mode_only[0].new_mode,
-            Some(PullRequestDiffFileMode::Executable)
+            mode_only[0].operation,
+            PullRequestDiffFileOperation::Modified {
+                path: "scripts/check.sh".to_string(),
+                mode_change: PullRequestDiffModeChange::Changed {
+                    old_mode: PullRequestDiffFileMode::Regular,
+                    new_mode: PullRequestDiffFileMode::Executable,
+                },
+            }
         );
         assert!(text_hunks(&mode_only[0]).is_empty());
     }
@@ -1023,8 +1061,16 @@ mod tests {
         let raw = "diff --git a/path b/path\nold mode 120000\nnew mode 160000\n";
         let files = parse_pull_request_diff(raw).expect("type change should parse");
 
-        assert_eq!(files[0].old_mode, Some(PullRequestDiffFileMode::Symlink));
-        assert_eq!(files[0].new_mode, Some(PullRequestDiffFileMode::Gitlink));
+        assert_eq!(
+            files[0].operation,
+            PullRequestDiffFileOperation::Modified {
+                path: "path".to_string(),
+                mode_change: PullRequestDiffModeChange::Changed {
+                    old_mode: PullRequestDiffFileMode::Symlink,
+                    new_mode: PullRequestDiffFileMode::Gitlink,
+                },
+            }
+        );
         assert!(text_hunks(&files[0]).is_empty());
     }
 
@@ -1033,10 +1079,22 @@ mod tests {
         let files = parse_pull_request_diff(HUNKLESS_FILES).expect("hunkless files should parse");
 
         assert_eq!(files.len(), 4);
-        assert_eq!(files[0].operation, PullRequestDiffFileOperation::Added);
-        assert_eq!(files[1].operation, PullRequestDiffFileOperation::Deleted);
-        assert_eq!(files[2].operation, PullRequestDiffFileOperation::Renamed);
-        assert_eq!(files[3].operation, PullRequestDiffFileOperation::Copied);
+        assert!(matches!(
+            files[0].operation,
+            PullRequestDiffFileOperation::Added { .. }
+        ));
+        assert!(matches!(
+            files[1].operation,
+            PullRequestDiffFileOperation::Deleted { .. }
+        ));
+        assert!(matches!(
+            files[2].operation,
+            PullRequestDiffFileOperation::Renamed { .. }
+        ));
+        assert!(matches!(
+            files[3].operation,
+            PullRequestDiffFileOperation::Copied { .. }
+        ));
         assert!(files.iter().all(|file| text_hunks(file).is_empty()));
     }
 
@@ -1048,9 +1106,18 @@ mod tests {
         assert!(files
             .iter()
             .all(|file| file.content == PullRequestDiffContent::Binary));
-        assert_eq!(files[0].operation, PullRequestDiffFileOperation::Modified);
-        assert_eq!(files[1].operation, PullRequestDiffFileOperation::Added);
-        assert_eq!(files[2].operation, PullRequestDiffFileOperation::Added);
+        assert!(matches!(
+            files[0].operation,
+            PullRequestDiffFileOperation::Modified { .. }
+        ));
+        assert!(matches!(
+            files[1].operation,
+            PullRequestDiffFileOperation::Added { .. }
+        ));
+        assert!(matches!(
+            files[2].operation,
+            PullRequestDiffFileOperation::Added { .. }
+        ));
         assert!(files
             .iter()
             .all(|file| file.additions == 0 && file.deletions == 0));
@@ -1060,12 +1127,19 @@ mod tests {
     fn parse_pull_request_diff_decodes_git_quoted_paths() {
         let files = parse_pull_request_diff(QUOTED_PATHS).expect("quoted paths should parse");
 
-        assert_eq!(files[0].new_path.as_deref(), Some("docs/setup guide.md"));
-        assert_eq!(files[1].new_path.as_deref(), Some("docs/caf\u{e9}.txt"));
-        assert_eq!(
-            files[2].new_path.as_deref(),
-            Some("docs/quote\"-backslash\\-tab\t.txt")
-        );
+        assert!(matches!(
+            &files[0].operation,
+            PullRequestDiffFileOperation::Modified { path, .. } if path == "docs/setup guide.md"
+        ));
+        assert!(matches!(
+            &files[1].operation,
+            PullRequestDiffFileOperation::Modified { path, .. } if path == "docs/caf\u{e9}.txt"
+        ));
+        assert!(matches!(
+            &files[2].operation,
+            PullRequestDiffFileOperation::Modified { path, .. }
+                if path == "docs/quote\"-backslash\\-tab\t.txt"
+        ));
     }
 
     #[test]
@@ -1377,8 +1451,10 @@ mod tests {
         let raw = "diff --git a/plain.txt \"b/plain.txt\"\nold mode 100644\nnew mode 100755\n";
         let files = parse_pull_request_diff(raw).expect("mixed quoted paths should parse");
 
-        assert_eq!(files[0].old_path.as_deref(), Some("plain.txt"));
-        assert_eq!(files[0].new_path.as_deref(), Some("plain.txt"));
+        assert!(matches!(
+            &files[0].operation,
+            PullRequestDiffFileOperation::Modified { path, .. } if path == "plain.txt"
+        ));
     }
 
     #[test]

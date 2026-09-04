@@ -136,9 +136,9 @@ const RepositorySyncStatus = ({ repository }: { repository: Repositories.Reposit
 
 const repositorySyncErrorText = (error: string) => {
   switch (error) {
-    case "authorization_required":
+    case "authorizationRequired":
       return "GitHub App authorization required.";
-    case "sync_failed":
+    case "syncFailed":
       return "GitHub sync failed.";
     default:
       return "Unknown sync error.";

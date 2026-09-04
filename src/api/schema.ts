@@ -301,23 +301,59 @@ export interface components {
     PullRequestDetailResponse: {
       pullRequestDetail: components["schemas"]["PullRequestDetailDto"];
     };
+    PullRequestDiffContentDto:
+      | {
+          /** @enum {string} */
+          kind: "binary";
+        }
+      | {
+          hunks: components["schemas"]["PullRequestDiffHunkDto"][];
+          /** @enum {string} */
+          kind: "text";
+        };
     PullRequestDiffFileDto: {
       /** Format: int64 */
       additions: number;
-      binary: boolean;
+      content: components["schemas"]["PullRequestDiffContentDto"];
       /** Format: int64 */
       deletions: number;
-      hunks: components["schemas"]["PullRequestDiffHunkDto"][];
-      newMode: null | components["schemas"]["PullRequestDiffFileModeDto"];
-      newPath: string | null;
-      oldMode: null | components["schemas"]["PullRequestDiffFileModeDto"];
-      oldPath: string | null;
       operation: components["schemas"]["PullRequestDiffFileOperationDto"];
     };
     /** @enum {string} */
     PullRequestDiffFileModeDto: "100644" | "100755" | "120000" | "160000";
-    /** @enum {string} */
-    PullRequestDiffFileOperationDto: "added" | "deleted" | "modified" | "renamed" | "copied";
+    PullRequestDiffFileOperationDto:
+      | {
+          /** @enum {string} */
+          kind: "added";
+          mode: components["schemas"]["PullRequestDiffFileModeDto"];
+          path: string;
+        }
+      | {
+          /** @enum {string} */
+          kind: "deleted";
+          mode: components["schemas"]["PullRequestDiffFileModeDto"];
+          path: string;
+        }
+      | {
+          /** @enum {string} */
+          kind: "modified";
+          modeChange: components["schemas"]["PullRequestDiffModeChangeDto"];
+          path: string;
+        }
+      | {
+          /** @enum {string} */
+          kind: "renamed";
+          modeChange: components["schemas"]["PullRequestDiffModeChangeDto"];
+          newPath: string;
+          oldPath: string;
+        }
+      | {
+          /** @enum {string} */
+          kind: "copied";
+          modeChange: components["schemas"]["PullRequestDiffModeChangeDto"];
+          newPath: string;
+          oldPath: string;
+        };
     PullRequestDiffHunkDto: {
       context: string | null;
       lines: components["schemas"]["PullRequestDiffLineDto"][];
@@ -341,6 +377,17 @@ export interface components {
     };
     /** @enum {string} */
     PullRequestDiffLineKindDto: "context" | "addition" | "deletion";
+    PullRequestDiffModeChangeDto:
+      | {
+          /** @enum {string} */
+          kind: "unchanged";
+        }
+      | {
+          /** @enum {string} */
+          kind: "changed";
+          newMode: components["schemas"]["PullRequestDiffFileModeDto"];
+          oldMode: components["schemas"]["PullRequestDiffFileModeDto"];
+        };
     PullRequestDiffResponse: {
       files: components["schemas"]["PullRequestDiffFileDto"][];
       syncedAt: string;
@@ -363,16 +410,16 @@ export interface components {
     };
     /** @enum {string} */
     PullRequestErrorCode:
-      | "authentication_required"
-      | "authorization_required"
-      | "diff_parse_failed"
-      | "diff_resource_limit_exceeded"
-      | "diff_unavailable"
-      | "invalid_pull_request"
-      | "invalid_repository"
-      | "pull_request_not_found"
-      | "repository_not_tracked"
-      | "sync_failed";
+      | "authenticationRequired"
+      | "authorizationRequired"
+      | "diffParseFailed"
+      | "diffResourceLimitExceeded"
+      | "diffUnavailable"
+      | "invalidPullRequest"
+      | "invalidRepository"
+      | "pullRequestNotFound"
+      | "repositoryNotTracked"
+      | "syncFailed";
     PullRequestErrorResponse: {
       error: components["schemas"]["PullRequestErrorCode"];
     };
@@ -420,7 +467,7 @@ export interface components {
       pullRequestsSyncedAt?: string | null;
     };
     /** @enum {string} */
-    RepositoryErrorCode: "duplicate_repository" | "invalid_repository" | "repository_save_failed";
+    RepositoryErrorCode: "duplicateRepository" | "invalidRepository" | "repositorySaveFailed";
     RepositoryErrorResponse: {
       error: components["schemas"]["RepositoryErrorCode"];
     };

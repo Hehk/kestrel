@@ -293,7 +293,7 @@ const mockAuth = (
 
         const diff = pullRequestDiffsByKey[`${fullName}#${number}`];
         return diff === undefined
-          ? jsonResponse({ error: "pull_request_not_found" }, 404)
+          ? jsonResponse({ error: "pullRequestNotFound" }, 404)
           : jsonResponse(diff);
       }
 
@@ -310,7 +310,7 @@ const mockAuth = (
         if (method === "GET") {
           const detail = pullRequestDetailsByKey[key];
           return detail === undefined
-            ? jsonResponse({ error: "pull_request_not_found" }, 404)
+            ? jsonResponse({ error: "pullRequestNotFound" }, 404)
             : jsonResponse({ pullRequestDetail: detail });
         }
 
@@ -496,7 +496,7 @@ describe("App", () => {
   it("renders persisted pull request sync metadata", async () => {
     mockAuth(signedInResponse, "system", undefined, [
       repository("kestrel/app", {
-        pullRequestsSyncError: "authorization_required",
+        pullRequestsSyncError: "authorizationRequired",
         pullRequestsSyncedAt: "2026-01-02T00:00:00Z",
       }),
     ]);
@@ -1041,13 +1041,13 @@ describe("App", () => {
   });
 
   it.each([
-    ["pull_request_not_found", 404, /Pull request details are not stored yet/],
-    ["diff_unavailable", 409, /The stored pull request does not include a diff/],
-    ["diff_parse_failed", 500, /The stored diff could not be parsed/],
-    ["diff_resource_limit_exceeded", 422, /The stored diff is too large to display/],
-    ["authentication_required", 401, /Authentication is required to load this diff/],
-    ["authorization_required", 403, /GitHub App authorization required/],
-    ["sync_failed", 500, /The pull request diff could not be loaded/],
+    ["pullRequestNotFound", 404, /Pull request details are not stored yet/],
+    ["diffUnavailable", 409, /The stored pull request does not include a diff/],
+    ["diffParseFailed", 500, /The stored diff could not be parsed/],
+    ["diffResourceLimitExceeded", 422, /The stored diff is too large to display/],
+    ["authenticationRequired", 401, /Authentication is required to load this diff/],
+    ["authorizationRequired", 403, /GitHub App authorization required/],
+    ["syncFailed", 500, /The pull request diff could not be loaded/],
   ])("renders Diff error %s", async (error, status, message) => {
     window.history.replaceState({}, "", "/pull/kestrel%2Fapp/42/diff");
     mockAuth(
@@ -1133,7 +1133,7 @@ describe("App", () => {
     expect(screen.getByText("1 changed file, 2 source lines.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sync pull request from GitHub" })).toBeDisabled();
 
-    pendingRefresh.resolve(jsonResponse({ error: "sync_failed" }, 500));
+    pendingRefresh.resolve(jsonResponse({ error: "syncFailed" }, 500));
     expect(
       await screen.findByText("The pull request diff could not be loaded."),
     ).toBeInTheDocument();
@@ -1253,7 +1253,7 @@ describe("App", () => {
       [repository("kestrel/app")],
       undefined,
       {},
-      () => jsonResponse({ error: "authorization_required" }, 403),
+      () => jsonResponse({ error: "authorizationRequired" }, 403),
     );
 
     renderApp();
@@ -1331,7 +1331,7 @@ describe("App", () => {
   it("shows duplicate repository add errors", async () => {
     const user = userEvent.setup();
     mockAuth(signedInResponse, "system", undefined, [repository("kestrel/app")], () =>
-      jsonResponse({ error: "duplicate_repository" }, 409),
+      jsonResponse({ error: "duplicateRepository" }, 409),
     );
 
     renderApp();
@@ -1348,7 +1348,7 @@ describe("App", () => {
   it("shows invalid repository add errors", async () => {
     const user = userEvent.setup();
     mockAuth(signedInResponse, "system", undefined, [], () =>
-      jsonResponse({ error: "invalid_repository" }, 400),
+      jsonResponse({ error: "invalidRepository" }, 400),
     );
 
     renderApp();

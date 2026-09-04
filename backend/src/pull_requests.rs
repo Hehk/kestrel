@@ -18,7 +18,7 @@ use crate::{
     pull_request_diff::{
         self, DiffParseError, PullRequestDiffContent, PullRequestDiffFile, PullRequestDiffFileMode,
         PullRequestDiffFileOperation, PullRequestDiffHunk, PullRequestDiffLine,
-        PullRequestDiffLineKind, MAX_DIFF_BYTES,
+        PullRequestDiffLineKind, PullRequestDiffModeChange, MAX_DIFF_BYTES,
     },
     repositories,
 };
@@ -270,28 +270,62 @@ pub struct PullRequestDiffResponse {
 #[serde(rename_all = "camelCase")]
 pub struct PullRequestDiffFileDto {
     pub additions: u64,
-    pub binary: bool,
+    pub content: PullRequestDiffContentDto,
     pub deletions: u64,
-    pub hunks: Vec<PullRequestDiffHunkDto>,
-    #[schema(required)]
-    pub new_mode: Option<PullRequestDiffFileModeDto>,
-    #[schema(required)]
-    pub new_path: Option<String>,
-    #[schema(required)]
-    pub old_mode: Option<PullRequestDiffFileModeDto>,
-    #[schema(required)]
-    pub old_path: Option<String>,
     pub operation: PullRequestDiffFileOperationDto,
 }
 
 #[derive(Serialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PullRequestDiffContentDto {
+    Binary,
+    #[serde(rename_all = "camelCase")]
+    Text {
+        hunks: Vec<PullRequestDiffHunkDto>,
+    },
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "camelCase")]
 pub enum PullRequestDiffFileOperationDto {
-    Added,
-    Deleted,
-    Modified,
-    Renamed,
-    Copied,
+    #[serde(rename_all = "camelCase")]
+    Added {
+        path: String,
+        mode: PullRequestDiffFileModeDto,
+    },
+    #[serde(rename_all = "camelCase")]
+    Deleted {
+        path: String,
+        mode: PullRequestDiffFileModeDto,
+    },
+    #[serde(rename_all = "camelCase")]
+    Modified {
+        path: String,
+        mode_change: PullRequestDiffModeChangeDto,
+    },
+    #[serde(rename_all = "camelCase")]
+    Renamed {
+        old_path: String,
+        new_path: String,
+        mode_change: PullRequestDiffModeChangeDto,
+    },
+    #[serde(rename_all = "camelCase")]
+    Copied {
+        old_path: String,
+        new_path: String,
+        mode_change: PullRequestDiffModeChangeDto,
+    },
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PullRequestDiffModeChangeDto {
+    Unchanged,
+    #[serde(rename_all = "camelCase")]
+    Changed {
+        old_mode: PullRequestDiffFileModeDto,
+        new_mode: PullRequestDiffFileModeDto,
+    },
 }
 
 #[derive(Serialize, ToSchema)]
@@ -331,32 +365,40 @@ pub struct PullRequestDiffLineDto {
 }
 
 #[derive(Serialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum PullRequestDiffLineKindDto {
     Context,
     Addition,
     Deletion,
 }
 
+impl PullRequestDiffContentDto {
+    fn hunks(&self) -> &[PullRequestDiffHunkDto] {
+        match self {
+            Self::Binary => &[],
+            Self::Text { hunks } => hunks,
+        }
+    }
+}
+
 impl From<PullRequestDiffFile> for PullRequestDiffFileDto {
     fn from(file: PullRequestDiffFile) -> Self {
-        let (binary, hunks) = match file.content {
-            PullRequestDiffContent::Binary => (true, Vec::new()),
-            PullRequestDiffContent::Text { hunks } => {
-                (false, hunks.into_iter().map(Into::into).collect())
-            }
-        };
-
         Self {
             additions: u64::from(file.additions),
-            binary,
+            content: file.content.into(),
             deletions: u64::from(file.deletions),
-            hunks,
-            new_mode: file.new_mode.map(Into::into),
-            new_path: file.new_path,
-            old_mode: file.old_mode.map(Into::into),
-            old_path: file.old_path,
             operation: file.operation.into(),
+        }
+    }
+}
+
+impl From<PullRequestDiffContent> for PullRequestDiffContentDto {
+    fn from(content: PullRequestDiffContent) -> Self {
+        match content {
+            PullRequestDiffContent::Binary => Self::Binary,
+            PullRequestDiffContent::Text { hunks } => Self::Text {
+                hunks: hunks.into_iter().map(Into::into).collect(),
+            },
         }
     }
 }
@@ -364,11 +406,48 @@ impl From<PullRequestDiffFile> for PullRequestDiffFileDto {
 impl From<PullRequestDiffFileOperation> for PullRequestDiffFileOperationDto {
     fn from(operation: PullRequestDiffFileOperation) -> Self {
         match operation {
-            PullRequestDiffFileOperation::Added => Self::Added,
-            PullRequestDiffFileOperation::Deleted => Self::Deleted,
-            PullRequestDiffFileOperation::Modified => Self::Modified,
-            PullRequestDiffFileOperation::Renamed => Self::Renamed,
-            PullRequestDiffFileOperation::Copied => Self::Copied,
+            PullRequestDiffFileOperation::Added { path, mode } => Self::Added {
+                path,
+                mode: mode.into(),
+            },
+            PullRequestDiffFileOperation::Deleted { path, mode } => Self::Deleted {
+                path,
+                mode: mode.into(),
+            },
+            PullRequestDiffFileOperation::Modified { path, mode_change } => Self::Modified {
+                path,
+                mode_change: mode_change.into(),
+            },
+            PullRequestDiffFileOperation::Renamed {
+                old_path,
+                new_path,
+                mode_change,
+            } => Self::Renamed {
+                old_path,
+                new_path,
+                mode_change: mode_change.into(),
+            },
+            PullRequestDiffFileOperation::Copied {
+                old_path,
+                new_path,
+                mode_change,
+            } => Self::Copied {
+                old_path,
+                new_path,
+                mode_change: mode_change.into(),
+            },
+        }
+    }
+}
+
+impl From<PullRequestDiffModeChange> for PullRequestDiffModeChangeDto {
+    fn from(mode_change: PullRequestDiffModeChange) -> Self {
+        match mode_change {
+            PullRequestDiffModeChange::Unchanged => Self::Unchanged,
+            PullRequestDiffModeChange::Changed { old_mode, new_mode } => Self::Changed {
+                old_mode: old_mode.into(),
+                new_mode: new_mode.into(),
+            },
         }
     }
 }
@@ -448,7 +527,7 @@ pub struct PullRequestErrorResponse {
 }
 
 #[derive(Serialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum PullRequestErrorCode {
     AuthenticationRequired,
     AuthorizationRequired,
@@ -465,16 +544,16 @@ pub enum PullRequestErrorCode {
 impl PullRequestErrorCode {
     fn as_str(&self) -> &'static str {
         match self {
-            Self::AuthenticationRequired => "authentication_required",
-            Self::AuthorizationRequired => "authorization_required",
-            Self::DiffParseFailed => "diff_parse_failed",
-            Self::DiffResourceLimitExceeded => "diff_resource_limit_exceeded",
-            Self::DiffUnavailable => "diff_unavailable",
-            Self::InvalidPullRequest => "invalid_pull_request",
-            Self::InvalidRepository => "invalid_repository",
-            Self::PullRequestNotFound => "pull_request_not_found",
-            Self::RepositoryNotTracked => "repository_not_tracked",
-            Self::SyncFailed => "sync_failed",
+            Self::AuthenticationRequired => "authenticationRequired",
+            Self::AuthorizationRequired => "authorizationRequired",
+            Self::DiffParseFailed => "diffParseFailed",
+            Self::DiffResourceLimitExceeded => "diffResourceLimitExceeded",
+            Self::DiffUnavailable => "diffUnavailable",
+            Self::InvalidPullRequest => "invalidPullRequest",
+            Self::InvalidRepository => "invalidRepository",
+            Self::PullRequestNotFound => "pullRequestNotFound",
+            Self::RepositoryNotTracked => "repositoryNotTracked",
+            Self::SyncFailed => "syncFailed",
         }
     }
 }
@@ -752,7 +831,7 @@ pub(crate) async fn get_pull_request_diff(
                 owner = %repository.owner,
                 name = %repository.name,
                 number,
-                outcome = "repository_not_tracked",
+                outcome = "repositoryNotTracked",
                 total_millis = elapsed_millis(request_started_at),
                 "pull request diff request completed"
             );
@@ -815,7 +894,7 @@ pub(crate) async fn get_pull_request_diff(
             owner = %tracked.owner,
             name = %tracked.name,
             number,
-            outcome = "diff_unavailable",
+            outcome = "diffUnavailable",
             total_millis = elapsed_millis(request_started_at),
             "pull request diff request completed"
         );
@@ -835,10 +914,10 @@ pub(crate) async fn get_pull_request_diff(
 
         let dto_started_at = Instant::now();
         let files: Vec<PullRequestDiffFileDto> = parsed.into_iter().map(Into::into).collect();
-        let hunks = files.iter().map(|file| file.hunks.len()).sum();
+        let hunks = files.iter().map(|file| file.content.hunks().len()).sum();
         let lines = files
             .iter()
-            .flat_map(|file| &file.hunks)
+            .flat_map(|file| file.content.hunks())
             .map(|hunk| hunk.lines.len())
             .sum();
         let file_count = files.len();
@@ -2868,7 +2947,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
         assert_eq!(
             response_json(response).await,
-            serde_json::json!({ "error": "authentication_required" })
+            serde_json::json!({ "error": "authenticationRequired" })
         );
     }
 
@@ -2890,7 +2969,7 @@ mod tests {
         assert_eq!(invalid_repository.status(), StatusCode::BAD_REQUEST);
         assert_eq!(
             response_json(invalid_repository).await,
-            serde_json::json!({ "error": "invalid_repository" })
+            serde_json::json!({ "error": "invalidRepository" })
         );
 
         let invalid_number = router
@@ -2904,7 +2983,7 @@ mod tests {
         assert_eq!(invalid_number.status(), StatusCode::BAD_REQUEST);
         assert_eq!(
             response_json(invalid_number).await,
-            serde_json::json!({ "error": "invalid_pull_request" })
+            serde_json::json!({ "error": "invalidPullRequest" })
         );
 
         let nonnumeric_number = router
@@ -2917,7 +2996,7 @@ mod tests {
         assert_eq!(nonnumeric_number.status(), StatusCode::BAD_REQUEST);
         assert_eq!(
             response_json(nonnumeric_number).await,
-            serde_json::json!({ "error": "invalid_pull_request" })
+            serde_json::json!({ "error": "invalidPullRequest" })
         );
     }
 
@@ -2939,7 +3018,7 @@ mod tests {
         assert_eq!(untracked.status(), StatusCode::NOT_FOUND);
         assert_eq!(
             response_json(untracked).await,
-            serde_json::json!({ "error": "repository_not_tracked" })
+            serde_json::json!({ "error": "repositoryNotTracked" })
         );
 
         insert_tracked_repository(&db).await;
@@ -2953,7 +3032,7 @@ mod tests {
         assert_eq!(missing.status(), StatusCode::NOT_FOUND);
         assert_eq!(
             response_json(missing).await,
-            serde_json::json!({ "error": "pull_request_not_found" })
+            serde_json::json!({ "error": "pullRequestNotFound" })
         );
     }
 
@@ -3067,7 +3146,7 @@ mod tests {
         assert_eq!(unavailable.status(), StatusCode::CONFLICT);
         assert_eq!(
             response_json(unavailable).await,
-            serde_json::json!({ "error": "diff_unavailable" })
+            serde_json::json!({ "error": "diffUnavailable" })
         );
 
         let empty_db = test_db().await;
@@ -3110,22 +3189,23 @@ mod tests {
         let body = response_json(response).await;
         assert_eq!(body["syncedAt"], "2026-01-04T00:00:00Z");
         assert_eq!(body["files"].as_array().map(Vec::len), Some(2));
-        assert_eq!(body["files"][0]["oldPath"], "src/math.rs");
-        assert_eq!(body["files"][0]["newPath"], "src/math.rs");
-        assert_eq!(body["files"][0]["operation"], "modified");
+        assert_eq!(body["files"][0]["operation"]["kind"], "modified");
+        assert_eq!(body["files"][0]["operation"]["path"], "src/math.rs");
+        assert_eq!(
+            body["files"][0]["operation"]["modeChange"]["kind"],
+            "unchanged"
+        );
         assert_eq!(body["files"][0]["additions"], 3);
         assert_eq!(body["files"][0]["deletions"], 2);
-        assert_eq!(body["files"][0]["binary"], false);
-        assert_eq!(body["files"][0]["oldMode"], Value::Null);
-        assert_eq!(body["files"][0]["newMode"], Value::Null);
-        assert_eq!(body["files"][0]["hunks"][0]["oldStart"], 1);
-        assert_eq!(body["files"][0]["hunks"][0]["newCount"], 4);
+        assert_eq!(body["files"][0]["content"]["kind"], "text");
+        assert_eq!(body["files"][0]["content"]["hunks"][0]["oldStart"], 1);
+        assert_eq!(body["files"][0]["content"]["hunks"][0]["newCount"], 4);
         assert_eq!(
-            body["files"][0]["hunks"][0]["context"],
+            body["files"][0]["content"]["hunks"][0]["context"],
             "pub fn add(left: u32, right: u32) -> u32 {"
         );
         assert_eq!(
-            body["files"][0]["hunks"][0]["lines"][1],
+            body["files"][0]["content"]["hunks"][0]["lines"][1],
             serde_json::json!({
                 "content": "    left + right",
                 "kind": "deletion",
@@ -3134,7 +3214,7 @@ mod tests {
                 "oldLine": 2
             })
         );
-        assert_eq!(body["files"][1]["newPath"], "README.md");
+        assert_eq!(body["files"][1]["operation"]["path"], "README.md");
     }
 
     #[tokio::test]
@@ -3218,7 +3298,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(
             response_json(response).await,
-            serde_json::json!({ "error": "diff_parse_failed" })
+            serde_json::json!({ "error": "diffParseFailed" })
         );
         let stored: String = sqlx::query_scalar(
             "SELECT diff FROM tracked_repository_pull_request_details WHERE user_id = 'user_1' AND provider = 'github' AND owner = 'kestrel' AND name = 'app' AND number = 42",
@@ -3248,7 +3328,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(
             response_json(response).await,
-            serde_json::json!({ "error": "diff_resource_limit_exceeded" })
+            serde_json::json!({ "error": "diffResourceLimitExceeded" })
         );
     }
 
@@ -3277,7 +3357,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(
             response_json(response).await,
-            serde_json::json!({ "error": "diff_resource_limit_exceeded" })
+            serde_json::json!({ "error": "diffResourceLimitExceeded" })
         );
     }
 
@@ -3311,7 +3391,7 @@ mod tests {
         assert_eq!(json["files"].as_array().map(Vec::len), Some(1));
         assert!(json["files"].as_array().is_some_and(|files| files
             .iter()
-            .all(|file| file["binary"] == true && file["hunks"] == serde_json::json!([]))));
+            .all(|file| file["content"] == serde_json::json!({ "kind": "binary" }))));
     }
 
     #[tokio::test]
@@ -3343,7 +3423,7 @@ mod tests {
             .await
             .expect("large response should stay within the expected bound");
         let json: Value = serde_json::from_slice(&body).expect("body should be json");
-        let lines = json["files"][0]["hunks"][0]["lines"]
+        let lines = json["files"][0]["content"]["hunks"][0]["lines"]
             .as_array()
             .expect("lines should be an array");
         assert_eq!(lines.len(), 50_000);
@@ -3656,7 +3736,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert_eq!(
             response_json(response).await,
-            serde_json::json!({ "error": "invalid_repository" }),
+            serde_json::json!({ "error": "invalidRepository" }),
         );
     }
 
@@ -3680,7 +3760,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert_eq!(
             response_json(response).await,
-            serde_json::json!({ "error": "invalid_repository" }),
+            serde_json::json!({ "error": "invalidRepository" }),
         );
     }
 
@@ -3765,7 +3845,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         assert_eq!(
             response_json(response).await,
-            serde_json::json!({ "error": "repository_not_tracked" }),
+            serde_json::json!({ "error": "repositoryNotTracked" }),
         );
     }
 
@@ -3790,7 +3870,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
         assert_eq!(
             response_json(response).await,
-            serde_json::json!({ "error": "authorization_required" }),
+            serde_json::json!({ "error": "authorizationRequired" }),
         );
         assert_eq!(
             sqlx::query_scalar::<_, String>(
@@ -3803,7 +3883,7 @@ mod tests {
             .fetch_one(&db)
             .await
             .expect("sync error should load"),
-            "authorization_required",
+            "authorizationRequired",
         );
     }
 
@@ -3942,7 +4022,7 @@ mod tests {
         let saved = upsert_pull_requests(&db, &repository, &pull_requests, "2026-01-03T00:00:00Z")
             .await
             .expect("pull requests should upsert");
-        update_sync_error(&db, &repository, "sync_failed")
+        update_sync_error(&db, &repository, "syncFailed")
             .await
             .expect("sync error should update");
         update_sync_state(&db, &repository, Some(2), "2026-01-03T00:00:00Z")

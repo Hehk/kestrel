@@ -721,10 +721,10 @@ const loadOlderPullRequestTimeline = async (
 };
 
 const addError = (error: { error?: unknown } | undefined): AddError => {
-  if (error?.error === "duplicate_repository") {
+  if (error?.error === "duplicateRepository") {
     return "duplicate";
   }
-  if (error?.error === "invalid_repository") {
+  if (error?.error === "invalidRepository") {
     return "invalid";
   }
 
@@ -732,13 +732,13 @@ const addError = (error: { error?: unknown } | undefined): AddError => {
 };
 
 const pullRequestsError = (error: { error?: unknown } | undefined): PullRequestsError => {
-  if (error?.error === "authorization_required") {
+  if (error?.error === "authorizationRequired") {
     return "authorizationRequired";
   }
-  if (error?.error === "repository_not_tracked") {
+  if (error?.error === "repositoryNotTracked") {
     return "repositoryNotTracked";
   }
-  if (error?.error === "pull_request_not_found") {
+  if (error?.error === "pullRequestNotFound") {
     return "pullRequestNotFound";
   }
 
@@ -747,23 +747,23 @@ const pullRequestsError = (error: { error?: unknown } | undefined): PullRequests
 
 const pullRequestDiffError = (error: { error?: unknown } | undefined): PullRequestDiffError => {
   switch (error?.error) {
-    case "authentication_required":
+    case "authenticationRequired":
       return "authenticationRequired";
-    case "authorization_required":
+    case "authorizationRequired":
       return "authorizationRequired";
-    case "diff_parse_failed":
+    case "diffParseFailed":
       return "diffParseFailed";
-    case "diff_resource_limit_exceeded":
+    case "diffResourceLimitExceeded":
       return "diffResourceLimitExceeded";
-    case "diff_unavailable":
+    case "diffUnavailable":
       return "diffUnavailable";
-    case "invalid_pull_request":
+    case "invalidPullRequest":
       return "invalidPullRequest";
-    case "invalid_repository":
+    case "invalidRepository":
       return "invalidRepository";
-    case "pull_request_not_found":
+    case "pullRequestNotFound":
       return "pullRequestNotFound";
-    case "repository_not_tracked":
+    case "repositoryNotTracked":
       return "repositoryNotTracked";
     default:
       return "loadFailed";
