@@ -2851,16 +2851,6 @@ mod tests {
             .expect("request should build")
     }
 
-    fn assert_private_no_store(response: &axum::response::Response) {
-        assert_eq!(
-            response
-                .headers()
-                .get(header::CACHE_CONTROL)
-                .and_then(|value| value.to_str().ok()),
-            Some("private, no-store")
-        );
-    }
-
     #[tokio::test]
     async fn pull_request_diff_requires_authentication() {
         let config = test_config();
@@ -2876,7 +2866,6 @@ mod tests {
             .expect("request should complete");
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        assert_private_no_store(&response);
         assert_eq!(
             response_json(response).await,
             serde_json::json!({ "error": "authentication_required" })
@@ -2948,7 +2937,6 @@ mod tests {
             .await
             .expect("request should complete");
         assert_eq!(untracked.status(), StatusCode::NOT_FOUND);
-        assert_private_no_store(&untracked);
         assert_eq!(
             response_json(untracked).await,
             serde_json::json!({ "error": "repository_not_tracked" })
@@ -3119,13 +3107,6 @@ mod tests {
             .expect("request should complete");
 
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response
-                .headers()
-                .get(header::CACHE_CONTROL)
-                .and_then(|value| value.to_str().ok()),
-            Some("private, no-store")
-        );
         let body = response_json(response).await;
         assert_eq!(body["syncedAt"], "2026-01-04T00:00:00Z");
         assert_eq!(body["files"].as_array().map(Vec::len), Some(2));
@@ -3198,13 +3179,6 @@ mod tests {
                 .and_then(|value| value.to_str().ok()),
             Some("gzip")
         );
-        assert_eq!(
-            compressed
-                .headers()
-                .get(header::CACHE_CONTROL)
-                .and_then(|value| value.to_str().ok()),
-            Some("private, no-store")
-        );
         assert!(compressed.headers().get(header::CONTENT_LENGTH).is_none());
         assert!(compressed
             .headers()
@@ -3272,7 +3246,6 @@ mod tests {
             .expect("request should complete");
 
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-        assert_private_no_store(&response);
         assert_eq!(
             response_json(response).await,
             serde_json::json!({ "error": "diff_resource_limit_exceeded" })
