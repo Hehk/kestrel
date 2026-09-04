@@ -11,8 +11,6 @@
     "lint": "oxlint",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
-    "profile:diff": "node scripts/profile-diff.mjs",
-    "profile:diff:mobile": "node scripts/profile-diff.mjs --viewport=390x844",
     "profile:diff:backend": "cargo test --release --locked --manifest-path backend/Cargo.toml profile_pull_request_diff_ -- --ignored --test-threads=1 --nocapture",
     "check": "npm run typecheck && npm run lint && npm run format:check && npm run test:run",
     "test": "vitest",
@@ -22,7 +20,7 @@
   },
   "dependencies": {
     "@kobalte/core": "^0.13.12",
-    "@tanstack/solid-virtual": "^3.13.35",
+    "@tanstack/solid-virtual": "^3.13.37",
     "openapi-fetch": "^0.17.0",
     "solid-js": "^1.9.14"
   },
