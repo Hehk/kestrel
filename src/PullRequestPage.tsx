@@ -275,9 +275,14 @@ const PullRequestDiff = (props: { data: Accessor<PullRequestPageData> }) => {
       </div>
       <Show when={diff()}>
         {(currentDiff) => (
-          <div class="PullRequestPage-diffSummary">
-            <PullRequestDiffTotals diff={currentDiff()} />
-          </div>
+          <Show
+            keyed
+            when={Repositories.pullRequestDiffKey(props.data().repository, props.data().number)}
+          >
+            <div class="PullRequestPage-diffSummary">
+              <PullRequestDiffTotals diff={currentDiff()} />
+            </div>
+          </Show>
         )}
       </Show>
     </section>
@@ -292,16 +297,17 @@ const PullRequestDiffTotals = (props: { diff: Repositories.PullRequestDiff }) =>
       0,
     );
 
-  return props.diff.files.length === 0 ? (
-    <p class="repo-pr-status">This pull request has no changed files.</p>
-  ) : (
-    <>
+  return (
+    <Show
+      when={props.diff.files.length > 0}
+      fallback={<p class="repo-pr-status">This pull request has no changed files.</p>}
+    >
       <p class="repo-pr-status">
         {props.diff.files.length} changed {props.diff.files.length === 1 ? "file" : "files"},{" "}
         {lineCount()} source {lineCount() === 1 ? "line" : "lines"}.
       </p>
       <DiffView diff={props.diff} />
-    </>
+    </Show>
   );
 };
 
@@ -446,6 +452,7 @@ const getDetails = (details: Repositories.PullRequestDetailState | undefined) =>
 const PullRequestDetailPanel = (props: { data: Accessor<PullRequestPageData> }) => {
   const detailState = () => props.data().pullRequestDetail;
   const detail = () => getDetails(detailState());
+  console.log(detailState());
   return (
     <Switch fallback={<p class="repo-pr-status">Pull request details not loaded.</p>}>
       <Match when={detailState()?.status === "loading"}>

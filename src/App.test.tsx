@@ -2,7 +2,7 @@ import { cleanup, render, screen, waitFor, within } from "@solidjs/testing-libra
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
-import { resetForTest } from "./store";
+import { resetForTest, send } from "./store";
 import type { PullRequestDetail, PullRequestDiff } from "./repositoriesSlice";
 import * as Session from "./session";
 
@@ -1141,6 +1141,101 @@ describe("App", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Showing the last successfully loaded diff.")).toBeInTheDocument();
     expect(screen.getByText("1 changed file, 2 source lines.")).toBeInTheDocument();
+  });
+
+  it("preserves the Diff program on refresh and creates a new one for another pull request", async () => {
+    const user = userEvent.setup();
+    let diffRequests = 0;
+    window.history.replaceState({}, "", "/pull/kestrel%2Fapp/42/diff");
+    mockAuth(
+      signedInResponse,
+      "system",
+      undefined,
+      [repository("kestrel/app")],
+      undefined,
+      {
+        "kestrel/app": [
+          pullRequest(42, "First pull request"),
+          pullRequest(43, "Second pull request"),
+        ],
+      },
+      undefined,
+      {},
+      () =>
+        jsonResponse({
+          pullRequest: pullRequest(42, "First pull request"),
+          pullRequestDetail: pullRequestDetail(),
+        }),
+      undefined,
+      {},
+      () => {
+        diffRequests += 1;
+        return jsonResponse(pullRequestDiff());
+      },
+    );
+    renderApp();
+    const input = await screen.findByRole("searchbox", { name: "Search diff" });
+    await user.type(input, "line");
+    await screen.findByText("1 of 2");
+    await user.click(screen.getByRole("button", { name: "Sync pull request from GitHub" }));
+    await waitFor(() => expect(diffRequests).toBe(2));
+    await waitFor(() =>
+      expect(screen.queryByText("Refreshing pull request diff...")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("searchbox", { name: "Search diff" })).toBe(input);
+    expect(input).toHaveValue("line");
+    await screen.findByText("1 of 2");
+
+    send({
+      kind: "RouteRequested",
+      route: { name: "PullRequest", repo: "kestrel/app", id: "43", view: "diff" },
+      replace: false,
+    });
+    await screen.findByRole("heading", { name: "Second pull request" });
+    const replacementInput = await screen.findByRole("searchbox", { name: "Search diff" });
+    expect(replacementInput).not.toBe(input);
+    expect(replacementInput).toHaveValue("");
+    expect(screen.queryByText("1 of 2")).not.toBeInTheDocument();
+  });
+
+  it("updates the Diff empty-state boundary after refresh", async () => {
+    const user = userEvent.setup();
+    let diffRequests = 0;
+    window.history.replaceState({}, "", "/pull/kestrel%2Fapp/42/diff");
+    mockAuth(
+      signedInResponse,
+      "system",
+      undefined,
+      [repository("kestrel/app")],
+      undefined,
+      { "kestrel/app": [pullRequest(42, "Add syncing")] },
+      undefined,
+      {},
+      () =>
+        jsonResponse({
+          pullRequest: pullRequest(42, "Add syncing"),
+          pullRequestDetail: pullRequestDetail(),
+        }),
+      undefined,
+      {},
+      () => {
+        diffRequests += 1;
+        return jsonResponse(
+          diffRequests === 2 ? { files: [], syncedAt: "now" } : pullRequestDiff(),
+        );
+      },
+    );
+    renderApp();
+    await screen.findByRole("searchbox", { name: "Search diff" });
+    await user.click(screen.getByRole("button", { name: "Sync pull request from GitHub" }));
+    await screen.findByText("This pull request has no changed files.");
+    expect(screen.queryByRole("searchbox", { name: "Search diff" })).not.toBeInTheDocument();
+    const find = new KeyboardEvent("keydown", { ctrlKey: true, key: "f", cancelable: true });
+    window.dispatchEvent(find);
+    expect(find.defaultPrevented).toBe(false);
+    await user.click(screen.getByRole("button", { name: "Sync pull request from GitHub" }));
+    await screen.findByRole("searchbox", { name: "Search diff" });
+    expect(screen.queryByText("This pull request has no changed files.")).not.toBeInTheDocument();
   });
 
   it("navigates between pull request views with browser back and forward", async () => {

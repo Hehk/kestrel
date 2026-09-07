@@ -1,7 +1,5 @@
-import { createWindowVirtualizer } from "@tanstack/solid-virtual";
 import {
   createEffect,
-  createDeferred,
   createMemo,
   createSignal,
   For,
@@ -11,405 +9,104 @@ import {
   onMount,
   Show,
   Switch,
+  untrack,
 } from "solid-js";
-import { buildFileCopyText, buildHunkCopyText } from "./copy";
-import type { DiffRow, PullRequestDiff, PullRequestDiffFile } from "./layout";
-import { DIFF_ROW_HEIGHT } from "./layout";
-import { buildDiffLayout, rowAt, rowHeight, rowKey, sourceVisualColumns } from "./layout";
-import { firstMatchAtOrAfterRow, searchDiff } from "./search";
+import { init, matchesForRow, searchQuery, searchStatus, update } from "./diffViewModel";
+import type { MountedSearchMatch, Msg } from "./diffViewModel";
+import { createDiffViewRuntime } from "./diffViewRuntime";
+import type { DiffViewElements } from "./diffViewRuntime";
+import { fileLabel, filePath, hunkLabel } from "./labels";
+import type { DiffRow, PullRequestDiff } from "./layout";
+import { diffLineNumbers, rowAt, rowHeight } from "./layout";
 
-type MountedSearchMatch = { active: boolean; length: number; offset: number };
-type PendingResultNavigation = { move: number; query: string };
-type CopyOutcome = { kind: "failure" | "success"; message: string };
-const MAX_MOUNTED_MATCHES_PER_ROW = 200;
+export const createDiffViewProgram = (
+  diff: PullRequestDiff,
+  createRuntime = createDiffViewRuntime,
+) => {
+  const [model, setModel] = createSignal(init(diff));
+  const messages: Msg[] = [];
+  let processing = false;
+  let disposed = false;
 
-export const DiffView = (props: { diff: PullRequestDiff }) => {
-  let table: HTMLDivElement | undefined;
-  let stickyStack: HTMLDivElement | undefined;
-  let horizontalRail: HTMLDivElement | undefined;
-  let searchInput: HTMLInputElement | undefined;
-  let searchReturnFocus: HTMLElement | null = null;
-  let copyGeneration = 0;
-  const layout = createMemo(() => buildDiffLayout(props.diff));
-  const [scrollMargin, setScrollMargin] = createSignal(0);
-  const [stickyHeight, setStickyHeight] = createSignal(0);
-  const [activeFileIndex, setActiveFileIndex] = createSignal(0);
-  const [horizontalOffset, setHorizontalOffset] = createSignal(0);
-  const [railLeft, setRailLeft] = createSignal(0);
-  const [railWidth, setRailWidth] = createSignal(0);
-  const [searchQuery, setSearchQuery] = createSignal("");
-  const deferredSearchQuery = createDeferred(searchQuery);
-  const [activeResultIndex, setActiveResultIndex] = createSignal(-1);
-  const [pendingResultNavigation, setPendingResultNavigation] =
-    createSignal<PendingResultNavigation | null>(null);
-  const [copyOutcome, setCopyOutcome] = createSignal<CopyOutcome | null>(null);
-  const [copyPending, setCopyPending] = createSignal(false);
-  const virtualizer = createWindowVirtualizer<HTMLDivElement>({
-    get count() {
-      return layout().rowCount;
-    },
-    estimateSize: (index) => rowHeight(layout(), index),
-    getItemKey: (index) => rowKey(layout(), index),
-    get scrollMargin() {
-      return scrollMargin();
-    },
-    get scrollPaddingStart() {
-      return stickyHeight();
-    },
-    overscan: 20,
-  });
-  const virtualRows = () => virtualizer.getVirtualItems();
-  const translateY = () => (virtualRows()[0]?.start ?? 0) - scrollMargin();
-  const fileOptions = createMemo(() =>
-    props.diff.files.map((file, fileIndex) => ({ fileIndex, label: fileLabel(file) })),
-  );
-  const activeFileLabel = () => fileOptions()[activeFileIndex()]?.label ?? "Unknown file";
-  const searchResults = createMemo(() => searchDiff(layout(), deferredSearchQuery()));
-  const searchPending = () => deferredSearchQuery() !== searchQuery();
-
-  const writeClipboard = async (text: string, subject: string) => {
-    if (copyPending()) return;
-    const generation = ++copyGeneration;
-    const sourceDiff = layout().diff;
-    setCopyOutcome(null);
-    setCopyPending(true);
+  const send = (msg: Msg) => {
+    if (disposed) return;
+    messages.push(msg);
+    if (processing) return;
+    processing = true;
     try {
-      if (navigator.clipboard === undefined) throw new Error("Clipboard is unavailable");
-      await navigator.clipboard.writeText(text);
-      if (generation === copyGeneration && layout().diff === sourceDiff) {
-        setCopyOutcome({ kind: "success", message: `Copied ${subject}.` });
-      }
-    } catch {
-      if (generation === copyGeneration && layout().diff === sourceDiff) {
-        setCopyOutcome({ kind: "failure", message: `Could not copy ${subject}.` });
+      for (let index = 0; index < messages.length && !disposed; index += 1) {
+        const next = messages[index];
+        if (next === undefined) continue;
+        const [nextModel, effects] = update(next, untrack(model));
+        setModel(nextModel);
+        for (const effect of effects) {
+          if (disposed) break;
+          runtime.run(effect);
+        }
       }
     } finally {
-      if (generation === copyGeneration) setCopyPending(false);
+      messages.length = 0;
+      processing = false;
     }
   };
-
-  const copyFile = (file: PullRequestDiffFile) => {
-    if (copyPending()) return;
-    const text = buildFileCopyText(file);
-    if (text !== null) void writeClipboard(text, `file ${fileLabel(file)}`);
+  const runtime = createRuntime(send);
+  return {
+    model,
+    send,
+    attach: (elements: DiffViewElements) => {
+      if (!disposed) runtime.attach(elements, untrack(model));
+    },
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      messages.length = 0;
+      runtime.dispose();
+    },
   };
+};
 
-  const copyHunk = (row: Extract<DiffRow, { kind: "hunk" }>) => {
-    if (copyPending()) return;
-    const text = buildHunkCopyText(row.file, row.hunk);
-    if (text !== null) void writeClipboard(text, `hunk from ${fileLabel(row.file)}`);
-  };
-
-  const updateActiveFile = () => {
-    if (layout().rowCount === 0) return;
-    const firstVisibleOffset = Math.max(scrollMargin(), window.scrollY + stickyHeight());
-    const visibleRow = virtualizer.getVirtualItemForOffset(firstVisibleOffset);
-    if (visibleRow !== undefined) {
-      setActiveFileIndex(layout().fileIndexes[visibleRow.index] as number);
-    }
-  };
-
-  const clampHorizontalOffset = () => {
-    if (horizontalRail === undefined) return;
-    const maximum = Math.max(0, horizontalRail.scrollWidth - horizontalRail.clientWidth);
-    const next = Math.min(Math.max(horizontalOffset(), 0), maximum);
-    horizontalRail.scrollLeft = next;
-    setHorizontalOffset(next);
-  };
-
-  const setHorizontalRailOffset = (nextOffset: number, event?: Event) => {
-    if (horizontalRail === undefined) return false;
-    const maximum = Math.max(0, horizontalRail.scrollWidth - horizontalRail.clientWidth);
-    const next = Math.min(Math.max(nextOffset, 0), maximum);
-    if (next === horizontalRail.scrollLeft) return false;
-    horizontalRail.scrollLeft = next;
-    setHorizontalOffset(next);
-    event?.preventDefault();
-    return true;
-  };
-
-  const updateGeometry = () => {
-    if (table !== undefined) {
-      const rect = table.getBoundingClientRect();
-      const nextScrollMargin = rect.top + window.scrollY;
-      setScrollMargin((current) => (current === nextScrollMargin ? current : nextScrollMargin));
-      setRailLeft(rect.left);
-      setRailWidth(rect.width);
-    }
-    if (stickyStack !== undefined) {
-      setStickyHeight(stickyStack.getBoundingClientRect().height);
-    }
-    clampHorizontalOffset();
-    updateActiveFile();
-  };
-
-  const revealResult = (resultIndex: number) => {
-    const results = searchResults();
-    if (resultIndex < 0 || resultIndex >= results.count) return;
-    const rowIndex = results.rowIndexes[resultIndex] as number;
-    virtualizer.scrollToIndex(rowIndex, { align: "center" });
-    const row = rowAt(layout(), rowIndex);
-    if (
-      horizontalRail === undefined ||
-      (row.kind !== "context" && row.kind !== "addition" && row.kind !== "deletion")
-    ) {
-      return;
-    }
-    const offset = results.matchOffsets[resultIndex] as number;
-    const length = results.matchLengths[resultIndex] as number;
-    const totalColumns = Math.max(layout().maxSourceColumns, 1);
-    const contentWidth = Math.max(horizontalRail.scrollWidth - 16, 0);
-    const start =
-      (sourceVisualColumns(row.line.content.slice(0, offset)) / totalColumns) * contentWidth;
-    const end =
-      (sourceVisualColumns(row.line.content.slice(0, offset + length)) / totalColumns) *
-      contentWidth;
-    const current = horizontalRail.scrollLeft;
-    if (start < current) setHorizontalRailOffset(start);
-    else if (end > current + horizontalRail.clientWidth) {
-      setHorizontalRailOffset(end - horizontalRail.clientWidth);
-    }
-    queueMicrotask(() => revealMountedActiveMatch());
-  };
-
-  const revealMountedActiveMatch = () => {
-    if (table === undefined || horizontalRail === undefined) return;
-    const activeMatch = table.querySelector<HTMLElement>(".pr-diff-searchMatch--active");
-    const source = activeMatch?.closest<HTMLElement>(".pr-diff-source");
-    if (
-      activeMatch === null ||
-      activeMatch === undefined ||
-      source === null ||
-      source === undefined
-    ) {
-      return;
-    }
-    const matchRect = activeMatch.getBoundingClientRect();
-    const sourceRect = source.getBoundingClientRect();
-    if (matchRect.left < sourceRect.left) {
-      setHorizontalRailOffset(horizontalRail.scrollLeft - (sourceRect.left - matchRect.left));
-    } else if (matchRect.right > sourceRect.right) {
-      setHorizontalRailOffset(horizontalRail.scrollLeft + (matchRect.right - sourceRect.right));
-    }
-  };
-
-  const moveResult = (direction: 1 | -1) => {
-    if (searchPending()) {
-      const query = searchQuery();
-      setPendingResultNavigation((current) => ({
-        move: current?.query === query ? current.move + direction : direction,
-        query,
-      }));
-      return;
-    }
-    const count = searchResults().count;
-    if (count === 0) return;
-    const next = (activeResultIndex() + direction + count) % count;
-    setActiveResultIndex(next);
-    revealResult(next);
-  };
-
-  const matchesForRow = (rowIndex: number): MountedSearchMatch[] => {
-    if (searchPending()) return [];
-    const results = searchResults();
-    const matches: MountedSearchMatch[] = [];
-    const firstResultIndex = firstMatchAtOrAfterRow(results, rowIndex);
-    const endResultIndex = firstMatchAtOrAfterRow(results, rowIndex + 1);
-    const rowResultCount = endResultIndex - firstResultIndex;
-    let renderedStartIndex = firstResultIndex;
-    const activeIndex = activeResultIndex();
-    if (
-      rowResultCount > MAX_MOUNTED_MATCHES_PER_ROW &&
-      activeIndex >= firstResultIndex &&
-      activeIndex < endResultIndex
-    ) {
-      renderedStartIndex = Math.min(
-        Math.max(activeIndex - Math.floor(MAX_MOUNTED_MATCHES_PER_ROW / 2), firstResultIndex),
-        endResultIndex - MAX_MOUNTED_MATCHES_PER_ROW,
-      );
-    }
-    const renderedEndIndex = Math.min(
-      renderedStartIndex + MAX_MOUNTED_MATCHES_PER_ROW,
-      endResultIndex,
-    );
-    for (let resultIndex = renderedStartIndex; resultIndex < renderedEndIndex; resultIndex += 1) {
-      matches.push({
-        active: resultIndex === activeResultIndex(),
-        length: results.matchLengths[resultIndex] as number,
-        offset: results.matchOffsets[resultIndex] as number,
-      });
-    }
-    return matches;
-  };
-
+export const DiffView = (props: { diff: PullRequestDiff }) => {
+  const program = createDiffViewProgram(props.diff);
+  const { model, send } = program;
+  let horizontalRail!: HTMLDivElement;
+  let searchInput!: HTMLInputElement;
+  let stickyStack!: HTMLDivElement;
+  let table!: HTMLDivElement;
+  onMount(() => program.attach({ horizontalRail, searchInput, stickyStack, table }));
   createEffect(
     on(
-      layout,
-      () => {
-        virtualizer.measure();
-        queueMicrotask(() => {
-          clampHorizontalOffset();
-          updateActiveFile();
-        });
-      },
+      () => props.diff,
+      (diff) => send({ kind: "DiffChanged", diff }),
       { defer: true },
     ),
   );
+  onCleanup(program.dispose);
 
-  createEffect(on(layout, () => setCopyOutcome(null), { defer: true }));
-
-  createEffect(
-    on([searchResults, searchQuery, deferredSearchQuery], ([results, query, deferredQuery]) => {
-      if (deferredQuery !== query) return;
-      const pendingNavigation = pendingResultNavigation();
-      const requestedMove = pendingNavigation?.query === query ? pendingNavigation.move : 0;
-      const next =
-        results.count === 0
-          ? -1
-          : ((requestedMove % results.count) + results.count) % results.count;
-      setPendingResultNavigation(null);
-      setActiveResultIndex(next);
-      if (next !== -1) queueMicrotask(() => revealResult(next));
-    }),
-  );
-
-  createEffect(() => {
-    virtualRows();
-    activeResultIndex();
-    queueMicrotask(() => revealMountedActiveMatch());
-  });
-
-  onMount(() => {
-    updateGeometry();
-    const resizeObserver =
-      typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(updateGeometry);
-    const observedElements = new Set([
-      table?.parentElement,
-      table?.closest(".PullRequestPage-diffContent"),
-      table?.closest(".PullRequestPage"),
-      stickyStack,
-      horizontalRail,
-    ]);
-    for (const observedElement of observedElements) {
-      if (observedElement !== null && observedElement !== undefined) {
-        resizeObserver?.observe(observedElement);
-      }
-    }
-    const handleScroll = () => updateActiveFile();
-    let activePointerId: number | null = null;
-    let lastPointerX = 0;
-    const handleWheel = (event: WheelEvent) => {
-      if (
-        horizontalRail === undefined ||
-        !(event.target instanceof Element) ||
-        event.target.closest(".pr-diff-source") === null
-      ) {
-        return;
-      }
-      const rawDelta =
-        Math.abs(event.deltaX) >= Math.abs(event.deltaY)
-          ? event.deltaX
-          : event.shiftKey
-            ? event.deltaY
-            : 0;
-      if (rawDelta === 0) return;
-      const unit =
-        event.deltaMode === WheelEvent.DOM_DELTA_LINE
-          ? DIFF_ROW_HEIGHT.source
-          : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
-            ? horizontalRail.clientWidth
-            : 1;
-      const maximum = Math.max(0, horizontalRail.scrollWidth - horizontalRail.clientWidth);
-      const next = Math.min(Math.max(horizontalRail.scrollLeft + rawDelta * unit, 0), maximum);
-      setHorizontalRailOffset(next, event);
-    };
-    const handlePointerDown = (event: PointerEvent) => {
-      if (
-        !(event.target instanceof Element) ||
-        event.target.closest(".pr-diff-source") === null ||
-        (event.pointerType !== "touch" && event.pointerType !== "pen")
-      ) {
-        return;
-      }
-      activePointerId = event.pointerId;
-      lastPointerX = event.clientX;
-      table?.setPointerCapture?.(event.pointerId);
-    };
-    const handlePointerMove = (event: PointerEvent) => {
-      if (event.pointerId !== activePointerId || horizontalRail === undefined) return;
-      const delta = lastPointerX - event.clientX;
-      lastPointerX = event.clientX;
-      setHorizontalRailOffset(horizontalRail.scrollLeft + delta, event);
-    };
-    const handlePointerEnd = (event: PointerEvent) => {
-      if (event.pointerId !== activePointerId) return;
-      table?.releasePointerCapture?.(event.pointerId);
-      activePointerId = null;
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.isComposing) return;
-      const isFindShortcut =
-        event.metaKey !== event.ctrlKey &&
-        !event.altKey &&
-        !event.shiftKey &&
-        event.key.toLowerCase() === "f";
-      if (isFindShortcut) {
-        event.preventDefault();
-        if (
-          document.activeElement instanceof HTMLElement &&
-          document.activeElement !== searchInput
-        ) {
-          searchReturnFocus = document.activeElement;
-        }
-        searchInput?.focus();
-        searchInput?.select();
-        return;
-      }
-      if (event.target !== searchInput) return;
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setSearchQuery("");
-        const returnFocus = searchReturnFocus;
-        searchReturnFocus = null;
-        if (returnFocus?.isConnected) returnFocus.focus();
-        else searchInput?.blur();
-      } else if (event.key === "Enter") {
-        event.preventDefault();
-        moveResult(event.shiftKey ? -1 : 1);
-      }
-    };
-    table?.addEventListener("wheel", handleWheel, { passive: false });
-    table?.addEventListener("pointerdown", handlePointerDown);
-    table?.addEventListener("pointermove", handlePointerMove, { passive: false });
-    table?.addEventListener("pointerup", handlePointerEnd);
-    table?.addEventListener("pointercancel", handlePointerEnd);
-    window.addEventListener("scroll", handleScroll, { passive: true });
-    window.addEventListener("resize", updateGeometry);
-    window.addEventListener("keydown", handleKeyDown);
-    onCleanup(() => {
-      copyGeneration += 1;
-      resizeObserver?.disconnect();
-      table?.removeEventListener("wheel", handleWheel);
-      table?.removeEventListener("pointerdown", handlePointerDown);
-      table?.removeEventListener("pointermove", handlePointerMove);
-      table?.removeEventListener("pointerup", handlePointerEnd);
-      table?.removeEventListener("pointercancel", handlePointerEnd);
-      window.removeEventListener("scroll", handleScroll);
-      window.removeEventListener("resize", updateGeometry);
-      window.removeEventListener("keydown", handleKeyDown);
-    });
-  });
-
-  const jumpToFile = (fileIndex: number) => {
-    const rowIndex = layout().fileStartRows[fileIndex];
-    if (rowIndex !== undefined) {
-      virtualizer.scrollToIndex(rowIndex, { align: "start" });
-    }
+  const layout = createMemo(() => model().layout);
+  const search = createMemo(() => model().search);
+  const copy = createMemo(() => model().copy);
+  const outcome = () => {
+    const value = copy();
+    return value.kind === "idle" ? value.outcome : null;
+  };
+  const activeFile = createMemo(() => layout().diff.files[model().activeFileIndex]);
+  const activeLabel = () => {
+    const file = activeFile();
+    return file === undefined ? "Unknown file" : fileLabel(file);
+  };
+  const navigationDisabled = () => {
+    const value = search();
+    return value.kind !== "ready" || value.results.count === 0;
   };
 
   return (
     <div class="pr-diff-root">
-      <div class="pr-diff-stickyStack" ref={(element) => (stickyStack = element)}>
+      <div
+        class="pr-diff-stickyStack"
+        ref={(element) => {
+          stickyStack = element;
+        }}
+      >
         <div class="pr-diff-toolbar">
           <label class="pr-diff-filePickerLabel" for="pr-diff-file-picker">
             File
@@ -418,28 +115,34 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
             aria-label="Jump to file"
             class="pr-diff-filePicker"
             id="pr-diff-file-picker"
-            onChange={(event) => jumpToFile(Number(event.currentTarget.value))}
-            value={activeFileIndex()}
+            onChange={(event) =>
+              send({ fileIndex: Number(event.currentTarget.value), kind: "JumpToFileRequested" })
+            }
+            value={model().activeFileIndex}
           >
-            <For each={fileOptions()}>
-              {(option) => <option value={option.fileIndex}>{option.label}</option>}
+            <For each={layout().diff.files}>
+              {(file, index) => <option value={index()}>{fileLabel(file)}</option>}
             </For>
           </select>
           <input
             aria-label="Search diff"
             class="pr-diff-searchInput"
-            onInput={(event) => setSearchQuery(event.currentTarget.value)}
+            onInput={(event) =>
+              send({ kind: "SearchQueryChanged", query: event.currentTarget.value })
+            }
             placeholder="Search"
-            ref={(element) => (searchInput = element)}
+            ref={(element) => {
+              searchInput = element;
+            }}
             type="search"
-            value={searchQuery()}
+            value={searchQuery(search())}
           />
           <div aria-label="Search result navigation" class="pr-diff-searchNav" role="group">
             <button
               aria-label="Previous search result"
               class="pr-diff-compactButton"
-              disabled={searchPending() || searchResults().count === 0}
-              onClick={() => moveResult(-1)}
+              disabled={navigationDisabled()}
+              onClick={() => send({ direction: -1, kind: "SearchMoveRequested" })}
               type="button"
             >
               Prev
@@ -447,60 +150,51 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
             <button
               aria-label="Next search result"
               class="pr-diff-compactButton"
-              disabled={searchPending() || searchResults().count === 0}
-              onClick={() => moveResult(1)}
+              disabled={navigationDisabled()}
+              onClick={() => send({ direction: 1, kind: "SearchMoveRequested" })}
               type="button"
             >
               Next
             </button>
           </div>
           <span aria-atomic="true" aria-live="polite" class="pr-diff-searchCount">
-            {searchQuery().length === 0
-              ? ""
-              : searchPending()
-                ? "Searching..."
-                : searchResults().count === 0
-                  ? "No results"
-                  : `${activeResultIndex() + 1} of ${searchResults().count}${searchResults().truncated ? "+ (results limited)" : ""}`}
+            {searchStatus(search())}
           </span>
         </div>
         <div
-          aria-label={`Active file: ${activeFileLabel()}`}
+          aria-label={`Active file: ${activeLabel()}`}
           class="pr-diff-activeFile"
-          title={activeFileLabel()}
+          title={activeLabel()}
         >
-          <span class="pr-diff-activeFilePath">{activeFileLabel()}</span>
+          <span class="pr-diff-activeFilePath">{activeLabel()}</span>
           <span
             aria-atomic="true"
             aria-live="polite"
             class="pr-diff-copyStatus"
-            classList={{ "pr-diff-copyStatus--failure": copyOutcome()?.kind === "failure" }}
+            classList={{ "pr-diff-copyStatus--failure": outcome()?.kind === "failure" }}
             role="status"
           >
-            {copyOutcome()?.message ?? ""}
+            {outcome()?.message ?? ""}
           </span>
           <button
             aria-label={
-              props.diff.files[activeFileIndex()]?.binary
-                ? `Copy unavailable for binary file ${activeFileLabel()}`
-                : `Copy file ${activeFileLabel()}`
+              activeFile()?.content.kind === "binary"
+                ? `Copy unavailable for binary file ${activeLabel()}`
+                : `Copy file ${activeLabel()}`
             }
-            aria-busy={copyPending()}
-            aria-disabled={copyPending() ? "true" : undefined}
+            aria-busy={copy().kind === "writing"}
+            aria-disabled={copy().kind === "writing" ? "true" : undefined}
             class="pr-diff-compactButton"
-            disabled={props.diff.files[activeFileIndex()]?.binary ?? true}
-            onClick={() => {
-              const file = props.diff.files[activeFileIndex()];
-              if (file !== undefined) copyFile(file);
-            }}
+            disabled={activeFile()?.content.kind !== "text"}
+            onClick={() => send({ fileIndex: model().activeFileIndex, kind: "CopyFileRequested" })}
             title={
-              props.diff.files[activeFileIndex()]?.binary
+              activeFile()?.content.kind === "binary"
                 ? "Binary patch content is unavailable"
-                : `Copy file ${activeFileLabel()}`
+                : `Copy file ${activeLabel()}`
             }
             type="button"
           >
-            {props.diff.files[activeFileIndex()]?.binary ? "Copy unavailable" : "Copy file"}
+            {activeFile()?.content.kind === "binary" ? "Copy unavailable" : "Copy file"}
           </button>
         </div>
       </div>
@@ -509,39 +203,50 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
         aria-label="Pull request diff contents"
         aria-rowcount={layout().rowCount}
         class="pr-diff-table"
-        ref={(element) => (table = element)}
+        ref={(element) => {
+          table = element;
+        }}
         role="table"
-        style={{ "--pr-diff-horizontal-offset": `${horizontalOffset()}px` }}
+        style={{ "--pr-diff-horizontal-offset": `${model().geometry.horizontalOffset}px` }}
       >
-        <div class="pr-diff-spacer" style={{ height: `${virtualizer.getTotalSize()}px` }}>
-          <div class="pr-diff-virtualRows" style={{ transform: `translateY(${translateY()}px)` }}>
-            <For each={virtualRows()}>
-              {(virtualRow) => (
-                <DiffRowView
-                  copyPending={copyPending()}
-                  index={virtualRow.index}
-                  matches={matchesForRow(virtualRow.index)}
-                  onCopyFile={copyFile}
-                  onCopyHunk={copyHunk}
-                  row={rowAt(layout(), virtualRow.index)}
-                  size={rowHeight(layout(), virtualRow.index)}
-                />
-              )}
+        <div class="pr-diff-spacer" style={{ height: `${model().virtualWindow.totalSize}px` }}>
+          <div
+            class="pr-diff-virtualRows"
+            style={{
+              transform: `translateY(${(model().virtualWindow.rows[0]?.start ?? 0) - model().geometry.scrollMargin}px)`,
+            }}
+          >
+            <For each={model().virtualWindow.rows.map((row) => row.index)}>
+              {(index) => {
+                const row = createMemo(() => rowAt(layout(), index));
+                const matches = createMemo(() => matchesForRow(search(), index));
+                return (
+                  <DiffRowView
+                    copyPending={copy().kind === "writing"}
+                    index={index}
+                    matches={matches()}
+                    send={send}
+                    row={row()}
+                    size={rowHeight(layout(), index)}
+                  />
+                );
+              }}
             </For>
           </div>
         </div>
       </div>
       <div
         class="pr-diff-horizontalRailFrame"
-        style={{ left: `${railLeft()}px`, width: `${railWidth()}px` }}
+        style={{ left: `${model().geometry.railLeft}px`, width: `${model().geometry.railWidth}px` }}
       >
         <div aria-hidden="true" class="pr-diff-railGutter" />
         <div aria-hidden="true" class="pr-diff-railGutter" />
         <div
           aria-label="Scroll diff horizontally"
           class="pr-diff-horizontalRail"
-          onScroll={(event) => setHorizontalOffset(event.currentTarget.scrollLeft)}
-          ref={(element) => (horizontalRail = element)}
+          ref={(element) => {
+            horizontalRail = element;
+          }}
           role="region"
           tabIndex={0}
         >
@@ -559,8 +264,7 @@ const DiffRowView = (props: {
   copyPending: boolean;
   index: number;
   matches: MountedSearchMatch[];
-  onCopyFile: (file: PullRequestDiffFile) => void;
-  onCopyHunk: (row: Extract<DiffRow, { kind: "hunk" }>) => void;
+  send: (msg: Msg) => void;
   row: DiffRow;
   size: number;
 }) => (
@@ -574,8 +278,7 @@ const DiffRowView = (props: {
     <DiffRowCells
       copyPending={props.copyPending}
       matches={props.matches}
-      onCopyFile={props.onCopyFile}
-      onCopyHunk={props.onCopyHunk}
+      send={props.send}
       row={props.row}
     />
   </div>
@@ -584,8 +287,7 @@ const DiffRowView = (props: {
 const DiffRowCells = (props: {
   copyPending: boolean;
   matches: MountedSearchMatch[];
-  onCopyFile: (file: PullRequestDiffFile) => void;
-  onCopyHunk: (row: Extract<DiffRow, { kind: "hunk" }>) => void;
+  send: (msg: Msg) => void;
   row: DiffRow;
 }) => {
   const fileRow = () => (props.row.kind === "file" ? props.row : undefined);
@@ -604,23 +306,23 @@ const DiffRowCells = (props: {
             <span class="pr-diff-headerText">{filePath(row())}</span>
             <button
               aria-label={
-                row().file.binary
+                row().file.content.kind === "binary"
                   ? `Copy unavailable for binary file ${fileLabel(row().file)}`
                   : `Copy file ${fileLabel(row().file)}`
               }
               aria-busy={props.copyPending}
               aria-disabled={props.copyPending ? "true" : undefined}
               class="pr-diff-compactButton"
-              disabled={row().file.binary}
-              onClick={() => props.onCopyFile(row().file)}
+              disabled={row().file.content.kind === "binary"}
+              onClick={() => props.send({ kind: "CopyFileRequested", fileIndex: row().fileIndex })}
               title={
-                row().file.binary
+                row().file.content.kind === "binary"
                   ? "Binary patch content is unavailable"
                   : `Copy file ${fileLabel(row().file)}`
               }
               type="button"
             >
-              {row().file.binary ? "Copy unavailable" : "Copy file"}
+              {row().file.content.kind === "binary" ? "Copy unavailable" : "Copy file"}
             </button>
           </div>
         )}
@@ -634,7 +336,13 @@ const DiffRowCells = (props: {
               aria-busy={props.copyPending}
               aria-disabled={props.copyPending ? "true" : undefined}
               class="pr-diff-compactButton"
-              onClick={() => props.onCopyHunk(row())}
+              onClick={() =>
+                props.send({
+                  kind: "CopyHunkRequested",
+                  fileIndex: row().fileIndex,
+                  hunkIndex: row().hunkIndex,
+                })
+              }
               type="button"
             >
               Copy hunk
@@ -655,18 +363,18 @@ const DiffRowCells = (props: {
         {(row) => (
           <>
             <div
-              aria-label={`Old line ${row().line.oldLine ?? "none"}`}
+              aria-label={`Old line ${diffLineNumbers(row().line).oldLine ?? "none"}`}
               class="pr-diff-lineNumber"
               role="cell"
             >
-              {row().line.oldLine ?? ""}
+              {diffLineNumbers(row().line).oldLine ?? ""}
             </div>
             <div
-              aria-label={`New line ${row().line.newLine ?? "none"}`}
+              aria-label={`New line ${diffLineNumbers(row().line).newLine ?? "none"}`}
               class="pr-diff-lineNumber"
               role="cell"
             >
-              {row().line.newLine ?? ""}
+              {diffLineNumbers(row().line).newLine ?? ""}
             </div>
             <div class="pr-diff-source" role="cell">
               <div class="pr-diff-sourceContent">
@@ -687,65 +395,35 @@ const DiffRowCells = (props: {
   );
 };
 
-const HighlightedSource = (props: { content: string; matches: MountedSearchMatch[] }) => {
-  const segments = createMemo(() => {
-    const result: Array<{ active: boolean; match: boolean; text: string }> = [];
-    let cursor = 0;
-    for (const match of props.matches) {
-      if (match.offset > cursor) {
-        result.push({
-          active: false,
-          match: false,
-          text: props.content.slice(cursor, match.offset),
-        });
-      }
-      result.push({
-        active: match.active,
-        match: true,
-        text: props.content.slice(match.offset, match.offset + match.length),
-      });
-      cursor = match.offset + match.length;
+const HighlightedSource = (props: { content: string; matches: MountedSearchMatch[] }) => (
+  <For each={highlightedSegments(props.content, props.matches)}>
+    {(segment) =>
+      segment.match ? (
+        <mark
+          classList={{ "pr-diff-searchMatch--active": segment.match.active }}
+          data-match-offset={segment.match.offset}
+          data-match-length={segment.match.length}
+        >
+          {segment.text}
+        </mark>
+      ) : (
+        segment.text
+      )
     }
-    if (cursor < props.content.length) {
-      result.push({ active: false, match: false, text: props.content.slice(cursor) });
-    }
-    return result;
-  });
+  </For>
+);
 
-  return (
-    <For each={segments()}>
-      {(segment) =>
-        segment.match ? (
-          <mark classList={{ "pr-diff-searchMatch--active": segment.active }}>{segment.text}</mark>
-        ) : (
-          segment.text
-        )
-      }
-    </For>
-  );
-};
-
-const filePath = (row: Extract<DiffRow, { kind: "file" }>): string => {
-  if (
-    row.file.oldPath !== null &&
-    row.file.newPath !== null &&
-    row.file.oldPath !== row.file.newPath
-  ) {
-    return `${row.file.oldPath} -> ${row.file.newPath}`;
+const highlightedSegments = (content: string, matches: MountedSearchMatch[]) => {
+  const result: Array<{ match: MountedSearchMatch | null; text: string }> = [];
+  let cursor = 0;
+  for (const match of matches) {
+    if (match.offset > cursor)
+      result.push({ match: null, text: content.slice(cursor, match.offset) });
+    result.push({ match, text: content.slice(match.offset, match.offset + match.length) });
+    cursor = match.offset + match.length;
   }
-  return row.file.newPath ?? row.file.oldPath ?? "Unknown file";
-};
-
-const fileLabel = (file: PullRequestDiffFile): string => {
-  if (file.oldPath !== null && file.newPath !== null && file.oldPath !== file.newPath) {
-    return `${file.oldPath} -> ${file.newPath}`;
-  }
-  return file.newPath ?? file.oldPath ?? "Unknown file";
-};
-
-const hunkLabel = (row: Extract<DiffRow, { kind: "hunk" }>): string => {
-  const context = row.hunk.context === null ? "" : ` ${row.hunk.context}`;
-  return `@@ -${row.hunk.oldStart},${row.hunk.oldCount} +${row.hunk.newStart},${row.hunk.newCount} @@${context}`;
+  if (cursor < content.length) result.push({ match: null, text: content.slice(cursor) });
+  return result;
 };
 
 const sourcePrefix = (kind: "context" | "addition" | "deletion"): string => {

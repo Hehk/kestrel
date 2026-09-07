@@ -2,8 +2,11 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@solidjs/te
 import userEvent from "@testing-library/user-event";
 import { createSignal } from "solid-js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DiffView } from "./DiffView";
-import type { PullRequestDiff, PullRequestDiffLine } from "./layout";
+import { createDiffViewProgram, DiffView } from "./DiffView";
+import type { Effect, Msg } from "./diffViewModel";
+import type { DiffViewRuntime } from "./diffViewRuntime";
+import { searchDiff } from "./search";
+import type { PullRequestDiff, PullRequestDiffHunk, PullRequestDiffLine } from "./layout";
 
 describe("DiffView", () => {
   beforeEach(() => {
@@ -177,9 +180,9 @@ describe("DiffView", () => {
     await user.click(copyButton());
     const replacement = smallDiff();
     const replacementFile = replacement.files[0];
-    if (replacementFile !== undefined) {
-      replacementFile.oldPath = "src/before.ts";
-      replacementFile.newPath = "src/after.ts";
+    if (replacementFile?.operation.kind === "renamed") {
+      replacementFile.operation.oldPath = "src/before.ts";
+      replacementFile.operation.newPath = "src/after.ts";
     }
     setDiff(replacement);
     expect(screen.getByRole("status").textContent).toBe("");
@@ -277,6 +280,38 @@ describe("DiffView", () => {
 
     expect(await within(table).findByText(`line ${lineCount - 1}`)).toBeInTheDocument();
     expect(within(table).getAllByRole("row").length).toBeLessThan(200);
+  });
+
+  it("reuses overlapping row DOM across scrolling and unrelated model updates", async () => {
+    const { container } = render(() => <DiffView diff={largeDiff(1_000)} />);
+    const row = container.querySelector<HTMLElement>('[data-diff-row="25"]');
+    const source = row?.querySelector(".pr-diff-sourceContent");
+    expect(row).not.toBeNull();
+    vi.stubGlobal("scrollY", 480);
+    window.dispatchEvent(new Event("scroll"));
+    expect(container.querySelector('[data-diff-row="25"]')).toBe(row);
+    expect(row?.querySelector(".pr-diff-sourceContent")).toBe(source);
+    const input = screen.getByRole("searchbox", { name: "Search diff" });
+    fireEvent.input(input, { target: { value: "not found" } });
+    await screen.findByText("No results");
+    expect(container.querySelector('[data-diff-row="25"]')).toBe(row);
+    expect(row?.querySelector(".pr-diff-sourceContent")).toBe(source);
+  });
+
+  it("refreshes a distant viewport to an empty diff and back without stale rows", async () => {
+    const [diff, setDiff] = createSignal(largeDiff(1_000));
+    const { container } = render(() => <DiffView diff={diff()} />);
+    vi.stubGlobal("scrollY", 10_000);
+    window.dispatchEvent(new Event("scroll"));
+    expect(container.querySelector('[data-diff-row="400"]')).not.toBeNull();
+    setDiff({ files: [], syncedAt: "now" });
+    expect(screen.getByRole("table")).toHaveAttribute("aria-rowcount", "0");
+    expect(container.querySelectorAll("[data-diff-row]")).toHaveLength(0);
+    vi.stubGlobal("scrollY", 0);
+    window.dispatchEvent(new Event("scroll"));
+    setDiff(smallDiff());
+    expect(await screen.findByText("Binary file changed.")).toBeInTheDocument();
+    expect(screen.getByRole("table")).toHaveAttribute("aria-rowcount", "9");
   });
 
   it("jumps to file starts and tracks the first visible file", async () => {
@@ -380,10 +415,43 @@ describe("DiffView", () => {
     expect(table.style.getPropertyValue("--pr-diff-horizontal-offset")).toBe("20px");
   });
 
+  it("settles rail width and clamping without ResizeObserver", async () => {
+    let tableWidth = 400;
+    vi.stubGlobal("ResizeObserver", undefined);
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(
+      function (this: HTMLElement) {
+        return this.classList.contains("pr-diff-horizontalRail")
+          ? Math.max(0, Number.parseFloat(this.parentElement?.style.width ?? "0") - 100)
+          : 0;
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(
+      function (this: HTMLElement) {
+        return this.classList.contains("pr-diff-horizontalRail") ? 1_000 : 0;
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        return domRect(0, this.classList.contains("pr-diff-table") ? tableWidth : 0);
+      },
+    );
+    const { container } = render(() => <DiffView diff={smallDiff()} />);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const source = container.querySelector(".pr-diff-source");
+    source?.dispatchEvent(
+      new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaX: 2_000 }),
+    );
+    const rail = screen.getByRole("region", { name: "Scroll diff horizontally" });
+    expect(rail.scrollLeft).toBe(700);
+    tableWidth = 800;
+    window.dispatchEvent(new Event("resize"));
+    await waitFor(() => expect(rail.scrollLeft).toBe(300));
+  });
+
   it("scopes find shortcuts and wraps highlighted result navigation", async () => {
     const user = userEvent.setup();
     const diff = smallDiff();
-    const sourceLine = diff.files[0]?.hunks[0]?.lines[1];
+    const sourceLine = firstHunk(diff)?.lines[1];
     if (sourceLine !== undefined) sourceLine.content = "needle and NEEDLE";
     const { container, unmount } = render(() => (
       <>
@@ -454,7 +522,7 @@ describe("DiffView", () => {
 
   it("leaves modified find shortcuts and composing input to the browser", async () => {
     const diff = smallDiff();
-    const sourceLine = diff.files[0]?.hunks[0]?.lines[1];
+    const sourceLine = firstHunk(diff)?.lines[1];
     if (sourceLine !== undefined) sourceLine.content = "needle then needle";
     render(() => <DiffView diff={diff} />);
     const input = await screen.findByRole("searchbox", { name: "Search diff" });
@@ -516,7 +584,7 @@ describe("DiffView", () => {
       },
     );
     const diff = smallDiff();
-    const sourceLine = diff.files[0]?.hunks[0]?.lines[1];
+    const sourceLine = firstHunk(diff)?.lines[1];
     if (sourceLine !== undefined) sourceLine.content = `${"x".repeat(1_000)}rare`;
     render(() => <DiffView diff={diff} />);
     const input = await screen.findByRole("searchbox", { name: "Search diff" });
@@ -533,12 +601,118 @@ describe("DiffView", () => {
     expect(activeMatch?.getBoundingClientRect().right).toBeLessThanOrEqual(
       source?.getBoundingClientRect().right ?? 0,
     );
-    expect(rail.scrollLeft).toBe(400);
+    expect(rail.scrollLeft).toBe(250);
   });
+
+  it("remeasures geometry changed between navigation and the render frame", async () => {
+    let viewportWidth = 300;
+    let frames: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(
+      function (this: HTMLElement) {
+        return this.classList.contains("pr-diff-horizontalRail") ? viewportWidth : 0;
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(
+      function (this: HTMLElement) {
+        return this.classList.contains("pr-diff-horizontalRail") ? 1_000 : 0;
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        const offset =
+          document.querySelector<HTMLElement>(".pr-diff-horizontalRail")?.scrollLeft ?? 0;
+        if (this.tagName === "MARK") return domRect(400 - offset, 450 - offset);
+        return this.classList.contains("pr-diff-source") || this.classList.contains("pr-diff-table")
+          ? domRect(0, viewportWidth)
+          : domRect(0, 0);
+      },
+    );
+    render(() => <DiffView diff={largeDiff(1)} />);
+    fireEvent.input(screen.getByRole("searchbox"), { target: { value: "line" } });
+    await screen.findByText("1 of 1");
+    const rail = screen.getByRole("region", { name: "Scroll diff horizontally" });
+    viewportWidth = 200;
+    const firstFrame = frames;
+    frames = [];
+    for (const callback of firstFrame) callback(0);
+    expect(rail.scrollLeft).toBe(0);
+    expect(frames.length).toBeGreaterThan(0);
+    for (const callback of frames) callback(16);
+    expect(rail.scrollLeft).toBe(250);
+  });
+
+  it("does not pull horizontal scrolling back to an active search result", async () => {
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(
+      function (this: HTMLElement) {
+        return this.classList.contains("pr-diff-horizontalRail") ? 200 : 0;
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(
+      function (this: HTMLElement) {
+        return this.classList.contains("pr-diff-horizontalRail") ? 1_000 : 0;
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        const offset =
+          document.querySelector<HTMLElement>(".pr-diff-horizontalRail")?.scrollLeft ?? 0;
+        if (this.tagName === "MARK") return domRect(400 - offset, 450 - offset);
+        return this.classList.contains("pr-diff-source") ? domRect(0, 200) : domRect(0, 0);
+      },
+    );
+    const { container } = render(() => <DiffView diff={largeDiff(1_000)} />);
+    fireEvent.input(screen.getByRole("searchbox"), { target: { value: "line 0" } });
+    await screen.findByText("1 of 1");
+    const rail = screen.getByRole("region", { name: "Scroll diff horizontally" });
+    await waitFor(() => expect(rail.scrollLeft).toBe(250));
+    const source = container.querySelector(".pr-diff-source");
+    source?.dispatchEvent(
+      new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaX: -250 }),
+    );
+    expect(rail.scrollLeft).toBe(0);
+    vi.stubGlobal("scrollY", 480);
+    window.dispatchEvent(new Event("scroll"));
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    expect(rail.scrollLeft).toBe(0);
+    expect(screen.getByText("1 of 1")).toBeInTheDocument();
+  });
+
+  it.each([
+    { deltaX: 0, deltaY: 2, shiftKey: true, deltaMode: 1, expected: 48 },
+    { deltaX: 1, deltaY: 0, shiftKey: false, deltaMode: 2, expected: 200 },
+    { deltaX: 0, deltaY: 80, shiftKey: false, deltaMode: 0, expected: 0 },
+    { deltaX: 80, deltaY: 0, ctrlKey: true, shiftKey: false, deltaMode: 0, expected: 0 },
+  ])(
+    "normalizes wheel modes without blocking vertical scrolling or pinch zoom: $expected",
+    async (options) => {
+      vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(
+        function (this: HTMLElement) {
+          return this.classList.contains("pr-diff-horizontalRail") ? 200 : 0;
+        },
+      );
+      vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(
+        function (this: HTMLElement) {
+          return this.classList.contains("pr-diff-horizontalRail") ? 1_000 : 0;
+        },
+      );
+      const { container } = render(() => <DiffView diff={smallDiff()} />);
+      const wheel = new WheelEvent("wheel", { bubbles: true, cancelable: true, ...options });
+      container.querySelector(".pr-diff-source")?.dispatchEvent(wheel);
+      expect(screen.getByRole("region", { name: "Scroll diff horizontally" }).scrollLeft).toBe(
+        options.expected,
+      );
+      expect(wheel.defaultPrevented).toBe(options.expected !== 0);
+    },
+  );
 
   it("bounds dense mounted highlights while keeping the active result rendered", async () => {
     const diff = smallDiff();
-    const sourceLine = diff.files[0]?.hunks[0]?.lines[1];
+    const sourceLine = firstHunk(diff)?.lines[1];
     if (sourceLine !== undefined) sourceLine.content = "x ".repeat(500);
     const { container } = render(() => <DiffView diff={diff} />);
     const input = await screen.findByRole("searchbox", { name: "Search diff" });
@@ -569,7 +743,7 @@ describe("DiffView", () => {
 
   it("announces when dense full-Diff search results are limited", async () => {
     const diff = smallDiff();
-    const hunk = diff.files[0]?.hunks[0];
+    const hunk = firstHunk(diff);
     if (hunk !== undefined) {
       hunk.lines = Array.from({ length: 5 }, (_, index) =>
         diffLine(index, "context", "a".repeat(400_001)),
@@ -615,7 +789,7 @@ describe("DiffView", () => {
 
   it("applies navigation requested while a new query is deferred", async () => {
     const diff = smallDiff();
-    const sourceLine = diff.files[0]?.hunks[0]?.lines[1];
+    const sourceLine = firstHunk(diff)?.lines[1];
     if (sourceLine !== undefined) sourceLine.content = "needle then needle";
     render(() => <DiffView diff={diff} />);
     const input = await screen.findByRole("searchbox", { name: "Search diff" });
@@ -635,7 +809,7 @@ describe("DiffView", () => {
 
   it("accumulates pending navigation and does not consume it on layout refresh", async () => {
     const first = smallDiff();
-    const firstSource = first.files[0]?.hunks[0]?.lines[1];
+    const firstSource = firstHunk(first)?.lines[1];
     if (firstSource !== undefined) firstSource.content = "old old old";
     const [diff, setDiff] = createSignal(first);
     render(() => <DiffView diff={diff()} />);
@@ -647,7 +821,7 @@ describe("DiffView", () => {
     input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
     input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
     const refreshed = smallDiff();
-    const refreshedSource = refreshed.files[0]?.hunks[0]?.lines[1];
+    const refreshedSource = firstHunk(refreshed)?.lines[1];
     if (refreshedSource !== undefined) refreshedSource.content = "new new new";
     setDiff(refreshed);
 
@@ -656,7 +830,7 @@ describe("DiffView", () => {
 
   it("discards pending navigation when deferral skips to another query", async () => {
     const diff = smallDiff();
-    const sourceLine = diff.files[0]?.hunks[0]?.lines[1];
+    const sourceLine = firstHunk(diff)?.lines[1];
     if (sourceLine !== undefined) sourceLine.content = "old old target target";
     render(() => <DiffView diff={diff} />);
     const input = await screen.findByRole("searchbox", { name: "Search diff" });
@@ -670,6 +844,56 @@ describe("DiffView", () => {
     fireEvent.input(input, { target: { value: "target" } });
 
     expect(await screen.findByText("1 of 2")).toBeInTheDocument();
+  });
+});
+
+describe("DiffView program", () => {
+  it("publishes the model before effects and queues synchronous completions", () => {
+    const effects: Effect[] = [];
+    let running = false;
+    const createRuntime = (send: (msg: Msg) => void): DiffViewRuntime => ({
+      attach: vi.fn(),
+      dispose: vi.fn(),
+      run: (effect) => {
+        expect(running).toBe(false);
+        running = true;
+        effects.push(effect);
+        if (effect.kind === "Search") {
+          expect(program.model().search.kind).toBe("searching");
+          send({
+            kind: "SearchCompleted",
+            revision: effect.revision,
+            requestId: effect.requestId,
+            results: searchDiff(effect.layout, effect.query),
+          });
+          expect(program.model().search.kind).toBe("searching");
+        }
+        running = false;
+      },
+    });
+    const program = createDiffViewProgram(largeDiff(1), createRuntime);
+    program.send({ kind: "SearchQueryChanged", query: "line" });
+    expect(effects.map((effect) => effect.kind)).toEqual([
+      "CancelReveal",
+      "Search",
+      "CancelReveal",
+      "ScrollToRow",
+      "MeasureMatch",
+    ]);
+    expect(program.model().search).toMatchObject({ kind: "ready", activeIndex: 0 });
+    program.dispose();
+  });
+
+  it("owns disposal once and ignores callbacks after cleanup", () => {
+    const runtime: DiffViewRuntime = { attach: vi.fn(), dispose: vi.fn(), run: vi.fn() };
+    const program = createDiffViewProgram(largeDiff(1), () => runtime);
+    const model = program.model();
+    program.dispose();
+    program.dispose();
+    program.send({ kind: "SearchQueryChanged", query: "ignored" });
+    expect(runtime.dispose).toHaveBeenCalledOnce();
+    expect(runtime.run).not.toHaveBeenCalled();
+    expect(program.model()).toBe(model);
   });
 });
 
@@ -710,61 +934,71 @@ const diffLine = (
   index: number,
   kind: PullRequestDiffLine["kind"],
   content = `line ${index}`,
-): PullRequestDiffLine => ({
-  content,
-  kind,
-  missingNewline: false,
-  newLine: kind === "deletion" ? null : index + 1,
-  oldLine: kind === "addition" ? null : index + 1,
-});
+): PullRequestDiffLine => {
+  const fields = { content, missingNewline: false };
+  switch (kind) {
+    case "context":
+      return { ...fields, kind, newLine: index + 1, oldLine: index + 1 };
+    case "addition":
+      return { ...fields, kind, newLine: index + 1 };
+    case "deletion":
+      return { ...fields, kind, oldLine: index + 1 };
+  }
+};
+
+const firstHunk = (diff: PullRequestDiff): PullRequestDiffHunk | undefined => {
+  const content = diff.files[0]?.content;
+  return content?.kind === "text" ? content.hunks[0] : undefined;
+};
 
 const smallDiff = (): PullRequestDiff => ({
   files: [
     {
       additions: 1,
-      binary: false,
+      content: {
+        hunks: [
+          {
+            context: "function example",
+            lines: [
+              { ...diffLine(0, "deletion", "const value = 'old';"), missingNewline: true },
+              diffLine(1, "addition", "\tconst value = '<script>';  "),
+              diffLine(2, "context", "unchanged"),
+            ],
+            newCount: 3,
+            newStart: 1,
+            oldCount: 3,
+            oldStart: 1,
+          },
+        ],
+        kind: "text",
+      },
       deletions: 1,
-      hunks: [
-        {
-          context: "function example",
-          lines: [
-            { ...diffLine(0, "deletion", "const value = 'old';"), missingNewline: true },
-            diffLine(1, "addition", "\tconst value = '<script>';  "),
-            diffLine(2, "context", "unchanged"),
-          ],
-          newCount: 3,
-          newStart: 1,
-          oldCount: 3,
-          oldStart: 1,
-        },
-      ],
-      newMode: "100644",
-      newPath: "src/new.ts",
-      oldMode: "100644",
-      oldPath: "src/old.ts",
-      operation: "renamed",
+      operation: {
+        kind: "renamed",
+        modeChange: { kind: "unchanged" },
+        newPath: "src/new.ts",
+        oldPath: "src/old.ts",
+      },
     },
     {
       additions: 0,
-      binary: true,
+      content: { kind: "binary" },
       deletions: 0,
-      hunks: [],
-      newMode: "100644",
-      newPath: "asset.bin",
-      oldMode: "100644",
-      oldPath: "asset.bin",
-      operation: "modified",
+      operation: {
+        kind: "modified",
+        modeChange: { kind: "unchanged" },
+        path: "asset.bin",
+      },
     },
     {
       additions: 0,
-      binary: false,
+      content: { hunks: [], kind: "text" },
       deletions: 0,
-      hunks: [],
-      newMode: "100755",
-      newPath: "script.sh",
-      oldMode: "100644",
-      oldPath: "script.sh",
-      operation: "modified",
+      operation: {
+        kind: "modified",
+        modeChange: { kind: "changed", newMode: "100755", oldMode: "100644" },
+        path: "script.sh",
+      },
     },
   ],
   syncedAt: "2026-01-04T00:00:00Z",
@@ -776,49 +1010,37 @@ const sameCountDiff = (shape: "source" | "notices"): PullRequestDiff => ({
       ? [
           {
             additions: 0,
-            binary: false,
+            content: {
+              hunks: [
+                {
+                  context: null,
+                  lines: [diffLine(0, "context"), diffLine(1, "context")],
+                  newCount: 2,
+                  newStart: 1,
+                  oldCount: 2,
+                  oldStart: 1,
+                },
+              ],
+              kind: "text",
+            },
             deletions: 0,
-            hunks: [
-              {
-                context: null,
-                lines: [diffLine(0, "context"), diffLine(1, "context")],
-                newCount: 2,
-                newStart: 1,
-                oldCount: 2,
-                oldStart: 1,
-              },
-            ],
-            newMode: "100644",
-            newPath: "source.txt",
-            oldMode: "100644",
-            oldPath: "source.txt",
-            operation: "modified",
+            operation: {
+              kind: "modified",
+              modeChange: { kind: "unchanged" },
+              path: "source.txt",
+            },
           },
         ]
-      : [
-          {
-            additions: 0,
-            binary: true,
-            deletions: 0,
-            hunks: [],
-            newMode: "100644",
-            newPath: "one.bin",
-            oldMode: "100644",
-            oldPath: "one.bin",
-            operation: "modified",
+      : ["one.bin", "two.bin"].map((path) => ({
+          additions: 0,
+          content: { kind: "binary" as const },
+          deletions: 0,
+          operation: {
+            kind: "modified" as const,
+            modeChange: { kind: "unchanged" as const },
+            path,
           },
-          {
-            additions: 0,
-            binary: true,
-            deletions: 0,
-            hunks: [],
-            newMode: "100644",
-            newPath: "two.bin",
-            oldMode: "100644",
-            oldPath: "two.bin",
-            operation: "modified",
-          },
-        ],
+        })),
   syncedAt: "2026-01-04T00:00:00Z",
 });
 
@@ -826,23 +1048,21 @@ const largeDiff = (lineCount: number): PullRequestDiff => ({
   files: [
     {
       additions: 0,
-      binary: false,
+      content: {
+        hunks: [
+          {
+            context: null,
+            lines: Array.from({ length: lineCount }, (_, index) => diffLine(index, "context")),
+            newCount: lineCount,
+            newStart: 1,
+            oldCount: lineCount,
+            oldStart: 1,
+          },
+        ],
+        kind: "text",
+      },
       deletions: 0,
-      hunks: [
-        {
-          context: null,
-          lines: Array.from({ length: lineCount }, (_, index) => diffLine(index, "context")),
-          newCount: lineCount,
-          newStart: 1,
-          oldCount: lineCount,
-          oldStart: 1,
-        },
-      ],
-      newMode: "100644",
-      newPath: "large.txt",
-      oldMode: "100644",
-      oldPath: "large.txt",
-      operation: "modified",
+      operation: { kind: "modified", modeChange: { kind: "unchanged" }, path: "large.txt" },
     },
   ],
   syncedAt: "2026-01-04T00:00:00Z",
@@ -851,25 +1071,27 @@ const largeDiff = (lineCount: number): PullRequestDiff => ({
 const multiFileDiff = (): PullRequestDiff => ({
   files: Array.from({ length: 3 }, (_, fileIndex) => ({
     additions: 0,
-    binary: false,
+    content: {
+      hunks: [
+        {
+          context: null,
+          lines: Array.from({ length: 10 }, (_, lineIndex) =>
+            diffLine(fileIndex * 10 + lineIndex, "context"),
+          ),
+          newCount: 10,
+          newStart: fileIndex * 10 + 1,
+          oldCount: 10,
+          oldStart: fileIndex * 10 + 1,
+        },
+      ],
+      kind: "text" as const,
+    },
     deletions: 0,
-    hunks: [
-      {
-        context: null,
-        lines: Array.from({ length: 10 }, (_, lineIndex) =>
-          diffLine(fileIndex * 10 + lineIndex, "context"),
-        ),
-        newCount: 10,
-        newStart: fileIndex * 10 + 1,
-        oldCount: 10,
-        oldStart: fileIndex * 10 + 1,
-      },
-    ],
-    newMode: "100644" as const,
-    newPath: `file-${fileIndex}.txt`,
-    oldMode: "100644" as const,
-    oldPath: `file-${fileIndex}.txt`,
-    operation: "modified" as const,
+    operation: {
+      kind: "modified" as const,
+      modeChange: { kind: "unchanged" as const },
+      path: `file-${fileIndex}.txt`,
+    },
   })),
   syncedAt: "2026-01-04T00:00:00Z",
 });

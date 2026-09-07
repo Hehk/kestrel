@@ -20,7 +20,7 @@
   },
   "dependencies": {
     "@kobalte/core": "^0.13.12",
-    "@tanstack/solid-virtual": "^3.13.37",
+    "@tanstack/virtual-core": "^3.17.8",
     "openapi-fetch": "^0.17.0",
     "solid-js": "^1.9.14"
   },
