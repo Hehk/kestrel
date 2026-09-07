@@ -452,7 +452,6 @@ const getDetails = (details: Repositories.PullRequestDetailState | undefined) =>
 const PullRequestDetailPanel = (props: { data: Accessor<PullRequestPageData> }) => {
   const detailState = () => props.data().pullRequestDetail;
   const detail = () => getDetails(detailState());
-  console.log(detailState());
   return (
     <Switch fallback={<p class="repo-pr-status">Pull request details not loaded.</p>}>
       <Match when={detailState()?.status === "loading"}>
