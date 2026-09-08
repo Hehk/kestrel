@@ -1,3 +1,4 @@
+import * as stylex from "@stylexjs/stylex";
 import {
   createEffect,
   createMemo,
@@ -18,6 +19,249 @@ import type { DiffViewElements } from "./diffViewRuntime";
 import { fileLabel, filePath, hunkLabel } from "./labels";
 import type { DiffRow, PullRequestDiff } from "./layout";
 import { diffLineNumbers, rowAt, rowHeight } from "./layout";
+import { styles as baseStyles } from "../styles/base.stylex";
+import { tokens } from "../styles/tokens.stylex";
+
+const mobile = "@media (max-width: 640px)";
+const forcedColors = "@media (forced-colors: active)";
+
+const styles = stylex.create({
+  root: {
+    position: "relative",
+    paddingBottom: "calc(2rem + env(safe-area-inset-bottom))",
+  },
+  stickyStack: {
+    position: "sticky",
+    zIndex: 4,
+    top: 0,
+    minWidth: 0,
+    color: tokens.text,
+    backgroundColor: tokens.background,
+    border: `1px solid ${tokens.rule}`,
+  },
+  toolbar: {
+    minHeight: "40px",
+    height: { default: "40px", [mobile]: "auto" },
+    display: "flex",
+    alignItems: "center",
+    flexWrap: { default: "nowrap", [mobile]: "wrap" },
+    gap: { default: "0.6rem", [mobile]: "0.35rem" },
+    boxSizing: "border-box",
+    padding: { default: "0 0.75rem", [mobile]: "0.35rem 0.5rem" },
+    borderBottom: `1px solid ${tokens.rule}`,
+  },
+  filePickerLabel: {
+    flex: "0 0 auto",
+    fontFamily: tokens.mono,
+    fontSize: "0.8rem",
+    fontWeight: 700,
+    position: { default: "static", [mobile]: "absolute" },
+    width: { default: "auto", [mobile]: "1px" },
+    height: { default: "auto", [mobile]: "1px" },
+    overflow: { default: "visible", [mobile]: "hidden" },
+    clip: { default: "auto", [mobile]: "rect(0, 0, 0, 0)" },
+  },
+  filePicker: {
+    minWidth: 0,
+    maxWidth: "100%",
+    flex: { default: "2 1 12rem", [mobile]: "2 1 11rem" },
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  searchInput: {
+    minWidth: "5rem",
+    maxWidth: { default: "16rem", [mobile]: "none" },
+    flex: { default: "1 1 9rem", [mobile]: "1 1 8rem" },
+  },
+  searchNav: {
+    display: "flex",
+    flex: "0 0 auto",
+    gap: "0.25rem",
+  },
+  compactButton: {
+    minHeight: "24px",
+    flex: "0 0 auto",
+    padding: "0.05rem 0.4rem",
+    fontFamily: tokens.mono,
+    fontSize: "0.7rem",
+    lineHeight: 1.2,
+    whiteSpace: "nowrap",
+    cursor: { default: null, ":disabled": "not-allowed", '[aria-disabled="true"]': "wait" },
+    opacity: { default: 1, ":disabled": 0.55, '[aria-disabled="true"]': 0.7 },
+    outline: { ":focus-visible": "2px solid currentColor" },
+    outlineOffset: { ":focus-visible": "-3px" },
+  },
+  searchButton: {
+    minHeight: { default: "24px", [mobile]: "36px", "@media (pointer: coarse)": "44px" },
+  },
+  searchCount: {
+    minWidth: { default: "4.5rem", [mobile]: "3.5rem" },
+    flex: "0 0 auto",
+    color: tokens.textMuted,
+    fontFamily: tokens.mono,
+    fontSize: "0.75rem",
+    textAlign: "right",
+    whiteSpace: "nowrap",
+  },
+  activeFile: {
+    height: "40px",
+    display: "flex",
+    alignItems: "center",
+    boxSizing: "border-box",
+    padding: { default: "0 0.75rem", [mobile]: "0 0.5rem" },
+    gap: { default: "0.6rem", [mobile]: "0.35rem" },
+    backgroundColor: `color-mix(in srgb, ${tokens.text} 7%, ${tokens.background})`,
+    fontFamily: tokens.mono,
+    fontSize: "0.85rem",
+    fontWeight: 700,
+  },
+  truncate: {
+    minWidth: 0,
+    flexGrow: 1,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  copyStatus: {
+    maxWidth: { default: "min(32vw, 22rem)", [mobile]: "7rem" },
+    overflow: "hidden",
+    color: tokens.statusSuccess,
+    fontSize: "0.75rem",
+    fontWeight: 400,
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  copyFailure: { color: tokens.statusFailure },
+  table: {
+    minWidth: 0,
+    overflow: "clip",
+    color: tokens.text,
+    backgroundColor: tokens.background,
+    borderTop: `1px solid ${tokens.rule}`,
+    fontFamily: tokens.mono,
+    fontSize: "0.85rem",
+  },
+  spacer: { position: "relative", minWidth: "100%" },
+  virtualRows: { position: "absolute", top: 0, left: 0, minWidth: "100%" },
+  row: {
+    width: "100%",
+    minWidth: 0,
+    display: "grid",
+    gridTemplateColumns: {
+      default: "4.5rem 4.5rem minmax(0, 1fr)",
+      [mobile]: "3rem 3rem minmax(0, 1fr)",
+    },
+    boxSizing: "border-box",
+    borderBottom: `1px solid ${tokens.rule}`,
+  },
+  fullCell: {
+    gridColumn: "1 / -1",
+    display: "flex",
+    alignItems: "center",
+    boxSizing: "border-box",
+    padding: "0 0.75rem",
+    gap: "0.6rem",
+    whiteSpace: "pre",
+  },
+  headerCell: {
+    minWidth: 0,
+    height: "40px",
+    overflow: "hidden",
+    backgroundColor: `color-mix(in srgb, ${tokens.text} 7%, ${tokens.background})`,
+    fontWeight: 700,
+    textOverflow: "ellipsis",
+  },
+  hunkCell: {
+    minWidth: 0,
+    height: "32px",
+    overflow: "hidden",
+    color: tokens.textMuted,
+    backgroundColor: `color-mix(in srgb, ${tokens.link} 7%, ${tokens.background})`,
+    textOverflow: "ellipsis",
+  },
+  lineCell: { height: "24px", boxSizing: "border-box", lineHeight: "24px", whiteSpace: "pre" },
+  lineNumber: {
+    padding: "0 0.6rem",
+    color: tokens.textMuted,
+    borderRight: `1px solid ${tokens.rule}`,
+    textAlign: "right",
+    userSelect: "none",
+  },
+  source: { minWidth: 0, overflow: "hidden", tabSize: 4, touchAction: "pan-y pinch-zoom" },
+  sourceContent: {
+    width: "max-content",
+    paddingRight: "1rem",
+    transform: "translateX(calc(-1 * var(--pr-diff-horizontal-offset, 0px)))",
+  },
+  addition: {
+    backgroundColor: `color-mix(in srgb, #2da44e 12%, ${tokens.background})`,
+    boxShadow: { default: `inset 3px 0 ${tokens.statusSuccess}`, [forcedColors]: "none" },
+    borderLeft: { default: null, [forcedColors]: "3px solid CanvasText" },
+  },
+  deletion: {
+    backgroundColor: `color-mix(in srgb, #cf222e 12%, ${tokens.background})`,
+    boxShadow: { default: `inset 3px 0 ${tokens.statusFailure}`, [forcedColors]: "none" },
+    borderLeft: { default: null, [forcedColors]: "3px solid CanvasText" },
+  },
+  lineKind: {
+    position: "absolute",
+    width: "1px",
+    height: "1px",
+    padding: 0,
+    overflow: "hidden",
+    clip: "rect(0, 0, 0, 0)",
+    whiteSpace: "nowrap",
+    borderWidth: 0,
+  },
+  prefix: { display: "inline-block", width: "1ch", userSelect: "none" },
+  changedPrefix: { fontWeight: 700 },
+  missingNewline: { color: tokens.textMuted, fontStyle: "italic" },
+  mark: {
+    color: { default: "inherit", [forcedColors]: "HighlightText" },
+    backgroundColor: {
+      default: `color-mix(in srgb, #f0b429 48%, ${tokens.background})`,
+      [forcedColors]: "Highlight",
+    },
+    forcedColorAdjust: { default: "auto", [forcedColors]: "none" },
+  },
+  activeMark: {
+    color: { default: tokens.background, [forcedColors]: "HighlightText" },
+    backgroundColor: { default: tokens.text, [forcedColors]: "Highlight" },
+    outline: { default: `1px solid ${tokens.text}`, [forcedColors]: "2px solid CanvasText" },
+  },
+  railFrame: {
+    position: "fixed",
+    zIndex: 6,
+    bottom: "env(safe-area-inset-bottom)",
+    height: "28px",
+    display: "grid",
+    gridTemplateColumns: {
+      default: "4.5rem 4.5rem minmax(0, 1fr)",
+      [mobile]: "3rem 3rem minmax(0, 1fr)",
+    },
+    boxSizing: "border-box",
+    overflow: "hidden",
+    backgroundColor: tokens.background,
+    border: `1px solid ${tokens.rule}`,
+  },
+  railGutter: { borderRight: `1px solid ${tokens.rule}` },
+  rail: {
+    minWidth: 0,
+    overflowX: "auto",
+    overflowY: "hidden",
+    direction: "ltr",
+    scrollBehavior: { default: null, "@media (prefers-reduced-motion: reduce)": "auto" },
+    outline: { ":focus-visible": "2px solid currentColor" },
+    outlineOffset: { ":focus-visible": "-3px" },
+  },
+  railContent: {
+    minWidth: "100%",
+    height: "1px",
+    fontFamily: tokens.mono,
+    fontSize: "0.85rem",
+  },
+});
 
 export const createDiffViewProgram = (
   diff: PullRequestDiff,
@@ -100,20 +344,20 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
   };
 
   return (
-    <div class="pr-diff-root">
+    <div {...stylex.attrs(styles.root)}>
       <div
-        class="pr-diff-stickyStack"
+        {...stylex.attrs(styles.stickyStack)}
         ref={(element) => {
           stickyStack = element;
         }}
       >
-        <div class="pr-diff-toolbar">
-          <label class="pr-diff-filePickerLabel" for="pr-diff-file-picker">
+        <div {...stylex.attrs(styles.toolbar)}>
+          <label {...stylex.attrs(styles.filePickerLabel)} for="pr-diff-file-picker">
             File
           </label>
           <select
             aria-label="Jump to file"
-            class="pr-diff-filePicker"
+            {...stylex.attrs(baseStyles.focusable, styles.filePicker)}
             id="pr-diff-file-picker"
             onChange={(event) =>
               send({ fileIndex: Number(event.currentTarget.value), kind: "JumpToFileRequested" })
@@ -126,7 +370,7 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
           </select>
           <input
             aria-label="Search diff"
-            class="pr-diff-searchInput"
+            {...stylex.attrs(baseStyles.input, styles.searchInput)}
             onInput={(event) =>
               send({ kind: "SearchQueryChanged", query: event.currentTarget.value })
             }
@@ -137,10 +381,14 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
             type="search"
             value={searchQuery(search())}
           />
-          <div aria-label="Search result navigation" class="pr-diff-searchNav" role="group">
+          <div
+            aria-label="Search result navigation"
+            {...stylex.attrs(styles.searchNav)}
+            role="group"
+          >
             <button
               aria-label="Previous search result"
-              class="pr-diff-compactButton"
+              {...stylex.attrs(baseStyles.button, styles.compactButton, styles.searchButton)}
               disabled={navigationDisabled()}
               onClick={() => send({ direction: -1, kind: "SearchMoveRequested" })}
               type="button"
@@ -149,7 +397,7 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
             </button>
             <button
               aria-label="Next search result"
-              class="pr-diff-compactButton"
+              {...stylex.attrs(baseStyles.button, styles.compactButton, styles.searchButton)}
               disabled={navigationDisabled()}
               onClick={() => send({ direction: 1, kind: "SearchMoveRequested" })}
               type="button"
@@ -157,21 +405,24 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
               Next
             </button>
           </div>
-          <span aria-atomic="true" aria-live="polite" class="pr-diff-searchCount">
+          <span aria-atomic="true" aria-live="polite" {...stylex.attrs(styles.searchCount)}>
             {searchStatus(search())}
           </span>
         </div>
         <div
           aria-label={`Active file: ${activeLabel()}`}
-          class="pr-diff-activeFile"
+          {...stylex.attrs(styles.activeFile)}
           title={activeLabel()}
         >
-          <span class="pr-diff-activeFilePath">{activeLabel()}</span>
+          <span {...stylex.attrs(styles.truncate)}>{activeLabel()}</span>
           <span
             aria-atomic="true"
             aria-live="polite"
-            class="pr-diff-copyStatus"
-            classList={{ "pr-diff-copyStatus--failure": outcome()?.kind === "failure" }}
+            {...stylex.attrs(
+              styles.copyStatus,
+              outcome()?.kind === "failure" && styles.copyFailure,
+            )}
+            data-copy-outcome={outcome()?.kind}
             role="status"
           >
             {outcome()?.message ?? ""}
@@ -184,7 +435,7 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
             }
             aria-busy={copy().kind === "writing"}
             aria-disabled={copy().kind === "writing" ? "true" : undefined}
-            class="pr-diff-compactButton"
+            {...stylex.attrs(baseStyles.button, styles.compactButton)}
             disabled={activeFile()?.content.kind !== "text"}
             onClick={() => send({ fileIndex: model().activeFileIndex, kind: "CopyFileRequested" })}
             title={
@@ -202,16 +453,22 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
         aria-colcount="3"
         aria-label="Pull request diff contents"
         aria-rowcount={layout().rowCount}
-        class="pr-diff-table"
+        {...stylex.attrs(styles.table)}
+        data-diff-table=""
         ref={(element) => {
           table = element;
         }}
         role="table"
         style={{ "--pr-diff-horizontal-offset": `${model().geometry.horizontalOffset}px` }}
       >
-        <div class="pr-diff-spacer" style={{ height: `${model().virtualWindow.totalSize}px` }}>
+        <div
+          {...stylex.attrs(styles.spacer)}
+          data-diff-spacer=""
+          style={{ height: `${model().virtualWindow.totalSize}px` }}
+        >
           <div
-            class="pr-diff-virtualRows"
+            {...stylex.attrs(styles.virtualRows)}
+            data-diff-virtual-rows=""
             style={{
               transform: `translateY(${(model().virtualWindow.rows[0]?.start ?? 0) - model().geometry.scrollMargin}px)`,
             }}
@@ -236,14 +493,15 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
         </div>
       </div>
       <div
-        class="pr-diff-horizontalRailFrame"
+        {...stylex.attrs(styles.railFrame)}
         style={{ left: `${model().geometry.railLeft}px`, width: `${model().geometry.railWidth}px` }}
       >
-        <div aria-hidden="true" class="pr-diff-railGutter" />
-        <div aria-hidden="true" class="pr-diff-railGutter" />
+        <div aria-hidden="true" {...stylex.attrs(styles.railGutter)} />
+        <div aria-hidden="true" {...stylex.attrs(styles.railGutter)} />
         <div
           aria-label="Scroll diff horizontally"
-          class="pr-diff-horizontalRail"
+          {...stylex.attrs(styles.rail)}
+          data-diff-horizontal-rail=""
           ref={(element) => {
             horizontalRail = element;
           }}
@@ -251,7 +509,7 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
           tabIndex={0}
         >
           <div
-            class="pr-diff-horizontalRailContent"
+            {...stylex.attrs(styles.railContent)}
             style={{ width: `calc(${layout().maxSourceColumns}ch + 1rem)` }}
           />
         </div>
@@ -270,7 +528,7 @@ const DiffRowView = (props: {
 }) => (
   <div
     aria-rowindex={props.index + 1}
-    class={`pr-diff-row pr-diff-row--${props.row.kind}`}
+    {...stylex.attrs(styles.row)}
     data-diff-row={props.index}
     role="row"
     style={{ height: `${props.size}px` }}
@@ -302,8 +560,13 @@ const DiffRowCells = (props: {
     <Switch>
       <Match when={fileRow()}>
         {(row) => (
-          <div aria-colspan="3" aria-label={filePath(row())} class="pr-diff-headerCell" role="cell">
-            <span class="pr-diff-headerText">{filePath(row())}</span>
+          <div
+            aria-colspan="3"
+            aria-label={filePath(row())}
+            {...stylex.attrs(styles.fullCell, styles.headerCell)}
+            role="cell"
+          >
+            <span {...stylex.attrs(styles.truncate)}>{filePath(row())}</span>
             <button
               aria-label={
                 row().file.content.kind === "binary"
@@ -312,7 +575,7 @@ const DiffRowCells = (props: {
               }
               aria-busy={props.copyPending}
               aria-disabled={props.copyPending ? "true" : undefined}
-              class="pr-diff-compactButton"
+              {...stylex.attrs(baseStyles.button, styles.compactButton)}
               disabled={row().file.content.kind === "binary"}
               onClick={() => props.send({ kind: "CopyFileRequested", fileIndex: row().fileIndex })}
               title={
@@ -329,13 +592,18 @@ const DiffRowCells = (props: {
       </Match>
       <Match when={hunkRow()}>
         {(row) => (
-          <div aria-colspan="3" aria-label={hunkLabel(row())} class="pr-diff-hunkCell" role="cell">
-            <span class="pr-diff-hunkText">{hunkLabel(row())}</span>
+          <div
+            aria-colspan="3"
+            aria-label={hunkLabel(row())}
+            {...stylex.attrs(styles.fullCell, styles.hunkCell)}
+            role="cell"
+          >
+            <span {...stylex.attrs(styles.truncate)}>{hunkLabel(row())}</span>
             <button
               aria-label={`Copy hunk from ${fileLabel(row().file)}, ${hunkLabel(row())}`}
               aria-busy={props.copyPending}
               aria-disabled={props.copyPending ? "true" : undefined}
-              class="pr-diff-compactButton"
+              {...stylex.attrs(baseStyles.button, styles.compactButton)}
               onClick={() =>
                 props.send({
                   kind: "CopyHunkRequested",
@@ -352,7 +620,7 @@ const DiffRowCells = (props: {
       </Match>
       <Match when={noticeRow()}>
         {(row) => (
-          <div aria-colspan="3" class="pr-diff-noticeCell" role="cell">
+          <div aria-colspan="3" {...stylex.attrs(styles.fullCell, styles.hunkCell)} role="cell">
             {row().notice === "binary"
               ? "Binary file changed."
               : "File changed without textual hunks."}
@@ -364,27 +632,34 @@ const DiffRowCells = (props: {
           <>
             <div
               aria-label={`Old line ${diffLineNumbers(row().line).oldLine ?? "none"}`}
-              class="pr-diff-lineNumber"
+              {...stylex.attrs(styles.lineCell, styles.lineNumber)}
               role="cell"
             >
               {diffLineNumbers(row().line).oldLine ?? ""}
             </div>
             <div
               aria-label={`New line ${diffLineNumbers(row().line).newLine ?? "none"}`}
-              class="pr-diff-lineNumber"
+              {...stylex.attrs(styles.lineCell, styles.lineNumber)}
               role="cell"
             >
               {diffLineNumbers(row().line).newLine ?? ""}
             </div>
-            <div class="pr-diff-source" role="cell">
-              <div class="pr-diff-sourceContent">
-                <span class="pr-diff-lineKind">{sourceKindLabel(row().kind)}</span>
-                <span aria-hidden="true" class="pr-diff-prefix">
+            <div
+              {...stylex.attrs(styles.lineCell, styles.source, sourceKindStyle(row().kind))}
+              data-diff-source=""
+              role="cell"
+            >
+              <div {...stylex.attrs(styles.sourceContent)} data-diff-source-content="">
+                <span {...stylex.attrs(styles.lineKind)}>{sourceKindLabel(row().kind)}</span>
+                <span
+                  aria-hidden="true"
+                  {...stylex.attrs(styles.prefix, row().kind !== "context" && styles.changedPrefix)}
+                >
                   {sourcePrefix(row().kind)}
                 </span>
                 <HighlightedSource content={row().line.content} matches={props.matches} />
                 <Show when={row().line.missingNewline}>
-                  <span class="pr-diff-missingNewline"> No newline at end of file</span>
+                  <span {...stylex.attrs(styles.missingNewline)}> No newline at end of file</span>
                 </Show>
               </div>
             </div>
@@ -400,7 +675,8 @@ const HighlightedSource = (props: { content: string; matches: MountedSearchMatch
     {(segment) =>
       segment.match ? (
         <mark
-          classList={{ "pr-diff-searchMatch--active": segment.match.active }}
+          {...stylex.attrs(styles.mark, segment.match.active && styles.activeMark)}
+          data-search-match={segment.match.active ? "active" : undefined}
           data-match-offset={segment.match.offset}
           data-match-length={segment.match.length}
         >
@@ -424,6 +700,17 @@ const highlightedSegments = (content: string, matches: MountedSearchMatch[]) => 
   }
   if (cursor < content.length) result.push({ match: null, text: content.slice(cursor) });
   return result;
+};
+
+const sourceKindStyle = (kind: "context" | "addition" | "deletion") => {
+  switch (kind) {
+    case "context":
+      return null;
+    case "addition":
+      return styles.addition;
+    case "deletion":
+      return styles.deletion;
+  }
 };
 
 const sourcePrefix = (kind: "context" | "addition" | "deletion"): string => {

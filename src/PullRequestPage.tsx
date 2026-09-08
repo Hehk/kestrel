@@ -1,4 +1,5 @@
 import { Tooltip } from "@kobalte/core/tooltip";
+import * as stylex from "@stylexjs/stylex";
 import { createMemo, For, Match, Show, Switch } from "solid-js";
 import type { Accessor, JSX, ParentProps } from "solid-js";
 import { appStore, send } from "./store";
@@ -18,6 +19,461 @@ import PullRequestsError from "./PullRequestError";
 import type { PullRequestView } from "./router";
 import { DiffView } from "./diff/DiffView";
 import { diffFileHunks } from "./diff/layout";
+import { styles as baseStyles } from "./styles/base.stylex";
+import { tokens } from "./styles/tokens.stylex";
+
+const mobile = "@media (max-width: 640px)";
+const narrow = "@media (max-width: 1100px)";
+const syncing = stylex.keyframes({ to: { transform: "rotate(360deg)" } });
+
+const styles = stylex.create({
+  page: {
+    width: { default: "min(1280px, calc(100vw - 32px))", [mobile]: "calc(100vw - 24px)" },
+    display: "grid",
+    gridTemplateAreas: {
+      default: '"header header header" "left content right"',
+      [narrow]: '"header" "left" "content" "right"',
+    },
+    gridTemplateColumns: {
+      default: "minmax(0, 1fr) minmax(0, 720px) minmax(0, 1fr)",
+      [narrow]: "minmax(0, 720px)",
+    },
+    alignItems: "start",
+    justifyContent: { default: "normal", [narrow]: "center" },
+    margin: "0 auto",
+    padding: { default: "2rem 0 1rem", [mobile]: "24px 0 48px" },
+  },
+  diffPage: {
+    width: "auto",
+    gridTemplateAreas: '"header" "diff"',
+    gridTemplateColumns: "minmax(0, 1fr)",
+    marginRight: {
+      default: "calc(16px + env(safe-area-inset-right))",
+      [mobile]: "calc(12px + env(safe-area-inset-right))",
+    },
+    marginLeft: {
+      default: "calc(16px + env(safe-area-inset-left))",
+      [mobile]: "calc(12px + env(safe-area-inset-left))",
+    },
+  },
+  header: {
+    gridArea: "header",
+    display: "grid",
+    gridTemplateColumns: {
+      default: "minmax(0, 1fr) minmax(0, 720px) minmax(0, 1fr)",
+      [narrow]: "minmax(0, 720px)",
+    },
+    justifyContent: { default: "normal", [narrow]: "center" },
+    minWidth: 0,
+    marginBottom: "1.5rem",
+  },
+  headerSection: {
+    minWidth: 0,
+    boxSizing: "border-box",
+    padding: "0 1rem",
+    gridColumn: { default: null, [narrow]: 1 },
+  },
+  headerActions: {
+    gridColumn: 1,
+    marginBottom: { default: 0, [narrow]: "1rem" },
+  },
+  heading: {
+    gridColumn: { default: 2, [narrow]: 1 },
+  },
+  title: {
+    marginTop: 0,
+  },
+  views: {
+    display: "flex",
+    gap: "1rem",
+    marginTop: "0.75rem",
+    paddingBottom: "0.45rem",
+    borderBottom: `1px solid ${tokens.rule}`,
+    fontFamily: tokens.mono,
+    fontSize: "0.85rem",
+  },
+  viewLink: {
+    color: { default: tokens.link, ":visited": tokens.link },
+  },
+  currentViewLink: {
+    color: { default: tokens.text, ":visited": tokens.text },
+    fontWeight: 700,
+    textDecoration: "none",
+  },
+  diffContent: {
+    gridArea: "diff",
+    minWidth: 0,
+    boxSizing: "border-box",
+    padding: "1.25rem 1rem",
+    borderTop: `1px solid ${tokens.rule}`,
+  },
+  diffHeading: {
+    margin: "0 0 0.5rem",
+  },
+  content: {
+    gridArea: "content",
+    minWidth: 0,
+    boxSizing: "border-box",
+    padding: "0 1rem",
+  },
+  sidebar: {
+    minWidth: 0,
+    boxSizing: "border-box",
+    padding: "0 1rem",
+  },
+  leftSidebar: {
+    gridArea: "left",
+    position: { default: "sticky", [narrow]: "static" },
+    top: { default: "2rem", [narrow]: "auto" },
+    height: { default: "calc(100svh - 3rem)", [narrow]: "auto" },
+    display: { default: "flex", [narrow]: "block" },
+    flexDirection: "column",
+    gap: "1.5rem",
+    marginBottom: { default: 0, "[data-has-content]": 0, [narrow]: "2rem" },
+  },
+  rightSidebar: {
+    gridArea: "right",
+    display: "grid",
+    gap: "1.5rem",
+    marginTop: { default: 0, [narrow]: "2rem" },
+  },
+  sidebarActions: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "flex-start",
+    gap: "0.35rem",
+    marginBottom: { default: 0, [narrow]: "1.5rem" },
+  },
+  sidebarAction: {
+    width: "2rem",
+    height: "2rem",
+    flex: "0 0 2rem",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    boxSizing: "border-box",
+    padding: 0,
+    color: { default: tokens.text, ":visited": tokens.text },
+    backgroundColor: {
+      default: "transparent",
+      ":hover": `color-mix(in srgb, ${tokens.text} 6%, transparent)`,
+    },
+    borderWidth: 0,
+    borderRadius: tokens.borderRadius,
+    textDecoration: "none",
+    cursor: { default: null, ":disabled": "wait" },
+    opacity: { default: 1, ":disabled": 0.65 },
+  },
+  pageBack: {
+    width: "2rem",
+    marginBottom: "1rem",
+  },
+  syncIcon: {
+    animationName: { default: syncing, "@media (prefers-reduced-motion: reduce)": "none" },
+    animationDuration: "0.8s",
+    animationTimingFunction: "linear",
+    animationIterationCount: "infinite",
+  },
+  detailSections: {
+    display: "grid",
+    gap: "1rem",
+    marginTop: "1rem",
+  },
+  detailSection: {
+    display: "grid",
+    gap: "0.45rem",
+    paddingTop: "0.85rem",
+  },
+  detailHeading: {
+    margin: 0,
+    fontSize: "1rem",
+  },
+  description: {
+    padding: "0.25rem 0 1.5rem",
+  },
+  descriptionText: {
+    margin: 0,
+    lineHeight: 1.7,
+    whiteSpace: "pre-wrap",
+    overflowWrap: "anywhere",
+  },
+  activityHeading: {
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: "1rem",
+  },
+  activityItemHeading: {
+    display: "flex",
+    alignItems: { default: "flex-start", [mobile]: "stretch" },
+    justifyContent: "space-between",
+    gap: "1rem",
+    flexDirection: { default: "row", [mobile]: "column" },
+  },
+  activityList: {
+    padding: 0,
+    margin: 0,
+    listStyle: "none",
+  },
+  activityItem: {
+    position: "relative",
+    padding: "0.85rem 0 1rem 1.25rem",
+    "::before": {
+      position: "absolute",
+      top: "1.15rem",
+      left: "0.1rem",
+      width: "0.45rem",
+      height: "0.45rem",
+      content: '""',
+      backgroundColor: tokens.textMuted,
+      borderRadius: "50%",
+    },
+    "::after": {
+      position: "absolute",
+      top: "1.6rem",
+      bottom: "-0.25rem",
+      left: "0.3rem",
+      width: "1px",
+      content: '""',
+      backgroundColor: tokens.rule,
+      display: { default: "block", ":last-child": "none" },
+    },
+  },
+  activityHeadingText: {
+    minWidth: 0,
+  },
+  activityTime: {
+    flex: "0 0 auto",
+    whiteSpace: "nowrap",
+  },
+  activityBody: {
+    maxWidth: "66ch",
+    margin: "0.65rem 0 0",
+    lineHeight: 1.6,
+    whiteSpace: "pre-wrap",
+    overflowWrap: "anywhere",
+  },
+  reviewComments: {
+    display: "grid",
+    gap: "0.75rem",
+    padding: "0.75rem 0 0",
+    margin: "0.75rem 0 0",
+    listStyle: "none",
+    borderTop: `1px solid ${tokens.rule}`,
+  },
+  reviewComment: {
+    paddingLeft: "0.75rem",
+    borderLeft: `2px solid ${tokens.rule}`,
+  },
+  activityTruncated: {
+    margin: "0.75rem 0 0",
+    color: tokens.textMuted,
+    fontSize: "0.88rem",
+  },
+  loadOlder: {
+    justifySelf: "start",
+    marginTop: "0.35rem",
+  },
+  sidebarSection: {
+    minHeight: 0,
+    display: "grid",
+    gap: "0.45rem",
+  },
+  scrollableSidebarSection: {
+    overflowY: { default: "auto", [narrow]: "visible" },
+  },
+  reviewSection: {
+    marginBottom: { default: 0, [narrow]: "1.5rem" },
+  },
+  sidebarHeader: {
+    display: "flex",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+    gap: "1rem",
+    paddingInline: "0.25rem",
+  },
+  sidebarTitle: {
+    margin: 0,
+    fontFamily: tokens.mono,
+    fontSize: tokens.fontSizeExtraSmall,
+    lineHeight: 1.45,
+  },
+  sidebarCount: {
+    color: tokens.textMuted,
+    fontFamily: tokens.mono,
+    fontSize: tokens.fontSizeExtraSmall,
+    lineHeight: 1.45,
+  },
+  sidebarList: {
+    display: "grid",
+    gap: "0.125rem",
+    padding: 0,
+    margin: 0,
+    listStyle: "none",
+  },
+  sidebarItem: {
+    minWidth: 0,
+  },
+  sidebarDataRow: {
+    minWidth: 0,
+    minHeight: "1.5rem",
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) auto",
+    alignItems: "baseline",
+    gap: "0.5rem",
+    paddingInline: "0.25rem",
+  },
+  sidebarData: {
+    fontFamily: tokens.mono,
+    fontSize: tokens.fontSizeExtraSmall,
+    lineHeight: 1.45,
+  },
+  sidebarDataPrimary: {
+    minWidth: 0,
+    overflowWrap: "anywhere",
+  },
+  sidebarDataSecondary: {
+    color: tokens.textMuted,
+    whiteSpace: "nowrap",
+  },
+  sidebarEmpty: {
+    margin: 0,
+    paddingInline: "0.25rem",
+    color: tokens.textMuted,
+    fontFamily: tokens.mono,
+    fontSize: tokens.fontSizeExtraSmall,
+    lineHeight: 1.45,
+  },
+  reviewDecision: {
+    minHeight: "1.5rem",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "1rem",
+    paddingInline: "0.25rem",
+    margin: 0,
+  },
+  metadataList: {
+    display: "grid",
+    gap: "0.125rem",
+    paddingInline: "0.25rem",
+    margin: 0,
+  },
+  metadataItem: {
+    minHeight: "1.5rem",
+    display: "grid",
+    gridTemplateColumns: "4.5rem minmax(0, 1fr)",
+    alignItems: "baseline",
+    gap: "0.5rem",
+  },
+  metadataTerm: {
+    color: tokens.textMuted,
+    fontFamily: tokens.mono,
+    fontSize: tokens.fontSizeExtraSmall,
+    lineHeight: 1.45,
+  },
+  metadataValue: {
+    minWidth: 0,
+    margin: 0,
+    overflowWrap: "anywhere",
+    textAlign: "right",
+    fontFamily: tokens.mono,
+    fontSize: tokens.fontSizeExtraSmall,
+    lineHeight: 1.45,
+  },
+  sidebarTime: {
+    whiteSpace: "nowrap",
+  },
+  statusTrigger: {
+    width: "100%",
+    minHeight: "1.5rem",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "1rem",
+    padding: "0 0.25rem",
+    color: tokens.text,
+    backgroundColor: {
+      default: "transparent",
+      ":hover": `color-mix(in srgb, ${tokens.text} 6%, transparent)`,
+      "[data-popup-open]": `color-mix(in srgb, ${tokens.text} 6%, transparent)`,
+    },
+    borderWidth: 0,
+    borderRadius: tokens.borderRadius,
+    textAlign: "left",
+  },
+  statusName: {
+    fontFamily: tokens.mono,
+    fontSize: tokens.fontSizeExtraSmall,
+    lineHeight: 1.45,
+  },
+  statusIcon: {
+    display: "inline-flex",
+    flex: "0 0 auto",
+    color: tokens.statusNeutral,
+  },
+  statusSuccess: { color: tokens.statusSuccess },
+  statusFailure: { color: tokens.statusFailure },
+  statusPending: { color: tokens.statusPending },
+  tooltipPositioner: {
+    zIndex: 20,
+  },
+  tooltip: {
+    display: "grid",
+    gap: "0.2rem",
+    boxSizing: "border-box",
+    maxWidth: "min(20rem, calc(100vw - 24px))",
+    padding: "0.5rem 0.65rem",
+    color: tokens.text,
+    backgroundColor: tokens.background,
+    border: `1px solid ${tokens.border}`,
+    borderRadius: tokens.borderRadius,
+    boxShadow: "0.25rem 0.25rem 0 rgb(0 0 0 / 12%)",
+    fontFamily: tokens.mono,
+    fontSize: tokens.fontSizeExtraSmall,
+    lineHeight: 1.45,
+    outline: "none",
+  },
+  checkTooltip: {
+    width: "min(20rem, calc(100vw - 24px))",
+  },
+  tooltipSecondary: {
+    color: tokens.textMuted,
+  },
+  tooltipText: {
+    margin: 0,
+  },
+  tooltipDetailTitle: {
+    fontWeight: 700,
+  },
+  tooltipLink: {
+    display: "inline-block",
+    marginTop: "0.3rem",
+  },
+  eyebrow: {
+    margin: "0 0 0.35rem",
+    color: tokens.textMuted,
+    fontFamily: tokens.mono,
+    fontSize: "0.78rem",
+  },
+  repoStatus: {
+    maxWidth: "66ch",
+    margin: 0,
+    color: tokens.textMuted,
+    fontSize: "0.92rem",
+  },
+  repoPrMeta: {
+    color: tokens.textMuted,
+    fontFamily: tokens.mono,
+    fontSize: "0.78rem",
+  },
+  message: {
+    width: { default: "min(720px, calc(100vw - 32px))", [mobile]: "min(100% - 24px, 720px)" },
+    margin: "0 auto",
+    padding: { default: "40px 0 64px", [mobile]: "24px 0 48px" },
+    textAlign: "left",
+  },
+});
 
 // TODO: Figure out a better way to handle all the error cases
 const PullRequestPage = ({
@@ -34,29 +490,45 @@ const PullRequestPage = ({
     const state = repositories();
 
     if (state.status === "loading") {
-      return { content: <p>Loading repository...</p>, kind: "message", title: repo };
+      return {
+        content: <p {...stylex.attrs(baseStyles.paragraph)}>Loading repository...</p>,
+        kind: "message",
+        title: repo,
+      };
     }
 
     if (state.status === "error") {
-      return { content: <p>Repositories could not be loaded.</p>, kind: "message", title: repo };
+      return {
+        content: <p {...stylex.attrs(baseStyles.paragraph)}>Repositories could not be loaded.</p>,
+        kind: "message",
+        title: repo,
+      };
     }
 
     const repository = state.repositories.find(
       (candidate) => candidate.fullName === repo.toLowerCase(),
     );
     if (repository === undefined) {
-      return { content: <p>Repository is not tracked.</p>, kind: "message", title: repo };
+      return {
+        content: <p {...stylex.attrs(baseStyles.paragraph)}>Repository is not tracked.</p>,
+        kind: "message",
+        title: repo,
+      };
     }
 
     const number = Number(id);
     if (!Number.isInteger(number) || number <= 0) {
-      return { content: <p>Pull request number is invalid.</p>, kind: "message", title: repo };
+      return {
+        content: <p {...stylex.attrs(baseStyles.paragraph)}>Pull request number is invalid.</p>,
+        kind: "message",
+        title: repo,
+      };
     }
 
     const pullRequests = state.pullRequests[repository.fullName];
     if (pullRequests === undefined) {
       return {
-        content: <p>Loading pull requests...</p>,
+        content: <p {...stylex.attrs(baseStyles.paragraph)}>Loading pull requests...</p>,
         kind: "message",
         title: `${repo} #${id}`,
       };
@@ -65,7 +537,9 @@ const PullRequestPage = ({
     if (pullRequests.status === "loading" || pullRequests.status === "syncing") {
       return {
         content: (
-          <p>{pullRequests.status === "loading" ? "Loading" : "Syncing"} pull requests...</p>
+          <p {...stylex.attrs(baseStyles.paragraph)}>
+            {pullRequests.status === "loading" ? "Loading" : "Syncing"} pull requests...
+          </p>
         ),
         kind: "message",
         title: `${repo} #${id}`,
@@ -85,8 +559,9 @@ const PullRequestPage = ({
       return {
         content: (
           <>
-            <p>Pull request is not stored yet.</p>
+            <p {...stylex.attrs(baseStyles.paragraph)}>Pull request is not stored yet.</p>
             <button
+              {...stylex.attrs(baseStyles.button)}
               onClick={() =>
                 send({
                   kind: "Repositories",
@@ -157,17 +632,26 @@ const PullRequestContent = (props: {
   const details = () => getDetails(props.data().pullRequestDetail);
 
   return (
-    <div class="PullRequestPage" classList={{ "PullRequestPage--diff": props.view === "diff" }}>
+    <div
+      data-pr-view={props.view}
+      {...stylex.attrs(styles.page, props.view === "diff" && styles.diffPage)}
+    >
       <PullRequestHeader data={props.data} view={props.view} />
       <Show when={props.view === "overview"} fallback={<PullRequestDiff data={props.data} />}>
-        <aside aria-label="Pull request status" class="PullRequestPage-leftSidebar">
+        <aside
+          aria-label="Pull request status"
+          {...stylex.attrs(styles.sidebar, styles.leftSidebar)}
+        >
           <PullRequestReviewStatus details={details} />
           <PullRequestChecks details={details} />
         </aside>
-        <section class="PullRequestPage-content">
+        <section {...stylex.attrs(styles.content)} data-pr-content="">
           <PullRequestDetailPanel data={props.data} />
         </section>
-        <aside aria-label="Pull request metadata" class="PullRequestPage-rightSidebar">
+        <aside
+          aria-label="Pull request metadata"
+          {...stylex.attrs(styles.sidebar, styles.rightSidebar)}
+        >
           <PullRequestMetadata data={props.data} />
           <Show when={details()}>
             {(detail) => (
@@ -187,14 +671,21 @@ const PullRequestHeader = (props: {
   data: Accessor<PullRequestPageData>;
   view: PullRequestView;
 }) => (
-  <header class="PullRequestPage-header">
-    <div class="PullRequestPage-headerActions">
+  <header {...stylex.attrs(styles.header)}>
+    <div {...stylex.attrs(styles.headerSection, styles.headerActions)}>
       <PullRequestActions data={props.data} view={props.view} />
     </div>
-    <div class="PullRequestPage-heading">
-      <h1 class="PullRequestPage-title">{props.data().pullRequest.title}</h1>
-      <nav aria-label="Pull request views" class="PullRequestPage-views">
+    <div {...stylex.attrs(styles.headerSection, styles.heading)}>
+      <h1 {...stylex.attrs(baseStyles.heading, baseStyles.heading1, styles.title)}>
+        {props.data().pullRequest.title}
+      </h1>
+      <nav aria-label="Pull request views" {...stylex.attrs(styles.views)}>
         <Link
+          {...stylex.attrs(
+            baseStyles.link,
+            styles.viewLink,
+            props.view === "overview" && styles.currentViewLink,
+          )}
           aria-current={props.view === "overview" ? "page" : undefined}
           to={{
             name: "PullRequest",
@@ -206,6 +697,11 @@ const PullRequestHeader = (props: {
           Overview
         </Link>
         <Link
+          {...stylex.attrs(
+            baseStyles.link,
+            styles.viewLink,
+            props.view === "diff" && styles.currentViewLink,
+          )}
           aria-current={props.view === "diff" ? "page" : undefined}
           to={{
             name: "PullRequest",
@@ -231,13 +727,19 @@ const PullRequestDiff = (props: { data: Accessor<PullRequestPageData> }) => {
   };
 
   return (
-    <section aria-label="Pull request diff" class="PullRequestPage-diffContent">
-      <p class="eyebrow">Changed files</p>
-      <h2>Diff view</h2>
+    <section
+      aria-label="Pull request diff"
+      data-pr-diff-content=""
+      {...stylex.attrs(styles.diffContent)}
+    >
+      <p {...stylex.attrs(baseStyles.paragraph, styles.eyebrow)}>Changed files</p>
+      <h2 {...stylex.attrs(baseStyles.heading, baseStyles.heading2, styles.diffHeading)}>
+        Diff view
+      </h2>
       <div aria-live="polite">
         <Switch>
           <Match when={detailState()?.status === "syncing"}>
-            <p class="repo-pr-status">Syncing pull request details...</p>
+            <p {...stylex.attrs(styles.repoStatus)}>Syncing pull request details...</p>
           </Match>
           <Match when={detailState()?.status === "error"}>
             <PullRequestDetailError
@@ -251,7 +753,9 @@ const PullRequestDiff = (props: { data: Accessor<PullRequestPageData> }) => {
         <Show
           when={diff()}
           fallback={
-            <Switch fallback={<p class="repo-pr-status">Loading pull request diff...</p>}>
+            <Switch
+              fallback={<p {...stylex.attrs(styles.repoStatus)}>Loading pull request diff...</p>}
+            >
               <Match when={error()}>
                 {(currentError) => <PullRequestDiffError error={currentError()} />}
               </Match>
@@ -260,13 +764,15 @@ const PullRequestDiff = (props: { data: Accessor<PullRequestPageData> }) => {
         >
           <>
             <Show when={diffState()?.status === "loading"}>
-              <p class="repo-pr-status">Refreshing pull request diff...</p>
+              <p {...stylex.attrs(styles.repoStatus)}>Refreshing pull request diff...</p>
             </Show>
             <Show when={error()}>
               {(currentError) => (
                 <>
                   <PullRequestDiffError error={currentError()} />
-                  <p class="repo-pr-status">Showing the last successfully loaded diff.</p>
+                  <p {...stylex.attrs(styles.repoStatus)}>
+                    Showing the last successfully loaded diff.
+                  </p>
                 </>
               )}
             </Show>
@@ -279,7 +785,7 @@ const PullRequestDiff = (props: { data: Accessor<PullRequestPageData> }) => {
             keyed
             when={Repositories.pullRequestDiffKey(props.data().repository, props.data().number)}
           >
-            <div class="PullRequestPage-diffSummary">
+            <div>
               <PullRequestDiffTotals diff={currentDiff()} />
             </div>
           </Show>
@@ -300,9 +806,9 @@ const PullRequestDiffTotals = (props: { diff: Repositories.PullRequestDiff }) =>
   return (
     <Show
       when={props.diff.files.length > 0}
-      fallback={<p class="repo-pr-status">This pull request has no changed files.</p>}
+      fallback={<p {...stylex.attrs(styles.repoStatus)}>This pull request has no changed files.</p>}
     >
-      <p class="repo-pr-status">
+      <p {...stylex.attrs(styles.repoStatus)}>
         {props.diff.files.length} changed {props.diff.files.length === 1 ? "file" : "files"},{" "}
         {lineCount()} source {lineCount() === 1 ? "line" : "lines"}.
       </p>
@@ -314,43 +820,50 @@ const PullRequestDiffTotals = (props: { diff: Repositories.PullRequestDiff }) =>
 const PullRequestDiffError = ({ error }: { error: Repositories.PullRequestDiffError }) => {
   switch (error) {
     case "authenticationRequired":
-      return <p class="repo-pr-status">Authentication is required to load this diff.</p>;
+      return (
+        <p {...stylex.attrs(styles.repoStatus)}>Authentication is required to load this diff.</p>
+      );
     case "authorizationRequired":
       return (
-        <p class="repo-pr-status">
+        <p {...stylex.attrs(styles.repoStatus)}>
           GitHub App authorization required.{" "}
-          <a href={apiUrl("/api/github-app/authorize")}>Authorize more repos</a>.
+          <a {...stylex.attrs(baseStyles.link)} href={apiUrl("/api/github-app/authorize")}>
+            Authorize more repos
+          </a>
+          .
         </p>
       );
     case "diffParseFailed":
-      return <p class="repo-pr-status">The stored diff could not be parsed.</p>;
+      return <p {...stylex.attrs(styles.repoStatus)}>The stored diff could not be parsed.</p>;
     case "diffResourceLimitExceeded":
-      return <p class="repo-pr-status">The stored diff is too large to display.</p>;
+      return <p {...stylex.attrs(styles.repoStatus)}>The stored diff is too large to display.</p>;
     case "diffUnavailable":
-      return <p class="repo-pr-status">The stored pull request does not include a diff.</p>;
+      return (
+        <p {...stylex.attrs(styles.repoStatus)}>The stored pull request does not include a diff.</p>
+      );
     case "pullRequestNotFound":
-      return <p class="repo-pr-status">Pull request details are not stored yet.</p>;
+      return <p {...stylex.attrs(styles.repoStatus)}>Pull request details are not stored yet.</p>;
     case "repositoryNotTracked":
-      return <p class="repo-pr-status">Repository is not tracked.</p>;
+      return <p {...stylex.attrs(styles.repoStatus)}>Repository is not tracked.</p>;
     case "invalidPullRequest":
     case "invalidRepository":
-      return <p class="repo-pr-status">The pull request diff URL is invalid.</p>;
+      return <p {...stylex.attrs(styles.repoStatus)}>The pull request diff URL is invalid.</p>;
     case "loadFailed":
-      return <p class="repo-pr-status">The pull request diff could not be loaded.</p>;
+      return <p {...stylex.attrs(styles.repoStatus)}>The pull request diff could not be loaded.</p>;
   }
 };
 
 const PullRequestMessage = ({ children, title }: ParentProps<{ title: string }>) => (
-  <section class="default-page page-card">
+  <section {...stylex.attrs(styles.message)}>
     <Link
       aria-label="Back to home"
-      class="pr-page-back pr-sidebar-action"
+      {...stylex.attrs(baseStyles.link, styles.sidebarAction, styles.pageBack)}
       title="Back to home"
       to={{ name: "Home" }}
     >
       <ArrowLeftIcon />
     </Link>
-    <h1>{title}</h1>
+    <h1 {...stylex.attrs(baseStyles.heading, baseStyles.heading1, styles.title)}>{title}</h1>
     {children}
   </section>
 );
@@ -367,12 +880,12 @@ const PullRequestActions = (props: {
     props.data().pullRequest.syncedAt;
 
   return (
-    <nav aria-label="Pull request actions" class="pr-sidebar-actions">
+    <nav aria-label="Pull request actions" {...stylex.attrs(styles.sidebarActions)}>
       <Tooltip closeDelay={150} gutter={8} ignoreSafeArea openDelay={0}>
         <Tooltip.Trigger
           as={Link}
           aria-label="Back to home"
-          class="pr-sidebar-action"
+          {...stylex.attrs(baseStyles.link, styles.sidebarAction)}
           to={{ name: "Home" }}
         >
           <ArrowLeftIcon />
@@ -383,7 +896,7 @@ const PullRequestActions = (props: {
         <Tooltip.Trigger
           as="a"
           aria-label="Open on GitHub"
-          class="pr-sidebar-action"
+          {...stylex.attrs(baseStyles.link, styles.sidebarAction)}
           href={props.data().pullRequest.htmlUrl}
         >
           <GitHubIcon />
@@ -394,7 +907,7 @@ const PullRequestActions = (props: {
         <Tooltip.Trigger
           aria-busy={props.data().pullRequestDetail?.status === "syncing"}
           aria-label="Sync pull request from GitHub"
-          class="pr-sidebar-action"
+          {...stylex.attrs(baseStyles.button, styles.sidebarAction)}
           disabled={
             props.data().pullRequestDetail?.status === "loading" ||
             props.data().pullRequestDetail?.status === "loadingTimeline" ||
@@ -414,16 +927,15 @@ const PullRequestActions = (props: {
           type="button"
         >
           <SyncIcon
-            class={
-              props.data().pullRequestDetail?.status === "syncing"
-                ? "pr-sidebar-sync-icon"
-                : undefined
-            }
+            data-syncing={props.data().pullRequestDetail?.status === "syncing" ? "" : undefined}
+            {...stylex.attrs(
+              props.data().pullRequestDetail?.status === "syncing" && styles.syncIcon,
+            )}
           />
         </Tooltip.Trigger>
         <PullRequestTooltip>
           <span>Sync pull request from GitHub</span>
-          <span class="pr-tooltip-secondary">
+          <span {...stylex.attrs(styles.tooltipSecondary)}>
             Last synced:{" "}
             {lastSyncedAt() === undefined ? "Never" : formatLocalDateTime(lastSyncedAt() ?? "")}
           </span>
@@ -435,7 +947,9 @@ const PullRequestActions = (props: {
 
 const PullRequestTooltip = ({ children }: ParentProps) => (
   <Tooltip.Portal>
-    <Tooltip.Content class="pr-tooltip pr-tooltip-positioner">{children}</Tooltip.Content>
+    <Tooltip.Content {...stylex.attrs(styles.tooltip, styles.tooltipPositioner)}>
+      {children}
+    </Tooltip.Content>
   </Tooltip.Portal>
 );
 
@@ -453,12 +967,12 @@ const PullRequestDetailPanel = (props: { data: Accessor<PullRequestPageData> }) 
   const detailState = () => props.data().pullRequestDetail;
   const detail = () => getDetails(detailState());
   return (
-    <Switch fallback={<p class="repo-pr-status">Pull request details not loaded.</p>}>
+    <Switch fallback={<p {...stylex.attrs(styles.repoStatus)}>Pull request details not loaded.</p>}>
       <Match when={detailState()?.status === "loading"}>
-        <p class="repo-pr-status">Loading pull request details...</p>
+        <p {...stylex.attrs(styles.repoStatus)}>Loading pull request details...</p>
       </Match>
       <Match when={detailState()?.status === "syncing"}>
-        <p class="repo-pr-status">Syncing pull request details...</p>
+        <p {...stylex.attrs(styles.repoStatus)}>Syncing pull request details...</p>
       </Match>
       <Match when={detailState()?.status === "error" && detail() === undefined}>
         <PullRequestDetailError
@@ -469,7 +983,7 @@ const PullRequestDetailPanel = (props: { data: Accessor<PullRequestPageData> }) 
         />
       </Match>
       <Match when={detail()}>
-        <div class="pr-detail-sections">
+        <div {...stylex.attrs(styles.detailSections)}>
           <Show when={detailState()?.status === "error"}>
             <PullRequestDetailError
               error={
@@ -490,36 +1004,43 @@ const PullRequestDetailError = ({ error }: { error: Repositories.PullRequestsErr
   switch (error) {
     case "authorizationRequired":
       return (
-        <p class="repo-pr-status">
+        <p {...stylex.attrs(styles.repoStatus)}>
           GitHub App authorization required.{" "}
-          <a href={apiUrl("/api/github-app/authorize")}>Authorize more repos</a>.
+          <a {...stylex.attrs(baseStyles.link)} href={apiUrl("/api/github-app/authorize")}>
+            Authorize more repos
+          </a>
+          .
         </p>
       );
     case "pullRequestNotFound":
-      return <p class="repo-pr-status">Pull request details are not stored yet.</p>;
+      return <p {...stylex.attrs(styles.repoStatus)}>Pull request details are not stored yet.</p>;
     case "repositoryNotTracked":
-      return <p class="repo-pr-status">Repository is not tracked.</p>;
+      return <p {...stylex.attrs(styles.repoStatus)}>Repository is not tracked.</p>;
     case "syncFailed":
-      return <p class="repo-pr-status">Pull request details could not be loaded.</p>;
+      return <p {...stylex.attrs(styles.repoStatus)}>Pull request details could not be loaded.</p>;
   }
 };
 
 const PullRequestFiles = (props: { files: Accessor<Repositories.PullRequestDetail["files"]> }) => {
   return (
-    <section class="pr-sidebar-section">
-      <header class="pr-sidebar-header">
-        <h2 class="pr-sidebar-title">Files changed</h2>
-        <span class="pr-sidebar-count">{props.files().length}</span>
+    <section {...stylex.attrs(styles.sidebarSection)}>
+      <header {...stylex.attrs(styles.sidebarHeader)}>
+        <h2 {...stylex.attrs(baseStyles.heading, styles.sidebarTitle)}>Files changed</h2>
+        <span {...stylex.attrs(styles.sidebarCount)}>{props.files().length}</span>
       </header>
       {props.files().length === 0 ? (
-        <p class="pr-sidebar-empty">None stored.</p>
+        <p {...stylex.attrs(styles.sidebarEmpty)}>None stored.</p>
       ) : (
-        <ul class="pr-sidebar-list">
+        <ul {...stylex.attrs(styles.sidebarList)}>
           <For each={props.files()}>
             {(file) => (
-              <li class="pr-sidebar-data-row">
-                <span class="pr-sidebar-data-primary">{file.filename}</span>
-                <span class="pr-sidebar-data-secondary">{file.status}</span>
+              <li {...stylex.attrs(styles.sidebarDataRow)}>
+                <span {...stylex.attrs(styles.sidebarData, styles.sidebarDataPrimary)}>
+                  {file.filename}
+                </span>
+                <span {...stylex.attrs(styles.sidebarData, styles.sidebarDataSecondary)}>
+                  {file.status}
+                </span>
               </li>
             )}
           </For>
@@ -533,20 +1054,24 @@ const PullRequestCommits = (props: {
   commits: Accessor<Repositories.PullRequestDetail["commits"]>;
 }) => {
   return (
-    <section class="pr-sidebar-section">
-      <header class="pr-sidebar-header">
-        <h2 class="pr-sidebar-title">Commits</h2>
-        <span class="pr-sidebar-count">{props.commits().length}</span>
+    <section {...stylex.attrs(styles.sidebarSection)}>
+      <header {...stylex.attrs(styles.sidebarHeader)}>
+        <h2 {...stylex.attrs(baseStyles.heading, styles.sidebarTitle)}>Commits</h2>
+        <span {...stylex.attrs(styles.sidebarCount)}>{props.commits().length}</span>
       </header>
       {props.commits().length === 0 ? (
-        <p class="pr-sidebar-empty">None stored.</p>
+        <p {...stylex.attrs(styles.sidebarEmpty)}>None stored.</p>
       ) : (
-        <ul class="pr-sidebar-list">
+        <ul {...stylex.attrs(styles.sidebarList)}>
           <For each={props.commits()}>
             {(commit) => (
-              <li class="pr-sidebar-data-row">
-                <span class="pr-sidebar-data-primary">{commit.message}</span>
-                <span class="pr-sidebar-data-secondary">{commit.sha.slice(0, 7)}</span>
+              <li {...stylex.attrs(styles.sidebarDataRow)}>
+                <span {...stylex.attrs(styles.sidebarData, styles.sidebarDataPrimary)}>
+                  {commit.message}
+                </span>
+                <span {...stylex.attrs(styles.sidebarData, styles.sidebarDataSecondary)}>
+                  {commit.sha.slice(0, 7)}
+                </span>
               </li>
             )}
           </For>
@@ -558,11 +1083,11 @@ const PullRequestCommits = (props: {
 
 const PullRequestDescription = (props: { body: Accessor<string | null | undefined> }) => {
   return (
-    <section aria-label="Pull request description" class="pr-description">
+    <section aria-label="Pull request description" {...stylex.attrs(styles.description)}>
       {props.body()?.trim() ? (
-        <p>{props.body()}</p>
+        <p {...stylex.attrs(baseStyles.paragraph, styles.descriptionText)}>{props.body()}</p>
       ) : (
-        <p class="repo-pr-status">No description provided.</p>
+        <p {...stylex.attrs(styles.repoStatus)}>No description provided.</p>
       )}
     </section>
   );
@@ -574,31 +1099,39 @@ const PullRequestTimeline = (props: { data: Accessor<PullRequestPageData> }) => 
   const timeline = () => detail()?.timeline ?? [];
 
   return (
-    <section aria-labelledby="pull-request-activity-heading" class="pr-detail-section pr-activity">
-      <header class="pr-activity-heading">
-        <h2 id="pull-request-activity-heading">Activity</h2>
-        <span class="repo-pr-meta">
+    <section
+      aria-labelledby="pull-request-activity-heading"
+      {...stylex.attrs(styles.detailSection)}
+    >
+      <header {...stylex.attrs(styles.activityHeading)}>
+        <h2
+          {...stylex.attrs(baseStyles.heading, baseStyles.heading2, styles.detailHeading)}
+          id="pull-request-activity-heading"
+        >
+          Activity
+        </h2>
+        <span {...stylex.attrs(styles.repoPrMeta)}>
           {timeline().some((event) => event.id === undefined && event.occurredAt === undefined)
             ? "Stored activity; sync to refresh"
             : "Newest first"}
         </span>
       </header>
       {timeline().length === 0 ? (
-        <p class="repo-pr-status">No activity stored.</p>
+        <p {...stylex.attrs(styles.repoStatus)}>No activity stored.</p>
       ) : (
-        <ol class="pr-activity-list">
+        <ol {...stylex.attrs(styles.activityList)}>
           <For each={timeline()}>{(event) => <PullRequestTimelineItem event={event} />}</For>
         </ol>
       )}
       {detailState()?.status === "timelineError" ? (
-        <p class="repo-pr-status" role="alert">
+        <p {...stylex.attrs(styles.repoStatus)} role="alert">
           Older activity could not be loaded. Try again.
         </p>
       ) : null}
       <Show when={detail()?.timelinePagination.kind === "hasOlder"}>
         <button
           aria-busy={detailState()?.status === "loadingTimeline"}
-          class="pr-activity-load-older"
+          {...stylex.attrs(baseStyles.button, styles.loadOlder)}
           disabled={detailState()?.status === "loadingTimeline"}
           onClick={() =>
             send({
@@ -635,12 +1168,12 @@ const PullRequestTimelineItem = ({ event }: { event: TimelineEvent }) => {
     payload.kind === "reviewed" && payload.reviewComments.kind === "truncated";
 
   return (
-    <li class="pr-activity-item">
-      <div class="pr-activity-item-heading">
-        <span>
+    <li {...stylex.attrs(styles.activityItem)}>
+      <div {...stylex.attrs(styles.activityItemHeading)}>
+        <span {...stylex.attrs(styles.activityHeadingText)}>
           <strong>{actor}</strong>{" "}
           {url ? (
-            <a href={url} rel="noreferrer" target="_blank">
+            <a {...stylex.attrs(baseStyles.link)} href={url} rel="noreferrer" target="_blank">
               {action}
             </a>
           ) : (
@@ -648,34 +1181,40 @@ const PullRequestTimelineItem = ({ event }: { event: TimelineEvent }) => {
           )}
         </span>
         {event.occurredAt ? (
-          <time class="repo-pr-meta" dateTime={event.occurredAt}>
+          <time
+            {...stylex.attrs(styles.repoPrMeta, styles.activityTime)}
+            dateTime={event.occurredAt}
+          >
             {formatLocalDateTime(event.occurredAt)}
           </time>
         ) : null}
       </div>
-      {body ? <p class="pr-activity-body">{body}</p> : null}
+      {body ? <p {...stylex.attrs(styles.activityBody)}>{body}</p> : null}
       {reviewComments.length === 0 ? null : (
-        <ul aria-label="Review comments" class="pr-activity-review-comments">
+        <ul aria-label="Review comments" {...stylex.attrs(styles.reviewComments)}>
           {reviewComments.map((comment) => (
-            <li>
-              <div class="pr-activity-review-comment-heading">
+            <li {...stylex.attrs(styles.reviewComment)}>
+              <div {...stylex.attrs(styles.activityItemHeading)}>
                 <strong>{comment.actorLogin ?? "GitHub"}</strong>
                 {comment.occurredAt ? (
-                  <time class="repo-pr-meta" dateTime={comment.occurredAt}>
+                  <time
+                    {...stylex.attrs(styles.repoPrMeta, styles.activityTime)}
+                    dateTime={comment.occurredAt}
+                  >
                     {formatLocalDateTime(comment.occurredAt)}
                   </time>
                 ) : null}
               </div>
-              {comment.body ? <p class="pr-activity-body">{comment.body}</p> : null}
+              {comment.body ? <p {...stylex.attrs(styles.activityBody)}>{comment.body}</p> : null}
             </li>
           ))}
         </ul>
       )}
       {reviewCommentsTruncated ? (
-        <p class="pr-activity-truncated">
+        <p {...stylex.attrs(styles.activityTruncated)}>
           Additional review comments are available.{" "}
           {url ? (
-            <a href={url} rel="noreferrer" target="_blank">
+            <a {...stylex.attrs(baseStyles.link)} href={url} rel="noreferrer" target="_blank">
               View the complete review on GitHub
             </a>
           ) : (
@@ -758,20 +1297,20 @@ const PullRequestChecks = (props: { details: Accessor<ReturnType<typeof getDetai
   return (
     <Show when={props.details()}>
       {(details) => (
-        <section class="pr-sidebar-section">
-          <header class="pr-sidebar-header">
-            <h2 class="pr-sidebar-title">Checks</h2>
-            <span class="pr-sidebar-count">
+        <section {...stylex.attrs(styles.sidebarSection, styles.scrollableSidebarSection)}>
+          <header {...stylex.attrs(styles.sidebarHeader)}>
+            <h2 {...stylex.attrs(baseStyles.heading, styles.sidebarTitle)}>Checks</h2>
+            <span {...stylex.attrs(styles.sidebarCount)}>
               {details().checkRuns.length + details().statuses.length}
             </span>
           </header>
           {details().checkRuns.length + details().statuses.length === 0 ? (
-            <p class="pr-sidebar-empty">None stored.</p>
+            <p {...stylex.attrs(styles.sidebarEmpty)}>None stored.</p>
           ) : (
-            <ul class="pr-sidebar-list">
+            <ul {...stylex.attrs(styles.sidebarList)}>
               <For each={details().checkRuns}>
                 {(check) => (
-                  <li class="pr-sidebar-item">
+                  <li {...stylex.attrs(styles.sidebarItem)}>
                     <PullRequestStatusIcon
                       label={check.name}
                       state={check.state}
@@ -784,7 +1323,7 @@ const PullRequestChecks = (props: { details: Accessor<ReturnType<typeof getDetai
               </For>
               <For each={details().statuses}>
                 {(status) => (
-                  <li class="pr-sidebar-item">
+                  <li {...stylex.attrs(styles.sidebarItem)}>
                     <PullRequestStatusIcon
                       description={status.description}
                       label={status.context}
@@ -804,31 +1343,36 @@ const PullRequestChecks = (props: { details: Accessor<ReturnType<typeof getDetai
 
 const PullRequestMetadata = (props: { data: Accessor<PullRequestPageData> }) => {
   return (
-    <section class="pr-sidebar-section pr-sidebar-metadata">
-      <header class="pr-sidebar-header">
-        <h2 class="pr-sidebar-title">Details</h2>
+    <section {...stylex.attrs(styles.sidebarSection)}>
+      <header {...stylex.attrs(styles.sidebarHeader)}>
+        <h2 {...stylex.attrs(baseStyles.heading, styles.sidebarTitle)}>Details</h2>
       </header>
-      <dl class="pr-sidebar-metadata-list">
-        <div class="pr-sidebar-metadata-item">
-          <dt>Repository</dt>
-          <dd>{props.data().repository.fullName}</dd>
+      <dl {...stylex.attrs(styles.metadataList)}>
+        <div {...stylex.attrs(styles.metadataItem)}>
+          <dt {...stylex.attrs(styles.metadataTerm)}>Repository</dt>
+          <dd {...stylex.attrs(styles.metadataValue)}>{props.data().repository.fullName}</dd>
         </div>
-        <div class="pr-sidebar-metadata-item">
-          <dt>Number</dt>
-          <dd>#{props.data().pullRequest.number}</dd>
+        <div {...stylex.attrs(styles.metadataItem)}>
+          <dt {...stylex.attrs(styles.metadataTerm)}>Number</dt>
+          <dd {...stylex.attrs(styles.metadataValue)}>#{props.data().pullRequest.number}</dd>
         </div>
-        <div class="pr-sidebar-metadata-item">
-          <dt>State</dt>
-          <dd>{props.data().pullRequest.state}</dd>
+        <div {...stylex.attrs(styles.metadataItem)}>
+          <dt {...stylex.attrs(styles.metadataTerm)}>State</dt>
+          <dd {...stylex.attrs(styles.metadataValue)}>{props.data().pullRequest.state}</dd>
         </div>
-        <div class="pr-sidebar-metadata-item">
-          <dt>Author</dt>
-          <dd>{props.data().pullRequest.authorLogin ?? "Unknown"}</dd>
+        <div {...stylex.attrs(styles.metadataItem)}>
+          <dt {...stylex.attrs(styles.metadataTerm)}>Author</dt>
+          <dd {...stylex.attrs(styles.metadataValue)}>
+            {props.data().pullRequest.authorLogin ?? "Unknown"}
+          </dd>
         </div>
-        <div class="pr-sidebar-metadata-item">
-          <dt>Updated</dt>
-          <dd>
-            <time class="pr-sidebar-time" dateTime={props.data().pullRequest.updatedAt}>
+        <div {...stylex.attrs(styles.metadataItem)}>
+          <dt {...stylex.attrs(styles.metadataTerm)}>Updated</dt>
+          <dd {...stylex.attrs(styles.metadataValue)}>
+            <time
+              {...stylex.attrs(styles.sidebarTime)}
+              dateTime={props.data().pullRequest.updatedAt}
+            >
               {formatLocalDateTime(props.data().pullRequest.updatedAt)}
             </time>
           </dd>
@@ -842,15 +1386,15 @@ const PullRequestReviewStatus = (props: { details: Accessor<ReturnType<typeof ge
   const decision = createMemo(() => reviewDecisionPresentation(props.details()));
 
   return (
-    <section class="pr-sidebar-section pr-sidebar-review">
-      <header class="pr-sidebar-header">
-        <h2 class="pr-sidebar-title">Review status</h2>
+    <section {...stylex.attrs(styles.sidebarSection, styles.reviewSection)}>
+      <header {...stylex.attrs(styles.sidebarHeader)}>
+        <h2 {...stylex.attrs(baseStyles.heading, styles.sidebarTitle)}>Review status</h2>
       </header>
-      <p class="pr-review-decision" data-status-kind={decision().kind}>
-        <span class="pr-status-name" data-status-kind={decision().kind}>
+      <p {...stylex.attrs(styles.reviewDecision)} data-status-kind={decision().kind}>
+        <span {...stylex.attrs(styles.statusName)} data-status-kind={decision().kind}>
           {decision().label}
         </span>
-        <span class="pr-status-icon">
+        <span {...stylex.attrs(styles.statusIcon, statusColor(decision().kind))}>
           {decision().kind === "success" ? <CheckIcon /> : null}
           {decision().kind === "failure" ? <XIcon /> : null}
           {decision().kind === "pending" ? <HourglassIcon /> : null}
@@ -922,6 +1466,19 @@ const statusKind = (state: string): StatusKind => {
   }
 };
 
+const statusColor = (kind: StatusKind) => {
+  switch (kind) {
+    case "success":
+      return styles.statusSuccess;
+    case "failure":
+      return styles.statusFailure;
+    case "pending":
+      return styles.statusPending;
+    case "neutral":
+      return null;
+  }
+};
+
 const statusLabel = (state: string) => {
   const label = state.trim().replaceAll("_", " ").toLowerCase();
   return label === "" ? "Unknown" : label.charAt(0).toUpperCase() + label.slice(1);
@@ -950,12 +1507,12 @@ const PullRequestStatusIcon = ({
     <Tooltip closeDelay={150} gutter={8} ignoreSafeArea openDelay={0} placement="right">
       <Tooltip.Trigger
         aria-label={`${label}: ${accessibleState}`}
-        class="pr-status-trigger"
+        {...stylex.attrs(baseStyles.button, styles.statusTrigger)}
         data-status-kind={kind}
         type="button"
       >
-        <span class="pr-status-name">{label}</span>
-        <span class="pr-status-icon">
+        <span {...stylex.attrs(styles.statusName)}>{label}</span>
+        <span {...stylex.attrs(styles.statusIcon, statusColor(kind))}>
           {kind === "success" ? <CheckIcon /> : null}
           {kind === "failure" ? <XIcon /> : null}
           {kind === "pending" ? <HourglassIcon /> : null}
@@ -963,13 +1520,22 @@ const PullRequestStatusIcon = ({
         </span>
       </Tooltip.Trigger>
       <Tooltip.Portal>
-        <Tooltip.Content class="pr-check-tooltip pr-tooltip pr-tooltip-positioner">
-          <p class="pr-tooltip-title">{label}</p>
-          <p class="pr-tooltip-state">{accessibleState}</p>
-          {title ? <p class="pr-tooltip-detail-title">{title}</p> : null}
-          {detail ? <p class="pr-tooltip-description">{detail}</p> : null}
+        <Tooltip.Content
+          {...stylex.attrs(styles.tooltip, styles.checkTooltip, styles.tooltipPositioner)}
+        >
+          <p {...stylex.attrs(styles.tooltipText)}>{label}</p>
+          <p {...stylex.attrs(styles.tooltipText, styles.tooltipSecondary)}>{accessibleState}</p>
+          {title ? (
+            <p {...stylex.attrs(styles.tooltipText, styles.tooltipDetailTitle)}>{title}</p>
+          ) : null}
+          {detail ? <p {...stylex.attrs(styles.tooltipText)}>{detail}</p> : null}
           {url ? (
-            <a class="pr-tooltip-link" href={url} rel="noreferrer" target="_blank">
+            <a
+              {...stylex.attrs(baseStyles.link, styles.tooltipLink)}
+              href={url}
+              rel="noreferrer"
+              target="_blank"
+            >
               View run
             </a>
           ) : null}

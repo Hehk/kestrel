@@ -584,7 +584,7 @@ describe("App", () => {
     expect(within(sidebar).getByText("app.rs")).toBeInTheDocument();
     expect(within(sidebar).getByText("Add syncing")).toBeInTheDocument();
 
-    const content = document.querySelector<HTMLElement>(".PullRequestPage-content");
+    const content = document.querySelector<HTMLElement>("[data-pr-content]");
     expect(content).not.toBeNull();
     expect(
       within(content as HTMLElement).queryByRole("heading", { name: /Files changed/ }),
@@ -721,7 +721,7 @@ describe("App", () => {
     const syncingButton = screen.getByRole("button", { name: "Sync pull request from GitHub" });
     expect(syncingButton).toBeDisabled();
     expect(syncingButton).toHaveAttribute("aria-busy", "true");
-    expect(syncingButton.querySelector("svg")).toHaveClass("pr-sidebar-sync-icon");
+    expect(syncingButton.querySelector("svg")).toHaveAttribute("data-syncing");
 
     if (finishSync === undefined) {
       throw new Error("sync request did not start");
@@ -746,7 +746,7 @@ describe("App", () => {
       name: "Sync pull request from GitHub",
     });
     expect(completedSyncButton).toHaveAttribute("aria-busy", "false");
-    expect(completedSyncButton.querySelector("svg")).not.toHaveClass("pr-sidebar-sync-icon");
+    expect(completedSyncButton.querySelector("svg")).not.toHaveAttribute("data-syncing");
   });
 
   it("renders shared actions before the Overview status sidebar", async () => {

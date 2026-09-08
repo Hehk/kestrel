@@ -255,7 +255,7 @@ describe("diffViewRuntime", () => {
     const row = document.createElement("div");
     row.dataset["diffRow"] = "2";
     const source = document.createElement("div");
-    source.className = "pr-diff-source";
+    source.dataset["diffSource"] = "";
     const mark = document.createElement("mark");
     mark.dataset["matchOffset"] = "0";
     mark.dataset["matchLength"] = "6";
@@ -311,7 +311,7 @@ describe("diffViewRuntime", () => {
     const { runtime, messages } = harness();
     const elements = makeElements();
     const source = document.createElement("div");
-    source.className = "pr-diff-source";
+    source.dataset["diffSource"] = "";
     elements.table.append(source);
     runtime.attach(elements, init(makeDiff()));
     const wheel = new WheelEvent("wheel", {

@@ -1,6 +1,7 @@
 import { api } from "./api/client";
 import * as Cache from "./cache";
 import * as Mvu from "./mvu";
+import { darkTheme, lightTheme } from "./styles/tokens.stylex";
 
 export type Theme = "dark" | "light" | "system";
 export const DEFAULT_THEME: Theme = "system";
@@ -225,10 +226,13 @@ const syncTheme = async (userId: string, theme: Theme, send: (msg: Msg) => void)
 };
 
 export const applyTheme = (theme: Theme) => {
+  document.documentElement.classList.remove(lightTheme.theme, darkTheme.theme);
+
   if (theme === "system") {
     document.documentElement.removeAttribute("data-theme");
     return;
   }
 
+  document.documentElement.classList.add(theme === "light" ? lightTheme.theme : darkTheme.theme);
   document.documentElement.setAttribute("data-theme", theme);
 };
