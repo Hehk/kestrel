@@ -2,7 +2,7 @@ import { render } from "solid-js/web";
 import "./global.css";
 import App from "./App";
 import * as Session from "./session";
-import { documentClass, mountClass } from "./styles/base.stylex";
+import { bodyClass, documentClass, mountClass } from "./styles/base";
 
 const rootElement = document.getElementById("root");
 
@@ -11,6 +11,7 @@ if (rootElement === null) {
 }
 
 document.documentElement.classList.add(...documentClass.split(/\s+/));
+document.body.classList.add(...bodyClass.split(/\s+/));
 rootElement.className = mountClass;
 Session.start();
 

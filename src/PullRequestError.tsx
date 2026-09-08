@@ -1,8 +1,9 @@
 import * as stylex from "@stylexjs/stylex";
 import { apiUrl } from "./api/client";
+import { Anchor } from "./components/Anchor";
 import { tokens } from "./styles/tokens.stylex";
 import * as Repositories from "./repositoriesSlice";
-import { styles as baseStyles } from "./styles/base.stylex";
+import { styles as baseStyles } from "./styles/base";
 
 const styles = stylex.create({
   status: {
@@ -20,10 +21,7 @@ const PullRequestsError = ({ error }: { error: Repositories.PullRequestsError })
       return (
         <p {...statusAttributes}>
           GitHub App authorization required.{" "}
-          <a {...stylex.attrs(baseStyles.link)} href={apiUrl("/api/github-app/authorize")}>
-            Authorize more repos
-          </a>
-          .
+          <Anchor href={apiUrl("/api/github-app/authorize")}>Authorize more repos</Anchor>.
         </p>
       );
     case "repositoryNotTracked":

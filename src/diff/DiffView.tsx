@@ -1,4 +1,5 @@
 import * as stylex from "@stylexjs/stylex";
+import { Button } from "../components/Button";
 import {
   createEffect,
   createMemo,
@@ -19,7 +20,7 @@ import type { DiffViewElements } from "./diffViewRuntime";
 import { fileLabel, filePath, hunkLabel } from "./labels";
 import type { DiffRow, PullRequestDiff } from "./layout";
 import { diffLineNumbers, rowAt, rowHeight } from "./layout";
-import { styles as baseStyles } from "../styles/base.stylex";
+import { styles as baseStyles } from "../styles/base";
 import { tokens } from "../styles/tokens.stylex";
 
 const mobile = "@media (max-width: 640px)";
@@ -37,7 +38,9 @@ const styles = stylex.create({
     minWidth: 0,
     color: tokens.text,
     backgroundColor: tokens.background,
-    border: `1px solid ${tokens.rule}`,
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: tokens.rule,
   },
   toolbar: {
     minHeight: "40px",
@@ -48,10 +51,14 @@ const styles = stylex.create({
     gap: { default: "0.6rem", [mobile]: "0.35rem" },
     boxSizing: "border-box",
     padding: { default: "0 0.75rem", [mobile]: "0.35rem 0.5rem" },
-    borderBottom: `1px solid ${tokens.rule}`,
+    borderBottomWidth: 1,
+    borderBottomStyle: "solid",
+    borderBottomColor: tokens.rule,
   },
   filePickerLabel: {
-    flex: "0 0 auto",
+    flexGrow: "0",
+    flexShrink: "0",
+    flexBasis: "auto",
     fontFamily: tokens.mono,
     fontSize: "0.8rem",
     fontWeight: 700,
@@ -76,28 +83,35 @@ const styles = stylex.create({
   },
   searchNav: {
     display: "flex",
-    flex: "0 0 auto",
+    flexGrow: "0",
+    flexShrink: "0",
+    flexBasis: "auto",
     gap: "0.25rem",
   },
   compactButton: {
     minHeight: "24px",
-    flex: "0 0 auto",
-    padding: "0.05rem 0.4rem",
+    flexGrow: "0",
+    flexShrink: "0",
+    flexBasis: "auto",
+    paddingBlock: "0.05rem",
+    paddingInline: "0.4rem",
     fontFamily: tokens.mono,
     fontSize: "0.7rem",
     lineHeight: 1.2,
     whiteSpace: "nowrap",
     cursor: { default: null, ":disabled": "not-allowed", '[aria-disabled="true"]': "wait" },
     opacity: { default: 1, ":disabled": 0.55, '[aria-disabled="true"]': 0.7 },
-    outline: { ":focus-visible": "2px solid currentColor" },
-    outlineOffset: { ":focus-visible": "-3px" },
+    outline: { default: null, ":focus-visible": "2px solid currentColor" },
+    outlineOffset: { default: null, ":focus-visible": "-3px" },
   },
   searchButton: {
     minHeight: { default: "24px", [mobile]: "36px", "@media (pointer: coarse)": "44px" },
   },
   searchCount: {
     minWidth: { default: "4.5rem", [mobile]: "3.5rem" },
-    flex: "0 0 auto",
+    flexGrow: "0",
+    flexShrink: "0",
+    flexBasis: "auto",
     color: tokens.textMuted,
     fontFamily: tokens.mono,
     fontSize: "0.75rem",
@@ -119,6 +133,7 @@ const styles = stylex.create({
   truncate: {
     minWidth: 0,
     flexGrow: 1,
+    flexBasis: "0%",
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
@@ -138,7 +153,9 @@ const styles = stylex.create({
     overflow: "clip",
     color: tokens.text,
     backgroundColor: tokens.background,
-    borderTop: `1px solid ${tokens.rule}`,
+    borderTopWidth: 1,
+    borderTopStyle: "solid",
+    borderTopColor: tokens.rule,
     fontFamily: tokens.mono,
     fontSize: "0.85rem",
   },
@@ -153,14 +170,18 @@ const styles = stylex.create({
       [mobile]: "3rem 3rem minmax(0, 1fr)",
     },
     boxSizing: "border-box",
-    borderBottom: `1px solid ${tokens.rule}`,
+    borderBottomWidth: 1,
+    borderBottomStyle: "solid",
+    borderBottomColor: tokens.rule,
   },
   fullCell: {
-    gridColumn: "1 / -1",
+    gridColumnEnd: "-1",
+    gridColumnStart: "1",
     display: "flex",
     alignItems: "center",
     boxSizing: "border-box",
-    padding: "0 0.75rem",
+    paddingBlock: "0",
+    paddingInline: "0.75rem",
     gap: "0.6rem",
     whiteSpace: "pre",
   },
@@ -182,9 +203,12 @@ const styles = stylex.create({
   },
   lineCell: { height: "24px", boxSizing: "border-box", lineHeight: "24px", whiteSpace: "pre" },
   lineNumber: {
-    padding: "0 0.6rem",
+    paddingBlock: "0",
+    paddingInline: "0.6rem",
     color: tokens.textMuted,
-    borderRight: `1px solid ${tokens.rule}`,
+    borderRightWidth: 1,
+    borderRightStyle: "solid",
+    borderRightColor: tokens.rule,
     textAlign: "right",
     userSelect: "none",
   },
@@ -197,12 +221,16 @@ const styles = stylex.create({
   addition: {
     backgroundColor: `color-mix(in srgb, #2da44e 12%, ${tokens.background})`,
     boxShadow: { default: `inset 3px 0 ${tokens.statusSuccess}`, [forcedColors]: "none" },
-    borderLeft: { default: null, [forcedColors]: "3px solid CanvasText" },
+    borderLeftWidth: { default: null, [forcedColors]: 3 },
+    borderLeftStyle: { default: null, [forcedColors]: "solid" },
+    borderLeftColor: { default: null, [forcedColors]: "CanvasText" },
   },
   deletion: {
     backgroundColor: `color-mix(in srgb, #cf222e 12%, ${tokens.background})`,
     boxShadow: { default: `inset 3px 0 ${tokens.statusFailure}`, [forcedColors]: "none" },
-    borderLeft: { default: null, [forcedColors]: "3px solid CanvasText" },
+    borderLeftWidth: { default: null, [forcedColors]: 3 },
+    borderLeftStyle: { default: null, [forcedColors]: "solid" },
+    borderLeftColor: { default: null, [forcedColors]: "CanvasText" },
   },
   lineKind: {
     position: "absolute",
@@ -243,9 +271,15 @@ const styles = stylex.create({
     boxSizing: "border-box",
     overflow: "hidden",
     backgroundColor: tokens.background,
-    border: `1px solid ${tokens.rule}`,
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: tokens.rule,
   },
-  railGutter: { borderRight: `1px solid ${tokens.rule}` },
+  railGutter: {
+    borderRightWidth: 1,
+    borderRightStyle: "solid",
+    borderRightColor: tokens.rule,
+  },
   rail: {
     minWidth: 0,
     overflowX: "auto",
@@ -386,24 +420,24 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
             {...stylex.attrs(styles.searchNav)}
             role="group"
           >
-            <button
+            <Button
               aria-label="Previous search result"
-              {...stylex.attrs(baseStyles.button, styles.compactButton, styles.searchButton)}
+              xstyle={[styles.compactButton, styles.searchButton]}
               disabled={navigationDisabled()}
               onClick={() => send({ direction: -1, kind: "SearchMoveRequested" })}
               type="button"
             >
               Prev
-            </button>
-            <button
+            </Button>
+            <Button
               aria-label="Next search result"
-              {...stylex.attrs(baseStyles.button, styles.compactButton, styles.searchButton)}
+              xstyle={[styles.compactButton, styles.searchButton]}
               disabled={navigationDisabled()}
               onClick={() => send({ direction: 1, kind: "SearchMoveRequested" })}
               type="button"
             >
               Next
-            </button>
+            </Button>
           </div>
           <span aria-atomic="true" aria-live="polite" {...stylex.attrs(styles.searchCount)}>
             {searchStatus(search())}
@@ -427,7 +461,7 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
           >
             {outcome()?.message ?? ""}
           </span>
-          <button
+          <Button
             aria-label={
               activeFile()?.content.kind === "binary"
                 ? `Copy unavailable for binary file ${activeLabel()}`
@@ -435,7 +469,7 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
             }
             aria-busy={copy().kind === "writing"}
             aria-disabled={copy().kind === "writing" ? "true" : undefined}
-            {...stylex.attrs(baseStyles.button, styles.compactButton)}
+            xstyle={styles.compactButton}
             disabled={activeFile()?.content.kind !== "text"}
             onClick={() => send({ fileIndex: model().activeFileIndex, kind: "CopyFileRequested" })}
             title={
@@ -446,7 +480,7 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
             type="button"
           >
             {activeFile()?.content.kind === "binary" ? "Copy unavailable" : "Copy file"}
-          </button>
+          </Button>
         </div>
       </div>
       <div
@@ -567,7 +601,7 @@ const DiffRowCells = (props: {
             role="cell"
           >
             <span {...stylex.attrs(styles.truncate)}>{filePath(row())}</span>
-            <button
+            <Button
               aria-label={
                 row().file.content.kind === "binary"
                   ? `Copy unavailable for binary file ${fileLabel(row().file)}`
@@ -575,7 +609,7 @@ const DiffRowCells = (props: {
               }
               aria-busy={props.copyPending}
               aria-disabled={props.copyPending ? "true" : undefined}
-              {...stylex.attrs(baseStyles.button, styles.compactButton)}
+              xstyle={styles.compactButton}
               disabled={row().file.content.kind === "binary"}
               onClick={() => props.send({ kind: "CopyFileRequested", fileIndex: row().fileIndex })}
               title={
@@ -586,7 +620,7 @@ const DiffRowCells = (props: {
               type="button"
             >
               {row().file.content.kind === "binary" ? "Copy unavailable" : "Copy file"}
-            </button>
+            </Button>
           </div>
         )}
       </Match>
@@ -599,11 +633,11 @@ const DiffRowCells = (props: {
             role="cell"
           >
             <span {...stylex.attrs(styles.truncate)}>{hunkLabel(row())}</span>
-            <button
+            <Button
               aria-label={`Copy hunk from ${fileLabel(row().file)}, ${hunkLabel(row())}`}
               aria-busy={props.copyPending}
               aria-disabled={props.copyPending ? "true" : undefined}
-              {...stylex.attrs(baseStyles.button, styles.compactButton)}
+              xstyle={styles.compactButton}
               onClick={() =>
                 props.send({
                   kind: "CopyHunkRequested",
@@ -614,7 +648,7 @@ const DiffRowCells = (props: {
               type="button"
             >
               Copy hunk
-            </button>
+            </Button>
           </div>
         )}
       </Match>

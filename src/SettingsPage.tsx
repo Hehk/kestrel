@@ -1,21 +1,13 @@
 import { Select } from "@kobalte/core/select";
 import * as stylex from "@stylexjs/stylex";
 import { appStore, send } from "./store";
+import { Button } from "./components/Button";
+import { PageLayout } from "./components/PageLayout";
 import * as Settings from "./settingsSlice";
-import { styles as baseStyles } from "./styles/base.stylex";
+import { styles as baseStyles } from "./styles/base";
 import { tokens } from "./styles/tokens.stylex";
 
-const mobile = "@media (max-width: 640px)";
-
 const styles = stylex.create({
-  defaultPage: {
-    width: { default: "min(720px, calc(100vw - 32px))", [mobile]: "min(100% - 24px, 720px)" },
-    margin: "0 auto",
-    padding: { default: "40px 0 64px", [mobile]: "24px 0 48px" },
-  },
-  pageCard: {
-    textAlign: "left",
-  },
   pageCardHeading: {
     marginTop: 0,
   },
@@ -37,7 +29,8 @@ const styles = stylex.create({
     alignItems: "center",
     justifyContent: "space-between",
     gap: "1rem",
-    padding: "0.3rem 0.55rem",
+    paddingBlock: "0.3rem",
+    paddingInline: "0.55rem",
   },
   value: {
     textAlign: "left",
@@ -48,21 +41,24 @@ const styles = stylex.create({
     padding: "0.25rem",
     color: tokens.text,
     backgroundColor: tokens.background,
-    border: `1px solid ${tokens.border}`,
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: tokens.border,
     boxShadow: "0 0.35rem 1.25rem rgb(0 0 0 / 18%)",
-    outline: 0,
+    outline: "none",
   },
   list: {
     display: "grid",
     gap: "0.1rem",
-    outline: 0,
+    outline: "none",
   },
   item: {
     display: "flex",
     alignItems: "center",
     gap: "0.45rem",
-    padding: "0.25rem 0.45rem",
-    outline: 0,
+    paddingBlock: "0.25rem",
+    paddingInline: "0.45rem",
+    outline: "none",
     cursor: "default",
     color: { default: null, "[data-highlighted]": tokens.background },
     backgroundColor: { default: null, "[data-highlighted]": tokens.text },
@@ -72,6 +68,7 @@ const styles = stylex.create({
   },
   itemText: {
     flexGrow: 1,
+    flexBasis: "0%",
   },
 });
 import DefaultHeader from "./DefaultHeader";
@@ -114,7 +111,7 @@ const ThemeSelect = () => {
       )}
     >
       <Select.Label {...stylex.attrs(styles.label)}>Theme</Select.Label>
-      <Select.Trigger {...stylex.attrs(baseStyles.button, styles.trigger)}>
+      <Select.Trigger as={Button} xstyle={styles.trigger}>
         <Select.Value<(typeof themes)[number]> {...stylex.attrs(styles.value)}>
           {(state) => state.selectedOption().label}
         </Select.Value>
@@ -135,28 +132,23 @@ export const SettingsPage = () => {
   const themeSyncError = appStore((state) => state.settings.themeSyncError);
 
   return (
-    <div {...stylex.attrs(styles.defaultPage)}>
-      <DefaultHeader />
-      <section {...stylex.attrs(styles.pageCard)}>
-        <h1 {...stylex.attrs(baseStyles.heading, baseStyles.heading1, styles.pageCardHeading)}>
-          Settings
-        </h1>
-        <div {...stylex.attrs(styles.form)}>
-          <ThemeSelect />
-          {themeSyncError() ? (
-            <p {...stylex.attrs(baseStyles.paragraph, styles.error)}>
-              Theme is saved on this device but has not synced.{" "}
-              <button
-                onClick={() => send({ kind: "Settings", msg: { kind: "ThemeSyncRetryRequested" } })}
-                type="button"
-                {...stylex.attrs(baseStyles.button)}
-              >
-                Retry
-              </button>
-            </p>
-          ) : null}
-        </div>
-      </section>
-    </div>
+    <PageLayout header={<DefaultHeader />}>
+      <h1 {...stylex.attrs(baseStyles.heading, baseStyles.heading1, styles.pageCardHeading)}>
+        Settings
+      </h1>
+      <div {...stylex.attrs(styles.form)}>
+        <ThemeSelect />
+        {themeSyncError() ? (
+          <p {...stylex.attrs(baseStyles.paragraph, styles.error)}>
+            Theme is saved on this device but has not synced.{" "}
+            <Button
+              onClick={() => send({ kind: "Settings", msg: { kind: "ThemeSyncRetryRequested" } })}
+            >
+              Retry
+            </Button>
+          </p>
+        ) : null}
+      </div>
+    </PageLayout>
   );
 };

@@ -12,6 +12,9 @@ export const styles = stylex.create({
     fontSynthesis: "none",
     textRendering: "optimizeLegibility",
   },
+  body: {
+    margin: 0,
+  },
   mount: {
     width: "100%",
     maxWidth: "100%",
@@ -19,7 +22,8 @@ export const styles = stylex.create({
     display: "flex",
     flexDirection: "column",
     boxSizing: "border-box",
-    margin: "0 auto",
+    marginBlock: "0",
+    marginInline: "auto",
   },
   heading: {
     color: tokens.text,
@@ -27,28 +31,33 @@ export const styles = stylex.create({
     fontWeight: 700,
   },
   heading1: {
-    margin: "1.25rem 0 0.75rem",
+    marginTop: "1.25rem",
+    marginRight: "0",
+    marginBottom: "0.75rem",
+    marginLeft: "0",
     fontSize: { default: "2rem", "@media (max-width: 1024px)": "1.75rem" },
     lineHeight: 1.15,
   },
   heading2: {
-    margin: "1.5rem 0 0.5rem",
+    marginTop: "1.5rem",
+    marginRight: "0",
+    marginBottom: "0.5rem",
+    marginLeft: "0",
     fontSize: "1.35rem",
     lineHeight: 1.2,
   },
   paragraph: {
     maxWidth: "66ch",
-    margin: "0 0 1rem",
+    marginTop: "0",
+    marginRight: "0",
+    marginBottom: "1rem",
+    marginLeft: "0",
   },
   list: {
-    margin: "0 0 1rem",
-  },
-  link: {
-    color: { default: tokens.link, ":visited": tokens.linkVisited },
-    textDecoration: "underline",
-    textUnderlineOffset: "0.12em",
-    outline: { ":focus-visible": "2px solid currentColor" },
-    outlineOffset: { ":focus-visible": "3px" },
+    marginTop: "0",
+    marginRight: "0",
+    marginBottom: "1rem",
+    marginLeft: "0",
   },
   focusable: {
     outline: { ":focus-visible": "2px solid currentColor" },
@@ -58,27 +67,11 @@ export const styles = stylex.create({
     fontFamily: tokens.mono,
   },
   code: {
-    padding: "0.1em 0.3em",
+    paddingBlock: "0.1em",
+    paddingInline: "0.3em",
     backgroundColor: tokens.codeBackground,
     fontFamily: tokens.mono,
     fontSize: "0.9em",
-  },
-  button: {
-    color: tokens.text,
-    backgroundColor: tokens.buttonFace,
-    borderTopColor: { default: tokens.buttonBorderLight, ":active": tokens.buttonBorderDark },
-    borderRightColor: { default: tokens.buttonBorderDark, ":active": tokens.buttonBorderLight },
-    borderBottomColor: { default: tokens.buttonBorderDark, ":active": tokens.buttonBorderLight },
-    borderLeftColor: { default: tokens.buttonBorderLight, ":active": tokens.buttonBorderDark },
-    borderStyle: "solid",
-    borderWidth: "2px",
-    cursor: "pointer",
-    fontFamily: "inherit",
-    fontSize: "inherit",
-    fontWeight: "inherit",
-    lineHeight: "inherit",
-    outline: { ":focus-visible": "2px solid currentColor" },
-    outlineOffset: { ":focus-visible": "3px" },
   },
   input: {
     outline: { ":focus-visible": "2px solid currentColor" },
@@ -87,4 +80,5 @@ export const styles = stylex.create({
 });
 
 export const documentClass = stylex.attrs(styles.document).class!;
+export const bodyClass = stylex.attrs(styles.body).class!;
 export const mountClass = stylex.attrs(styles.mount).class!;

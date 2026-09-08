@@ -6,6 +6,8 @@ import { appStore, send } from "./store";
 import * as Repositories from "./repositoriesSlice";
 import { apiUrl } from "./api/client";
 import { Link } from "./Link";
+import { Anchor } from "./components/Anchor";
+import { Button } from "./components/Button";
 import {
   ArrowLeftIcon,
   CheckIcon,
@@ -19,7 +21,7 @@ import PullRequestsError from "./PullRequestError";
 import type { PullRequestView } from "./router";
 import { DiffView } from "./diff/DiffView";
 import { diffFileHunks } from "./diff/layout";
-import { styles as baseStyles } from "./styles/base.stylex";
+import { styles as baseStyles } from "./styles/base";
 import { tokens } from "./styles/tokens.stylex";
 
 const mobile = "@media (max-width: 640px)";
@@ -40,7 +42,8 @@ const styles = stylex.create({
     },
     alignItems: "start",
     justifyContent: { default: "normal", [narrow]: "center" },
-    margin: "0 auto",
+    marginBlock: "0",
+    marginInline: "auto",
     padding: { default: "2rem 0 1rem", [mobile]: "24px 0 48px" },
   },
   diffPage: {
@@ -57,7 +60,10 @@ const styles = stylex.create({
     },
   },
   header: {
-    gridArea: "header",
+    gridColumnEnd: "header",
+    gridColumnStart: "header",
+    gridRowEnd: "header",
+    gridRowStart: "header",
     display: "grid",
     gridTemplateColumns: {
       default: "minmax(0, 1fr) minmax(0, 720px) minmax(0, 1fr)",
@@ -70,15 +76,19 @@ const styles = stylex.create({
   headerSection: {
     minWidth: 0,
     boxSizing: "border-box",
-    padding: "0 1rem",
-    gridColumn: { default: null, [narrow]: 1 },
+    paddingBlock: "0",
+    paddingInline: "1rem",
+    gridColumnStart: { default: null, [narrow]: "1" },
+    gridColumnEnd: { default: null, [narrow]: "auto" },
   },
   headerActions: {
-    gridColumn: 1,
+    gridColumnStart: "1",
+    gridColumnEnd: "auto",
     marginBottom: { default: 0, [narrow]: "1rem" },
   },
   heading: {
-    gridColumn: { default: 2, [narrow]: 1 },
+    gridColumnStart: { default: "2", [narrow]: "1" },
+    gridColumnEnd: "auto",
   },
   title: {
     marginTop: 0,
@@ -88,12 +98,11 @@ const styles = stylex.create({
     gap: "1rem",
     marginTop: "0.75rem",
     paddingBottom: "0.45rem",
-    borderBottom: `1px solid ${tokens.rule}`,
+    borderBottomWidth: 1,
+    borderBottomStyle: "solid",
+    borderBottomColor: tokens.rule,
     fontFamily: tokens.mono,
     fontSize: "0.85rem",
-  },
-  viewLink: {
-    color: { default: tokens.link, ":visited": tokens.link },
   },
   currentViewLink: {
     color: { default: tokens.text, ":visited": tokens.text },
@@ -101,41 +110,61 @@ const styles = stylex.create({
     textDecoration: "none",
   },
   diffContent: {
-    gridArea: "diff",
+    gridColumnEnd: "diff",
+    gridColumnStart: "diff",
+    gridRowEnd: "diff",
+    gridRowStart: "diff",
     minWidth: 0,
     boxSizing: "border-box",
-    padding: "1.25rem 1rem",
-    borderTop: `1px solid ${tokens.rule}`,
+    paddingBlock: "1.25rem",
+    paddingInline: "1rem",
+    borderTopWidth: 1,
+    borderTopStyle: "solid",
+    borderTopColor: tokens.rule,
   },
   diffHeading: {
-    margin: "0 0 0.5rem",
+    marginTop: "0",
+    marginRight: "0",
+    marginBottom: "0.5rem",
+    marginLeft: "0",
   },
   content: {
-    gridArea: "content",
+    gridColumnEnd: "content",
+    gridColumnStart: "content",
+    gridRowEnd: "content",
+    gridRowStart: "content",
     minWidth: 0,
     boxSizing: "border-box",
-    padding: "0 1rem",
+    paddingBlock: "0",
+    paddingInline: "1rem",
   },
   sidebar: {
     minWidth: 0,
     boxSizing: "border-box",
-    padding: "0 1rem",
+    paddingBlock: "0",
+    paddingInline: "1rem",
   },
   leftSidebar: {
-    gridArea: "left",
+    gridColumnEnd: "left",
+    gridColumnStart: "left",
+    gridRowEnd: "left",
+    gridRowStart: "left",
     position: { default: "sticky", [narrow]: "static" },
     top: { default: "2rem", [narrow]: "auto" },
     height: { default: "calc(100svh - 3rem)", [narrow]: "auto" },
     display: { default: "flex", [narrow]: "block" },
     flexDirection: "column",
     gap: "1.5rem",
-    marginBottom: { default: 0, "[data-has-content]": 0, [narrow]: "2rem" },
+    marginBottom: { default: 0, [narrow]: { default: 0, ":not(:empty)": "2rem" } },
   },
   rightSidebar: {
-    gridArea: "right",
+    gridColumnEnd: "right",
+    gridColumnStart: "right",
+    gridRowEnd: "right",
+    gridRowStart: "right",
     display: "grid",
     gap: "1.5rem",
-    marginTop: { default: 0, [narrow]: "2rem" },
+    marginTop: { default: 0, [narrow]: { default: 0, ":not(:empty)": "2rem" } },
   },
   sidebarActions: {
     display: "flex",
@@ -147,7 +176,9 @@ const styles = stylex.create({
   sidebarAction: {
     width: "2rem",
     height: "2rem",
-    flex: "0 0 2rem",
+    flexGrow: "0",
+    flexShrink: "0",
+    flexBasis: "2rem",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -185,14 +216,23 @@ const styles = stylex.create({
     paddingTop: "0.85rem",
   },
   detailHeading: {
-    margin: 0,
+    marginTop: 0,
+    marginRight: 0,
+    marginBottom: 0,
+    marginLeft: 0,
     fontSize: "1rem",
   },
   description: {
-    padding: "0.25rem 0 1.5rem",
+    paddingTop: "0.25rem",
+    paddingRight: "0",
+    paddingBottom: "1.5rem",
+    paddingLeft: "0",
   },
   descriptionText: {
-    margin: 0,
+    marginTop: 0,
+    marginRight: 0,
+    marginBottom: 0,
+    marginLeft: 0,
     lineHeight: 1.7,
     whiteSpace: "pre-wrap",
     overflowWrap: "anywhere",
@@ -217,7 +257,10 @@ const styles = stylex.create({
   },
   activityItem: {
     position: "relative",
-    padding: "0.85rem 0 1rem 1.25rem",
+    paddingTop: "0.85rem",
+    paddingRight: "0",
+    paddingBottom: "1rem",
+    paddingLeft: "1.25rem",
     "::before": {
       position: "absolute",
       top: "1.15rem",
@@ -243,12 +286,17 @@ const styles = stylex.create({
     minWidth: 0,
   },
   activityTime: {
-    flex: "0 0 auto",
+    flexGrow: "0",
+    flexShrink: "0",
+    flexBasis: "auto",
     whiteSpace: "nowrap",
   },
   activityBody: {
     maxWidth: "66ch",
-    margin: "0.65rem 0 0",
+    marginTop: "0.65rem",
+    marginRight: "0",
+    marginBottom: "0",
+    marginLeft: "0",
     lineHeight: 1.6,
     whiteSpace: "pre-wrap",
     overflowWrap: "anywhere",
@@ -256,17 +304,31 @@ const styles = stylex.create({
   reviewComments: {
     display: "grid",
     gap: "0.75rem",
-    padding: "0.75rem 0 0",
-    margin: "0.75rem 0 0",
+    paddingTop: "0.75rem",
+    paddingRight: "0",
+    paddingBottom: "0",
+    paddingLeft: "0",
+    marginTop: "0.75rem",
+    marginRight: "0",
+    marginBottom: "0",
+    marginLeft: "0",
     listStyle: "none",
-    borderTop: `1px solid ${tokens.rule}`,
+    borderTopWidth: 1,
+    borderTopStyle: "solid",
+    borderTopColor: tokens.rule,
   },
   reviewComment: {
     paddingLeft: "0.75rem",
-    borderLeft: `2px solid ${tokens.rule}`,
+    borderLeftWidth: 2,
+    borderLeftStyle: "solid",
+    borderLeftColor: tokens.rule,
   },
   activityTruncated: {
-    margin: "0.75rem 0 0",
+    maxWidth: "66ch",
+    marginTop: "0.75rem",
+    marginRight: "0",
+    marginBottom: "0",
+    marginLeft: "0",
     color: tokens.textMuted,
     fontSize: "0.88rem",
   },
@@ -280,7 +342,7 @@ const styles = stylex.create({
     gap: "0.45rem",
   },
   scrollableSidebarSection: {
-    overflowY: { default: "auto", [narrow]: "visible" },
+    overflowY: "auto",
   },
   reviewSection: {
     marginBottom: { default: 0, [narrow]: "1.5rem" },
@@ -337,7 +399,10 @@ const styles = stylex.create({
     whiteSpace: "nowrap",
   },
   sidebarEmpty: {
-    margin: 0,
+    marginTop: 0,
+    marginRight: 0,
+    marginBottom: 0,
+    marginLeft: 0,
     paddingInline: "0.25rem",
     color: tokens.textMuted,
     fontFamily: tokens.mono,
@@ -345,6 +410,7 @@ const styles = stylex.create({
     lineHeight: 1.45,
   },
   reviewDecision: {
+    maxWidth: "66ch",
     minHeight: "1.5rem",
     display: "flex",
     alignItems: "center",
@@ -391,7 +457,8 @@ const styles = stylex.create({
     alignItems: "center",
     justifyContent: "space-between",
     gap: "1rem",
-    padding: "0 0.25rem",
+    paddingBlock: "0",
+    paddingInline: "0.25rem",
     color: tokens.text,
     backgroundColor: {
       default: "transparent",
@@ -409,7 +476,9 @@ const styles = stylex.create({
   },
   statusIcon: {
     display: "inline-flex",
-    flex: "0 0 auto",
+    flexGrow: "0",
+    flexShrink: "0",
+    flexBasis: "auto",
     color: tokens.statusNeutral,
   },
   statusSuccess: { color: tokens.statusSuccess },
@@ -423,10 +492,13 @@ const styles = stylex.create({
     gap: "0.2rem",
     boxSizing: "border-box",
     maxWidth: "min(20rem, calc(100vw - 24px))",
-    padding: "0.5rem 0.65rem",
+    paddingBlock: "0.5rem",
+    paddingInline: "0.65rem",
     color: tokens.text,
     backgroundColor: tokens.background,
-    border: `1px solid ${tokens.border}`,
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: tokens.border,
     borderRadius: tokens.borderRadius,
     boxShadow: "0.25rem 0.25rem 0 rgb(0 0 0 / 12%)",
     fontFamily: tokens.mono,
@@ -441,7 +513,10 @@ const styles = stylex.create({
     color: tokens.textMuted,
   },
   tooltipText: {
-    margin: 0,
+    marginTop: 0,
+    marginRight: 0,
+    marginBottom: 0,
+    marginLeft: 0,
   },
   tooltipDetailTitle: {
     fontWeight: 700,
@@ -451,14 +526,20 @@ const styles = stylex.create({
     marginTop: "0.3rem",
   },
   eyebrow: {
-    margin: "0 0 0.35rem",
+    marginTop: "0",
+    marginRight: "0",
+    marginBottom: "0.35rem",
+    marginLeft: "0",
     color: tokens.textMuted,
     fontFamily: tokens.mono,
     fontSize: "0.78rem",
   },
   repoStatus: {
     maxWidth: "66ch",
-    margin: 0,
+    marginTop: 0,
+    marginRight: 0,
+    marginBottom: 0,
+    marginLeft: 0,
     color: tokens.textMuted,
     fontSize: "0.92rem",
   },
@@ -469,7 +550,8 @@ const styles = stylex.create({
   },
   message: {
     width: { default: "min(720px, calc(100vw - 32px))", [mobile]: "min(100% - 24px, 720px)" },
-    margin: "0 auto",
+    marginBlock: "0",
+    marginInline: "auto",
     padding: { default: "40px 0 64px", [mobile]: "24px 0 48px" },
     textAlign: "left",
   },
@@ -560,8 +642,7 @@ const PullRequestPage = ({
         content: (
           <>
             <p {...stylex.attrs(baseStyles.paragraph)}>Pull request is not stored yet.</p>
-            <button
-              {...stylex.attrs(baseStyles.button)}
+            <Button
               onClick={() =>
                 send({
                   kind: "Repositories",
@@ -571,7 +652,7 @@ const PullRequestPage = ({
               type="button"
             >
               Sync pull requests
-            </button>
+            </Button>
           </>
         ),
         kind: "message",
@@ -681,11 +762,8 @@ const PullRequestHeader = (props: {
       </h1>
       <nav aria-label="Pull request views" {...stylex.attrs(styles.views)}>
         <Link
-          {...stylex.attrs(
-            baseStyles.link,
-            styles.viewLink,
-            props.view === "overview" && styles.currentViewLink,
-          )}
+          variant="navigation"
+          xstyle={props.view === "overview" && styles.currentViewLink}
           aria-current={props.view === "overview" ? "page" : undefined}
           to={{
             name: "PullRequest",
@@ -697,11 +775,8 @@ const PullRequestHeader = (props: {
           Overview
         </Link>
         <Link
-          {...stylex.attrs(
-            baseStyles.link,
-            styles.viewLink,
-            props.view === "diff" && styles.currentViewLink,
-          )}
+          variant="navigation"
+          xstyle={props.view === "diff" && styles.currentViewLink}
           aria-current={props.view === "diff" ? "page" : undefined}
           to={{
             name: "PullRequest",
@@ -827,10 +902,7 @@ const PullRequestDiffError = ({ error }: { error: Repositories.PullRequestDiffEr
       return (
         <p {...stylex.attrs(styles.repoStatus)}>
           GitHub App authorization required.{" "}
-          <a {...stylex.attrs(baseStyles.link)} href={apiUrl("/api/github-app/authorize")}>
-            Authorize more repos
-          </a>
-          .
+          <Anchor href={apiUrl("/api/github-app/authorize")}>Authorize more repos</Anchor>.
         </p>
       );
     case "diffParseFailed":
@@ -857,7 +929,7 @@ const PullRequestMessage = ({ children, title }: ParentProps<{ title: string }>)
   <section {...stylex.attrs(styles.message)}>
     <Link
       aria-label="Back to home"
-      {...stylex.attrs(baseStyles.link, styles.sidebarAction, styles.pageBack)}
+      xstyle={[styles.sidebarAction, styles.pageBack]}
       title="Back to home"
       to={{ name: "Home" }}
     >
@@ -885,7 +957,7 @@ const PullRequestActions = (props: {
         <Tooltip.Trigger
           as={Link}
           aria-label="Back to home"
-          {...stylex.attrs(baseStyles.link, styles.sidebarAction)}
+          xstyle={styles.sidebarAction}
           to={{ name: "Home" }}
         >
           <ArrowLeftIcon />
@@ -894,9 +966,9 @@ const PullRequestActions = (props: {
       </Tooltip>
       <Tooltip closeDelay={150} gutter={8} ignoreSafeArea openDelay={0}>
         <Tooltip.Trigger
-          as="a"
+          as={Anchor}
           aria-label="Open on GitHub"
-          {...stylex.attrs(baseStyles.link, styles.sidebarAction)}
+          xstyle={styles.sidebarAction}
           href={props.data().pullRequest.htmlUrl}
         >
           <GitHubIcon />
@@ -905,9 +977,10 @@ const PullRequestActions = (props: {
       </Tooltip>
       <Tooltip closeDelay={150} gutter={8} ignoreSafeArea openDelay={0}>
         <Tooltip.Trigger
+          as={Button}
           aria-busy={props.data().pullRequestDetail?.status === "syncing"}
           aria-label="Sync pull request from GitHub"
-          {...stylex.attrs(baseStyles.button, styles.sidebarAction)}
+          xstyle={styles.sidebarAction}
           disabled={
             props.data().pullRequestDetail?.status === "loading" ||
             props.data().pullRequestDetail?.status === "loadingTimeline" ||
@@ -1006,10 +1079,7 @@ const PullRequestDetailError = ({ error }: { error: Repositories.PullRequestsErr
       return (
         <p {...stylex.attrs(styles.repoStatus)}>
           GitHub App authorization required.{" "}
-          <a {...stylex.attrs(baseStyles.link)} href={apiUrl("/api/github-app/authorize")}>
-            Authorize more repos
-          </a>
-          .
+          <Anchor href={apiUrl("/api/github-app/authorize")}>Authorize more repos</Anchor>.
         </p>
       );
     case "pullRequestNotFound":
@@ -1129,9 +1199,9 @@ const PullRequestTimeline = (props: { data: Accessor<PullRequestPageData> }) => 
         </p>
       ) : null}
       <Show when={detail()?.timelinePagination.kind === "hasOlder"}>
-        <button
+        <Button
           aria-busy={detailState()?.status === "loadingTimeline"}
-          {...stylex.attrs(baseStyles.button, styles.loadOlder)}
+          xstyle={styles.loadOlder}
           disabled={detailState()?.status === "loadingTimeline"}
           onClick={() =>
             send({
@@ -1148,7 +1218,7 @@ const PullRequestTimeline = (props: { data: Accessor<PullRequestPageData> }) => 
           {detailState()?.status === "loadingTimeline"
             ? "Loading older activity..."
             : "Load older activity"}
-        </button>
+        </Button>
       </Show>
     </section>
   );
@@ -1173,9 +1243,9 @@ const PullRequestTimelineItem = ({ event }: { event: TimelineEvent }) => {
         <span {...stylex.attrs(styles.activityHeadingText)}>
           <strong>{actor}</strong>{" "}
           {url ? (
-            <a {...stylex.attrs(baseStyles.link)} href={url} rel="noreferrer" target="_blank">
+            <Anchor href={url} rel="noreferrer" target="_blank">
               {action}
-            </a>
+            </Anchor>
           ) : (
             action
           )}
@@ -1214,9 +1284,9 @@ const PullRequestTimelineItem = ({ event }: { event: TimelineEvent }) => {
         <p {...stylex.attrs(styles.activityTruncated)}>
           Additional review comments are available.{" "}
           {url ? (
-            <a {...stylex.attrs(baseStyles.link)} href={url} rel="noreferrer" target="_blank">
+            <Anchor href={url} rel="noreferrer" target="_blank">
               View the complete review on GitHub
-            </a>
+            </Anchor>
           ) : (
             "Open the review on GitHub to see them."
           )}
@@ -1506,8 +1576,9 @@ const PullRequestStatusIcon = ({
   return (
     <Tooltip closeDelay={150} gutter={8} ignoreSafeArea openDelay={0} placement="right">
       <Tooltip.Trigger
+        as={Button}
         aria-label={`${label}: ${accessibleState}`}
-        {...stylex.attrs(baseStyles.button, styles.statusTrigger)}
+        xstyle={styles.statusTrigger}
         data-status-kind={kind}
         type="button"
       >
@@ -1530,14 +1601,9 @@ const PullRequestStatusIcon = ({
           ) : null}
           {detail ? <p {...stylex.attrs(styles.tooltipText)}>{detail}</p> : null}
           {url ? (
-            <a
-              {...stylex.attrs(baseStyles.link, styles.tooltipLink)}
-              href={url}
-              rel="noreferrer"
-              target="_blank"
-            >
+            <Anchor xstyle={styles.tooltipLink} href={url} rel="noreferrer" target="_blank">
               View run
-            </a>
+            </Anchor>
           ) : null}
         </Tooltip.Content>
       </Tooltip.Portal>

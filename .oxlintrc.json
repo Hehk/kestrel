@@ -1,4 +1,11 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["oxc"]
+  "plugins": ["oxc"],
+  "jsPlugins": [{ "name": "stylex", "specifier": "@stylexjs/eslint-plugin" }],
+  "rules": {
+    "stylex/valid-styles": "error",
+    "stylex/valid-shorthands": "error",
+    "stylex/enforce-extension": "error",
+    "stylex/no-unused": "error"
+  }
 }

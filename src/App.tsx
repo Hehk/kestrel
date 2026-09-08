@@ -1,6 +1,9 @@
 import * as stylex from "@stylexjs/stylex";
 import { createMemo, createSignal, createUniqueId, For, Match, Switch } from "solid-js";
 import { Link } from "./Link";
+import { Anchor } from "./components/Anchor";
+import { Button } from "./components/Button";
+import { PageLayout } from "./components/PageLayout";
 import { LoggedOut } from "./LoggedOut";
 import { appStore, send } from "./store";
 import * as Repositories from "./repositoriesSlice";
@@ -10,25 +13,20 @@ import { SettingsPage } from "./SettingsPage";
 import DefaultHeader from "./DefaultHeader";
 import PullRequestPage from "./PullRequestPage";
 import PullRequestsError from "./PullRequestError";
-import { styles as baseStyles } from "./styles/base.stylex";
+import { styles as baseStyles } from "./styles/base";
 import { tokens } from "./styles/tokens.stylex";
 
 const mobile = "@media (max-width: 640px)";
 
 const styles = stylex.create({
-  defaultPage: {
-    width: { default: "min(720px, calc(100vw - 32px))", [mobile]: "min(100% - 24px, 720px)" },
-    margin: "0 auto",
-    padding: { default: "40px 0 64px", [mobile]: "24px 0 48px" },
-  },
-  pageCard: {
-    textAlign: "left",
-  },
   pageCardHeading: {
     marginTop: 0,
   },
   eyebrow: {
-    margin: "0 0 0.35rem",
+    marginTop: "0",
+    marginRight: "0",
+    marginBottom: "0.35rem",
+    marginLeft: "0",
     color: tokens.textMuted,
     fontFamily: tokens.mono,
     fontSize: "0.78rem",
@@ -40,14 +38,20 @@ const styles = stylex.create({
     display: "grid",
     gap: "0.5rem",
     padding: 0,
-    margin: "0 0 1.5rem",
+    marginTop: "0",
+    marginRight: "0",
+    marginBottom: "1.5rem",
+    marginLeft: "0",
     listStyle: "none",
   },
   repoRow: {
     display: "grid",
     gap: "0.45rem",
-    padding: "0.45rem 0",
-    borderBottom: `1px solid ${tokens.rule}`,
+    paddingBlock: "0.45rem",
+    paddingInline: "0",
+    borderBottomWidth: 1,
+    borderBottomStyle: "solid",
+    borderBottomColor: tokens.rule,
   },
   row: {
     display: "flex",
@@ -68,7 +72,10 @@ const styles = stylex.create({
     fontSize: "0.78rem",
   },
   repoPrStatus: {
-    margin: 0,
+    marginTop: 0,
+    marginRight: 0,
+    marginBottom: 0,
+    marginLeft: 0,
     color: tokens.textMuted,
     fontSize: "0.92rem",
   },
@@ -76,7 +83,10 @@ const styles = stylex.create({
     display: "grid",
     gap: "0.25rem",
     padding: 0,
-    margin: "0.15rem 0 0",
+    marginTop: "0.15rem",
+    marginRight: "0",
+    marginBottom: "0",
+    marginLeft: "0",
     listStyle: "none",
   },
   repoPrMeta: {
@@ -89,7 +99,9 @@ const styles = stylex.create({
     gap: "0.45rem",
     paddingTop: "1rem",
     marginTop: "1.5rem",
-    borderTop: `1px solid ${tokens.rule}`,
+    borderTopWidth: 1,
+    borderTopStyle: "solid",
+    borderTopColor: tokens.rule,
   },
   repoAddLabel: {
     fontWeight: 700,
@@ -103,16 +115,23 @@ const styles = stylex.create({
   repoInput: {
     minWidth: 0,
     flexGrow: 1,
-    padding: "0.25rem 0.4rem",
+    flexBasis: "0%",
+    paddingBlock: "0.25rem",
+    paddingInline: "0.4rem",
     color: tokens.text,
     backgroundColor: tokens.background,
-    border: `1px solid ${tokens.border}`,
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: tokens.border,
     fontFamily: "inherit",
     fontSize: "inherit",
     lineHeight: "inherit",
   },
   repoAddError: {
-    margin: 0,
+    marginTop: 0,
+    marginRight: 0,
+    marginBottom: 0,
+    marginLeft: 0,
     color: tokens.textMuted,
   },
 });
@@ -137,17 +156,14 @@ const Page = (props: { route: Router.AuthenticatedRoute }) => {
 
 const HomePage = () => {
   return (
-    <div {...stylex.attrs(styles.defaultPage)}>
-      <DefaultHeader />
-      <section {...stylex.attrs(styles.pageCard)}>
-        <p {...stylex.attrs(baseStyles.paragraph, styles.eyebrow)}>Repositories</p>
-        <h1 {...stylex.attrs(baseStyles.heading, baseStyles.heading1, styles.pageCardHeading)}>
-          Tracked repositories
-        </h1>
-        <RepositoryList />
-        <AddRepositoryForm />
-      </section>
-    </div>
+    <PageLayout header={<DefaultHeader />}>
+      <p {...stylex.attrs(baseStyles.paragraph, styles.eyebrow)}>Repositories</p>
+      <h1 {...stylex.attrs(baseStyles.heading, baseStyles.heading1, styles.pageCardHeading)}>
+        Tracked repositories
+      </h1>
+      <RepositoryList />
+      <AddRepositoryForm />
+    </PageLayout>
   );
 };
 
@@ -191,13 +207,11 @@ const RepositoryRow = (props: {
   return (
     <li {...stylex.attrs(styles.repoRow)}>
       <div {...stylex.attrs(styles.row)}>
-        <a {...stylex.attrs(baseStyles.link)} href={props.repository.htmlUrl}>
-          {props.repository.fullName}
-        </a>
+        <Anchor href={props.repository.htmlUrl}>{props.repository.fullName}</Anchor>
         <span {...stylex.attrs(styles.repoProvider)}>GitHub</span>
       </div>
       <div {...stylex.attrs(styles.repoActions)}>
-        <button
+        <Button
           aria-label={`Load PRs for ${props.repository.fullName}`}
           disabled={
             props.pullRequests?.status === "loading" || props.pullRequests?.status === "syncing"
@@ -208,12 +222,10 @@ const RepositoryRow = (props: {
               msg: { kind: "PullRequestsLoadRequested", repository: props.repository },
             })
           }
-          type="button"
-          {...stylex.attrs(baseStyles.button)}
         >
           Load PRs
-        </button>
-        <button
+        </Button>
+        <Button
           aria-label={`Sync PRs for ${props.repository.fullName}`}
           disabled={props.pullRequests?.status === "syncing"}
           onClick={() =>
@@ -222,11 +234,9 @@ const RepositoryRow = (props: {
               msg: { kind: "PullRequestsSyncRequested", repository: props.repository },
             })
           }
-          type="button"
-          {...stylex.attrs(baseStyles.button)}
         >
           {props.pullRequests?.status === "syncing" ? "Syncing..." : "Sync PRs"}
-        </button>
+        </Button>
       </div>
       <RepositorySyncStatus repository={props.repository} />
       <PullRequestsSummary pullRequests={props.pullRequests} repository={props.repository} />
@@ -309,7 +319,6 @@ const PullRequestsSummary = (props: {
             {(pullRequest) => (
               <li {...stylex.attrs(styles.row)}>
                 <Link
-                  {...stylex.attrs(baseStyles.link)}
                   to={{
                     name: "PullRequest",
                     repo: props.repository.fullName,
@@ -375,13 +384,9 @@ const AddRepositoryForm = () => {
           value={repositoryInput()}
           {...stylex.attrs(baseStyles.input, styles.repoInput)}
         />
-        <button
-          disabled={repositories().status !== "loaded" || saving()}
-          type="submit"
-          {...stylex.attrs(baseStyles.button)}
-        >
+        <Button disabled={repositories().status !== "loaded" || saving()} type="submit">
           {saving() ? "Tracking..." : "Track repo"}
-        </button>
+        </Button>
       </div>
       {error() ? (
         <p {...stylex.attrs(baseStyles.paragraph, styles.repoAddError)} id={errorId}>
@@ -411,16 +416,13 @@ const addErrorText = (error: Repositories.AddError | null) => {
 
 const NotFoundPage = ({ path }: { path: string }) => {
   return (
-    <div {...stylex.attrs(styles.defaultPage)}>
-      <DefaultHeader />
-      <section {...stylex.attrs(styles.pageCard)}>
-        <p {...stylex.attrs(baseStyles.paragraph, styles.eyebrow)}>Not Found</p>
-        <h1 {...stylex.attrs(baseStyles.heading, baseStyles.heading1, styles.pageCardHeading)}>
-          Route not found
-        </h1>
-        <p {...stylex.attrs(baseStyles.paragraph)}>No page exists for {path}.</p>
-      </section>
-    </div>
+    <PageLayout header={<DefaultHeader />}>
+      <p {...stylex.attrs(baseStyles.paragraph, styles.eyebrow)}>Not Found</p>
+      <h1 {...stylex.attrs(baseStyles.heading, baseStyles.heading1, styles.pageCardHeading)}>
+        Route not found
+      </h1>
+      <p {...stylex.attrs(baseStyles.paragraph)}>No page exists for {path}.</p>
+    </PageLayout>
   );
 };
 
