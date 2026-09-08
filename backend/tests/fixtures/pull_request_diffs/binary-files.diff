@@ -1,0 +1,17 @@
+diff --git a/assets/logo.png b/assets/logo.png
+index 4e3c2b1..9a8b7c6 100644
+Binary files a/assets/logo.png and b/assets/logo.png differ
+diff --git a/assets/icon.bin b/assets/icon.bin
+new file mode 100644
+index 0000000000000000000000000000000000000000..f971a5e28b6c4cb237ca3c7349e33bb600dbc907
+GIT binary patch
+literal 4
+LcmZQzWcm*P0SW;F
+
+literal 0
+HcmV?d00001
+
+diff --git a/assets/archive.zip b/assets/archive.zip
+new file mode 100644
+index 0000000..1234567
+Binary files /dev/null and b/assets/archive.zip differ

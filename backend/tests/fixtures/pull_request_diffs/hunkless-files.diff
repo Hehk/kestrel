@@ -1,0 +1,14 @@
+diff --git a/empty-added.txt b/empty-added.txt
+new file mode 100644
+index 0000000..e69de29
+diff --git a/empty-deleted.txt b/empty-deleted.txt
+deleted file mode 100644
+index e69de29..0000000
+diff --git a/docs/name-before.md b/docs/name-after.md
+similarity index 100%
+rename from docs/name-before.md
+rename to docs/name-after.md
+diff --git a/config/source.toml b/config/copied.toml
+similarity index 100%
+copy from config/source.toml
+copy to config/copied.toml

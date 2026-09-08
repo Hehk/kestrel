@@ -45,7 +45,7 @@ pub struct RepositoryErrorResponse {
 }
 
 #[derive(Serialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum RepositoryErrorCode {
     DuplicateRepository,
     InvalidRepository,
@@ -622,7 +622,7 @@ mod tests {
         assert_eq!(second.status(), StatusCode::CONFLICT);
         assert_eq!(
             response_json(second).await,
-            serde_json::json!({ "error": "duplicate_repository" }),
+            serde_json::json!({ "error": "duplicateRepository" }),
         );
 
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tracked_repositories")
@@ -653,7 +653,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert_eq!(
             response_json(response).await,
-            serde_json::json!({ "error": "invalid_repository" }),
+            serde_json::json!({ "error": "invalidRepository" }),
         );
     }
 
@@ -704,7 +704,7 @@ mod tests {
         .bind("app")
         .bind("2026-01-01T00:00:00Z")
         .bind("2026-01-02T00:00:00Z")
-        .bind("authorization_required")
+        .bind("authorizationRequired")
         .execute(&db)
         .await
         .expect("repository should insert");
@@ -731,7 +731,7 @@ mod tests {
                     "name": "app",
                     "owner": "kestrel",
                     "pullRequestsSyncedAt": "2026-01-02T00:00:00Z",
-                    "pullRequestsSyncError": "authorization_required"
+                    "pullRequestsSyncError": "authorizationRequired"
                 }]
             }),
         );

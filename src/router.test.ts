@@ -6,9 +6,12 @@ describe("router", () => {
     expect(Router.fromRoute({ name: "Home" })).toBe("/");
     expect(Router.fromRoute({ name: "Login" })).toBe("/login");
     expect(Router.fromRoute({ name: "Settings" })).toBe("/settings");
-    expect(Router.fromRoute({ name: "PullRequest", repo: "kestrel", id: "123" })).toBe(
-      "/pull/kestrel/123",
-    );
+    expect(
+      Router.fromRoute({ name: "PullRequest", repo: "kestrel/app", id: "123", view: "overview" }),
+    ).toBe("/pull/kestrel%2Fapp/123");
+    expect(
+      Router.fromRoute({ name: "PullRequest", repo: "kestrel/app", id: "123", view: "diff" }),
+    ).toBe("/pull/kestrel%2Fapp/123/diff");
   });
 
   it("decodes paths", () => {
@@ -19,6 +22,13 @@ describe("router", () => {
       name: "PullRequest",
       repo: "kestrel",
       id: "123",
+      view: "overview",
+    });
+    expect(Router.toRoute("/pull/kestrel%2Fapp/123/diff")).toEqual({
+      name: "PullRequest",
+      repo: "kestrel/app",
+      id: "123",
+      view: "diff",
     });
   });
 
@@ -32,6 +42,18 @@ describe("router", () => {
       name: "NotFound",
       path: "/pull/kestrel/123/extra",
     });
+    expect(Router.toRoute("/pull/kestrel/123/diff/extra")).toEqual({
+      name: "NotFound",
+      path: "/pull/kestrel/123/diff/extra",
+    });
+    expect(Router.toRoute("/pull/kestrel/123/diff/")).toEqual({
+      name: "NotFound",
+      path: "/pull/kestrel/123/diff/",
+    });
+    expect(Router.toRoute("/pull/%/123")).toEqual({
+      name: "NotFound",
+      path: "/pull/%/123",
+    });
   });
 
   it("roundtrips link routes", () => {
@@ -39,11 +61,24 @@ describe("router", () => {
       { name: "Home" },
       { name: "Login" },
       { name: "Settings" },
-      { name: "PullRequest", repo: "kestrel", id: "123" },
+      { name: "PullRequest", repo: "kestrel/app", id: "123", view: "overview" },
+      { name: "PullRequest", repo: "kestrel/app", id: "123", view: "diff" },
     ];
 
     for (const route of routes) {
       expect(Router.toRoute(Router.fromRoute(route))).toEqual(route);
     }
+  });
+
+  it("includes pull request view in route equality", () => {
+    const overview: Router.Route = {
+      name: "PullRequest",
+      repo: "kestrel/app",
+      id: "123",
+      view: "overview",
+    };
+    expect(Router.equal(overview, { ...overview })).toBe(true);
+    expect(Router.equal(overview, { ...overview, view: "diff" })).toBe(false);
+    expect(Router.equal(overview, { ...overview, id: "124" })).toBe(false);
   });
 });

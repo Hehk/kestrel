@@ -37,7 +37,6 @@ const pullRequestDetail = (): Repositories.PullRequestDetail => ({
   body: "Adds syncing.",
   checkRuns: [],
   commits: [],
-  diff: null,
   files: [],
   issueComments: [],
   reviewComments: [],
@@ -46,7 +45,48 @@ const pullRequestDetail = (): Repositories.PullRequestDetail => ({
   statuses: [],
   syncedAt: "2026-01-04T00:00:00Z",
   timeline: [],
-  timelineHasOlder: false,
+  timelinePagination: { kind: "complete" },
+});
+
+const pullRequestDiff = (): Repositories.PullRequestDiff => ({
+  files: [
+    {
+      additions: 2,
+      content: {
+        hunks: [
+          {
+            context: "fn main()",
+            lines: [
+              {
+                content: "old line",
+                kind: "deletion",
+                missingNewline: false,
+                oldLine: 1,
+              },
+              {
+                content: "new line",
+                kind: "addition",
+                missingNewline: false,
+                newLine: 1,
+              },
+            ],
+            newCount: 1,
+            newStart: 1,
+            oldCount: 1,
+            oldStart: 1,
+          },
+        ],
+        kind: "text",
+      },
+      deletions: 1,
+      operation: {
+        kind: "modified",
+        modeChange: { kind: "unchanged" },
+        path: "src/main.rs",
+      },
+    },
+  ],
+  syncedAt: "2026-01-04T00:00:00Z",
 });
 
 const update = (state: Repositories.State, msg: Repositories.Msg) => {
@@ -75,6 +115,8 @@ const loadedState = (repositories: Repositories.Repository[] = []): LoadedState 
   return {
     addError: null,
     addStatus: "idle",
+    currentPullRequestDiff: null,
+    pullRequestDiffRequestId: 0,
     pullRequestDetails: Repositories.initialState().pullRequestDetails,
     pullRequests: Repositories.initialState().pullRequests,
     repositories,
@@ -197,17 +239,18 @@ describe("repositoriesSlice", () => {
     }).state;
 
     const result = update(state, {
-      complete: false,
       kind: "PullRequestsSynced",
-      nextPage: 2,
+      pagination: { kind: "hasMore", nextPage: 2 },
       pullRequests: [updatedPullRequest, newPullRequest],
       repository: repo,
     });
 
     const pullRequests = result.state.pullRequests["kestrel/app"];
 
-    expect(pullRequests?.complete).toBe(false);
-    expect(pullRequests?.nextPage).toBe(2);
+    expect(pullRequests?.status === "loaded" ? pullRequests.pagination : undefined).toEqual({
+      kind: "hasMore",
+      nextPage: 2,
+    });
     expect(pullRequests?.pullRequests).toEqual([newPullRequest, updatedPullRequest]);
     expect(pullRequests?.status).toBe("loaded");
     expect(result.cmds).toEqual([]);
@@ -239,9 +282,101 @@ describe("repositoriesSlice", () => {
     });
   });
 
+  it("loads one current pull request diff and preserves stale data while refreshing", () => {
+    const repo = repository("kestrel/app");
+    const diff = pullRequestDiff();
+    const requested = update(loadedState([repo]), {
+      kind: "PullRequestDiffLoadRequested",
+      number: 42,
+      repository: repo,
+    });
+
+    expect(requested.cmds).toEqual([
+      { kind: "LoadPullRequestDiff", number: 42, repository: repo, requestId: 1 },
+    ]);
+    expect(requested.state.currentPullRequestDiff).toEqual({
+      key: "kestrel/app#42",
+      requestId: 1,
+      state: { diff: null, status: "loading" },
+    });
+
+    const loaded = update(requested.state, {
+      diff,
+      kind: "PullRequestDiffLoaded",
+      number: 42,
+      repository: repo,
+      requestId: 1,
+    });
+    const refreshing = update(loaded.state, {
+      kind: "PullRequestDiffLoadRequested",
+      number: 42,
+      repository: repo,
+    });
+
+    expect(refreshing.state.currentPullRequestDiff).toEqual({
+      key: "kestrel/app#42",
+      requestId: 2,
+      state: { diff, status: "loading" },
+    });
+    expect(refreshing.cmds).toEqual([
+      { kind: "LoadPullRequestDiff", number: 42, repository: repo, requestId: 2 },
+    ]);
+
+    const failed = update(refreshing.state, {
+      error: "loadFailed",
+      kind: "PullRequestDiffLoadFailed",
+      number: 42,
+      repository: repo,
+      requestId: 2,
+    });
+    expect(failed.state.currentPullRequestDiff?.state).toEqual({
+      diff,
+      error: "loadFailed",
+      status: "error",
+    });
+  });
+
+  it("replaces the current diff and ignores superseded responses", () => {
+    const repo = repository("kestrel/app");
+    const first = update(loadedState([repo]), {
+      kind: "PullRequestDiffLoadRequested",
+      number: 42,
+      repository: repo,
+    });
+    const second = update(first.state, {
+      kind: "PullRequestDiffLoadRequested",
+      number: 43,
+      repository: repo,
+    });
+
+    expect(second.state.currentPullRequestDiff).toEqual({
+      key: "kestrel/app#43",
+      requestId: 2,
+      state: { diff: null, status: "loading" },
+    });
+
+    const staleLoaded = update(second.state, {
+      diff: pullRequestDiff(),
+      kind: "PullRequestDiffLoaded",
+      number: 42,
+      repository: repo,
+      requestId: 1,
+    });
+    const staleFailed = update(staleLoaded.state, {
+      error: "diffParseFailed",
+      kind: "PullRequestDiffLoadFailed",
+      number: 43,
+      repository: repo,
+      requestId: 1,
+    });
+
+    expect(staleLoaded.state).toBe(second.state);
+    expect(staleFailed.state).toBe(second.state);
+  });
+
   it("loads older timeline activity without discarding the current detail", () => {
     const repo = repository("kestrel/app");
-    const detail = { ...pullRequestDetail(), timelineHasOlder: true };
+    const detail = { ...pullRequestDetail(), timelinePagination: { kind: "hasOlder" as const } };
     const loaded = update(loadedState([repo]), {
       detail,
       kind: "PullRequestDetailLoaded",
@@ -310,11 +445,113 @@ describe("repositoriesSlice", () => {
     );
   });
 
+  it("loads a parsed pull request diff from the dedicated endpoint", async () => {
+    const repo = repository("kestrel/app");
+    const diff = pullRequestDiff();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(diff)),
+    );
+    const messages: Repositories.Msg[] = [];
+
+    Repositories.runCmd(
+      { kind: "LoadPullRequestDiff", number: 42, repository: repo, requestId: 7 },
+      (msg) => messages.push(msg),
+    );
+
+    await waitFor(() =>
+      expect(messages).toEqual([
+        {
+          diff,
+          kind: "PullRequestDiffLoaded",
+          number: 42,
+          repository: repo,
+          requestId: 7,
+        },
+      ]),
+    );
+    const request = vi.mocked(fetch).mock.calls[0]?.[0];
+    expect(request).toBeInstanceOf(Request);
+    expect((request as Request).method).toBe("GET");
+    expect((request as Request).url).toContain(
+      "/api/repositories/kestrel/app/pull-requests/42/diff",
+    );
+  });
+
+  it.each([
+    ["authenticationRequired", "authenticationRequired"],
+    ["authorizationRequired", "authorizationRequired"],
+    ["diffParseFailed", "diffParseFailed"],
+    ["diffResourceLimitExceeded", "diffResourceLimitExceeded"],
+    ["diffUnavailable", "diffUnavailable"],
+    ["invalidPullRequest", "invalidPullRequest"],
+    ["invalidRepository", "invalidRepository"],
+    ["pullRequestNotFound", "pullRequestNotFound"],
+    ["repositoryNotTracked", "repositoryNotTracked"],
+    ["syncFailed", "loadFailed"],
+  ] as const)("maps Diff endpoint error %s", async (apiError, expectedError) => {
+    const repo = repository("kestrel/app");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ error: apiError }, 500)),
+    );
+    const messages: Repositories.Msg[] = [];
+
+    Repositories.runCmd(
+      { kind: "LoadPullRequestDiff", number: 42, repository: repo, requestId: 3 },
+      (msg) => messages.push(msg),
+    );
+
+    await waitFor(() =>
+      expect(messages).toEqual([
+        {
+          error: expectedError,
+          kind: "PullRequestDiffLoadFailed",
+          number: 42,
+          repository: repo,
+          requestId: 3,
+        },
+      ]),
+    );
+  });
+
+  it.each([
+    ["network rejection", () => Promise.reject(new Error("network failed"))],
+    [
+      "invalid JSON",
+      () =>
+        Promise.resolve(
+          new Response("{", { headers: { "content-type": "application/json" }, status: 200 }),
+        ),
+    ],
+  ])("maps thrown Diff %s to a terminal failure", async (_name, response) => {
+    const repo = repository("kestrel/app");
+    vi.stubGlobal("fetch", vi.fn(response));
+    const messages: Repositories.Msg[] = [];
+
+    Repositories.runCmd(
+      { kind: "LoadPullRequestDiff", number: 42, repository: repo, requestId: 4 },
+      (msg) => messages.push(msg),
+    );
+
+    await waitFor(() =>
+      expect(messages).toEqual([
+        {
+          error: "loadFailed",
+          kind: "PullRequestDiffLoadFailed",
+          number: 42,
+          repository: repo,
+          requestId: 4,
+        },
+      ]),
+    );
+  });
+
   it("maps authorization failures when syncing pull requests", async () => {
     const repo = repository("kestrel/app");
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => jsonResponse({ error: "authorization_required" }, 403)),
+      vi.fn(async () => jsonResponse({ error: "authorizationRequired" }, 403)),
     );
     const messages: Repositories.Msg[] = [];
 
@@ -393,7 +630,7 @@ describe("repositoriesSlice", () => {
   it("maps duplicate add failures", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => jsonResponse({ error: "duplicate_repository" }, 409)),
+      vi.fn(async () => jsonResponse({ error: "duplicateRepository" }, 409)),
     );
     const messages: Repositories.Msg[] = [];
 

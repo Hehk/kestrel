@@ -67,3 +67,19 @@ jobs:
           components: rustfmt, clippy
 
       - run: ${{ matrix.command }}
+
+  api-schema:
+    name: API schema
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - run: npm ci
+      - run: npm run api:check

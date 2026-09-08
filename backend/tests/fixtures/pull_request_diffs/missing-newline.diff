@@ -1,0 +1,26 @@
+diff --git a/config/version.txt b/config/version.txt
+index 3f78685..89e6c98 100644
+--- a/config/version.txt
++++ b/config/version.txt
+@@ -1 +1 @@
+-version=1
+\ No newline at end of file
++version=2
+\ No newline at end of file
+diff --git a/config/feature.txt b/config/feature.txt
+index 1111111..2222222 100644
+--- a/config/feature.txt
++++ b/config/feature.txt
+@@ -1 +1 @@
+-enabled=false
++enabled=true
+\ No newline at end of file
+diff --git a/config/context.txt b/config/context.txt
+index 3333333..4444444 100644
+--- a/config/context.txt
++++ b/config/context.txt
+@@ -1,2 +1,2 @@
+-first=old
++first=new
+ final=true
+\ No newline at end of file

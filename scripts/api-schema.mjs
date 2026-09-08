@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -8,7 +8,20 @@ import { dirname, join, resolve } from "node:path";
 
 const command = process.argv[2];
 const schemaPath = resolve("src/api/schema.ts");
-const openApiUrl = process.env["OPENAPI_URL"] ?? "http://127.0.0.1:3000/api/openapi.json";
+const openApiTempDir =
+  process.env["OPENAPI_URL"] === undefined ? mkdtempSync(join(tmpdir(), "kestrel-openapi-")) : null;
+if (openApiTempDir !== null) {
+  process.once("exit", () => rmSync(openApiTempDir, { force: true, recursive: true }));
+}
+const openApiUrl = process.env["OPENAPI_URL"] ?? join(openApiTempDir, "openapi.json");
+if (openApiTempDir !== null) {
+  const document = execFileSync(
+    "cargo",
+    ["run", "--quiet", "--locked", "--manifest-path", "backend/Cargo.toml", "--", "--openapi"],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
+  );
+  writeFileSync(openApiUrl, document);
+}
 
 const generateSchema = (outputPath) => {
   mkdirSync(dirname(outputPath), { recursive: true });
@@ -39,3 +52,5 @@ if (command === "generate") {
   console.error("Usage: node scripts/api-schema.mjs <generate|check>");
   process.exitCode = 1;
 }
+
+if (openApiTempDir !== null) rmSync(openApiTempDir, { force: true, recursive: true });

@@ -6,6 +6,7 @@ mod github_app;
 mod github_oauth;
 mod http;
 mod openapi;
+mod pull_request_diff;
 mod pull_requests;
 mod repositories;
 mod session;
@@ -14,9 +15,22 @@ mod settings;
 use std::process::ExitCode;
 
 use crate::config::Config;
+use utoipa::OpenApi;
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    if std::env::args().nth(1).as_deref() == Some("--openapi") {
+        return match openapi::ApiDoc::openapi().to_pretty_json() {
+            Ok(json) => {
+                println!("{json}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("failed to serialize OpenAPI document: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     load_dotenv();
 
     tracing_subscriber::fmt()
