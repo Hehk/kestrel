@@ -24,6 +24,8 @@ jobs:
             command: npm run typecheck
           - name: Lint
             command: npm run lint
+          - name: Knip
+            command: npm run knip
           - name: Format
             command: npm run format:check
           - name: Test
