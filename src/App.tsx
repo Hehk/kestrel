@@ -1,6 +1,9 @@
+import * as stylex from "@stylexjs/stylex";
 import { createMemo, createSignal, createUniqueId, For, Match, Switch } from "solid-js";
-import "./App.css";
 import { Link } from "./Link";
+import { Anchor } from "./components/Anchor";
+import { Button } from "./components/Button";
+import { PageLayout } from "./components/PageLayout";
 import { LoggedOut } from "./LoggedOut";
 import { appStore, send } from "./store";
 import * as Repositories from "./repositoriesSlice";
@@ -10,6 +13,103 @@ import { SettingsPage } from "./SettingsPage";
 import DefaultHeader from "./DefaultHeader";
 import PullRequestPage from "./PullRequestPage";
 import PullRequestsError from "./PullRequestError";
+import { styles as baseStyles } from "./styles/base";
+import { tokens } from "./styles/tokens.stylex";
+
+import { media } from "./styles/media.stylex";
+
+const mobile = media.mobile;
+
+const styles = stylex.create({
+  pageCardHeading: {
+    marginTop: 0,
+  },
+  repoStatus: {
+    color: tokens.textMuted,
+  },
+  repoList: {
+    display: "grid",
+    gap: "0.5rem",
+    padding: 0,
+    marginTop: "0",
+    marginRight: "0",
+    marginBottom: "1.5rem",
+    marginLeft: "0",
+    listStyle: "none",
+  },
+  repoRow: {
+    display: "grid",
+    gap: "0.45rem",
+    paddingBlock: "0.45rem",
+    paddingInline: "0",
+    borderBottomWidth: 1,
+    borderBottomStyle: "solid",
+    borderBottomColor: tokens.rule,
+  },
+  row: {
+    display: "flex",
+    alignItems: { default: "baseline", [mobile]: "stretch" },
+    justifyContent: "space-between",
+    gap: "1rem",
+    flexDirection: { default: "row", [mobile]: "column" },
+  },
+  repoActions: {
+    display: "flex",
+    alignItems: "baseline",
+    justifyContent: "flex-start",
+    gap: "0.5rem",
+  },
+  repoPrList: {
+    display: "grid",
+    gap: "0.25rem",
+    padding: 0,
+    marginTop: "0.15rem",
+    marginRight: "0",
+    marginBottom: "0",
+    marginLeft: "0",
+    listStyle: "none",
+  },
+  repoAddForm: {
+    display: "grid",
+    gap: "0.45rem",
+    paddingTop: "1rem",
+    marginTop: "1.5rem",
+    borderTopWidth: 1,
+    borderTopStyle: "solid",
+    borderTopColor: tokens.rule,
+  },
+  repoAddLabel: {
+    fontWeight: 700,
+  },
+  repoAddControls: {
+    display: "flex",
+    gap: "0.5rem",
+    flexDirection: { default: "row", [mobile]: "column" },
+    alignItems: { default: "normal", [mobile]: "stretch" },
+  },
+  repoInput: {
+    minWidth: 0,
+    flexGrow: 1,
+    flexBasis: "0%",
+    paddingBlock: "0.25rem",
+    paddingInline: "0.4rem",
+    color: tokens.text,
+    backgroundColor: tokens.background,
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: tokens.border,
+    fontFamily: "inherit",
+    fontSize: "inherit",
+    lineHeight: "inherit",
+  },
+  repoAddError: {
+    marginTop: 0,
+    marginRight: 0,
+    marginBottom: 0,
+    marginLeft: 0,
+    color: tokens.textMuted,
+  },
+});
 
 const Page = (props: { route: Router.AuthenticatedRoute }) => {
   const view = createMemo(() => {
@@ -31,15 +131,14 @@ const Page = (props: { route: Router.AuthenticatedRoute }) => {
 
 const HomePage = () => {
   return (
-    <div class="default-page">
-      <DefaultHeader />
-      <section class="page-card">
-        <p class="eyebrow">Repositories</p>
-        <h1>Tracked repositories</h1>
-        <RepositoryList />
-        <AddRepositoryForm />
-      </section>
-    </div>
+    <PageLayout header={<DefaultHeader />}>
+      <p {...stylex.attrs(baseStyles.paragraph, baseStyles.eyebrow)}>Repositories</p>
+      <h1 {...stylex.attrs(baseStyles.heading, baseStyles.heading1, styles.pageCardHeading)}>
+        Tracked repositories
+      </h1>
+      <RepositoryList />
+      <AddRepositoryForm />
+    </PageLayout>
   );
 };
 
@@ -48,16 +147,20 @@ const RepositoryList = () => {
   return (
     <Switch>
       <Match when={repositories().status === "loading"}>
-        <p class="repo-status">Loading repositories...</p>
+        <p {...stylex.attrs(baseStyles.paragraph, styles.repoStatus)}>Loading repositories...</p>
       </Match>
       <Match when={repositories().status === "error"}>
-        <p class="repo-status">Repositories could not be loaded.</p>
+        <p {...stylex.attrs(baseStyles.paragraph, styles.repoStatus)}>
+          Repositories could not be loaded.
+        </p>
       </Match>
       <Match when={repositories().repositories.length === 0}>
-        <p class="repo-status">No repositories tracked yet.</p>
+        <p {...stylex.attrs(baseStyles.paragraph, styles.repoStatus)}>
+          No repositories tracked yet.
+        </p>
       </Match>
       <Match when={repositories().status === "loaded"}>
-        <ul class="repo-list" aria-label="Tracked repositories">
+        <ul {...stylex.attrs(styles.repoList)} aria-label="Tracked repositories">
           <For each={repositories().repositories}>
             {(repository) => (
               <RepositoryRow
@@ -77,13 +180,13 @@ const RepositoryRow = (props: {
   repository: Repositories.Repository;
 }) => {
   return (
-    <li class="repo-row">
-      <div class="repo-row-header">
-        <a href={props.repository.htmlUrl}>{props.repository.fullName}</a>
-        <span class="repo-provider">GitHub</span>
+    <li {...stylex.attrs(styles.repoRow)}>
+      <div {...stylex.attrs(styles.row)}>
+        <Anchor href={props.repository.htmlUrl}>{props.repository.fullName}</Anchor>
+        <span {...stylex.attrs(baseStyles.mutedMetadata)}>GitHub</span>
       </div>
-      <div class="repo-actions">
-        <button
+      <div {...stylex.attrs(styles.repoActions)}>
+        <Button
           aria-label={`Load PRs for ${props.repository.fullName}`}
           disabled={
             props.pullRequests?.status === "loading" || props.pullRequests?.status === "syncing"
@@ -94,11 +197,10 @@ const RepositoryRow = (props: {
               msg: { kind: "PullRequestsLoadRequested", repository: props.repository },
             })
           }
-          type="button"
         >
           Load PRs
-        </button>
-        <button
+        </Button>
+        <Button
           aria-label={`Sync PRs for ${props.repository.fullName}`}
           disabled={props.pullRequests?.status === "syncing"}
           onClick={() =>
@@ -107,10 +209,9 @@ const RepositoryRow = (props: {
               msg: { kind: "PullRequestsSyncRequested", repository: props.repository },
             })
           }
-          type="button"
         >
           {props.pullRequests?.status === "syncing" ? "Syncing..." : "Sync PRs"}
-        </button>
+        </Button>
       </div>
       <RepositorySyncStatus repository={props.repository} />
       <PullRequestsSummary pullRequests={props.pullRequests} repository={props.repository} />
@@ -121,14 +222,18 @@ const RepositoryRow = (props: {
 const RepositorySyncStatus = ({ repository }: { repository: Repositories.Repository }) => {
   if (repository.pullRequestsSyncError) {
     return (
-      <p class="repo-pr-status">
+      <p {...stylex.attrs(baseStyles.paragraph, baseStyles.statusText)}>
         Last PR sync failed: {repositorySyncErrorText(repository.pullRequestsSyncError)}
       </p>
     );
   }
 
   if (repository.pullRequestsSyncedAt) {
-    return <p class="repo-pr-status">Last PR sync: {repository.pullRequestsSyncedAt}</p>;
+    return (
+      <p {...stylex.attrs(baseStyles.paragraph, baseStyles.statusText)}>
+        Last PR sync: {repository.pullRequestsSyncedAt}
+      </p>
+    );
   }
 
   return null;
@@ -150,12 +255,22 @@ const PullRequestsSummary = (props: {
   repository: Repositories.Repository;
 }) => {
   return (
-    <Switch fallback={<p class="repo-pr-status">Pull requests not loaded.</p>}>
+    <Switch
+      fallback={
+        <p {...stylex.attrs(baseStyles.paragraph, baseStyles.statusText)}>
+          Pull requests not loaded.
+        </p>
+      }
+    >
       <Match when={props.pullRequests?.status === "loading"}>
-        <p class="repo-pr-status">Loading pull requests...</p>
+        <p {...stylex.attrs(baseStyles.paragraph, baseStyles.statusText)}>
+          Loading pull requests...
+        </p>
       </Match>
       <Match when={props.pullRequests?.status === "syncing"}>
-        <p class="repo-pr-status">Syncing pull requests...</p>
+        <p {...stylex.attrs(baseStyles.paragraph, baseStyles.statusText)}>
+          Syncing pull requests...
+        </p>
       </Match>
       <Match when={props.pullRequests?.status === "error"}>
         <PullRequestsError
@@ -170,13 +285,18 @@ const PullRequestsSummary = (props: {
           props.pullRequests?.status === "loaded" && props.pullRequests.pullRequests.length === 0
         }
       >
-        <p class="repo-pr-status">No pull requests stored yet.</p>
+        <p {...stylex.attrs(baseStyles.paragraph, baseStyles.statusText)}>
+          No pull requests stored yet.
+        </p>
       </Match>
       <Match when={props.pullRequests?.status === "loaded"}>
-        <ul class="repo-pr-list" aria-label={`Pull requests for ${props.repository.fullName}`}>
+        <ul
+          {...stylex.attrs(styles.repoPrList)}
+          aria-label={`Pull requests for ${props.repository.fullName}`}
+        >
           <For each={props.pullRequests?.pullRequests}>
             {(pullRequest) => (
-              <li>
+              <li {...stylex.attrs(styles.row)}>
                 <Link
                   to={{
                     name: "PullRequest",
@@ -187,7 +307,7 @@ const PullRequestsSummary = (props: {
                 >
                   #{pullRequest.number} {pullRequest.title}
                 </Link>
-                <span class="repo-pr-meta">{pullRequest.state}</span>
+                <span {...stylex.attrs(baseStyles.mutedMetadata)}>{pullRequest.state}</span>
               </li>
             )}
           </For>
@@ -210,7 +330,7 @@ const AddRepositoryForm = () => {
 
   return (
     <form
-      class="repo-add-form"
+      {...stylex.attrs(styles.repoAddForm)}
       onSubmit={(event) => {
         event.preventDefault();
         if (repositories().status !== "loaded" || saving()) {
@@ -228,10 +348,10 @@ const AddRepositoryForm = () => {
         setRepositoryInput("");
       }}
     >
-      <label class="repo-add-label" for="repository-input">
+      <label {...stylex.attrs(styles.repoAddLabel)} for="repository-input">
         Add GitHub repository
       </label>
-      <div class="repo-add-controls">
+      <div {...stylex.attrs(styles.repoAddControls)}>
         <input
           aria-describedby={error() ? errorId : undefined}
           disabled={repositories().status !== "loaded" || saving()}
@@ -241,13 +361,14 @@ const AddRepositoryForm = () => {
           placeholder="owner/name or GitHub URL"
           type="text"
           value={repositoryInput()}
+          {...stylex.attrs(baseStyles.focusable, styles.repoInput)}
         />
-        <button disabled={repositories().status !== "loaded" || saving()} type="submit">
+        <Button disabled={repositories().status !== "loaded" || saving()} type="submit">
           {saving() ? "Tracking..." : "Track repo"}
-        </button>
+        </Button>
       </div>
       {error() ? (
-        <p class="repo-add-error" id={errorId}>
+        <p {...stylex.attrs(baseStyles.paragraph, styles.repoAddError)} id={errorId}>
           {error()}
         </p>
       ) : null}
@@ -274,14 +395,13 @@ const addErrorText = (error: Repositories.AddError | null) => {
 
 const NotFoundPage = ({ path }: { path: string }) => {
   return (
-    <div class="default-page">
-      <DefaultHeader />
-      <section class="page-card">
-        <p class="eyebrow">Not Found</p>
-        <h1>Route not found</h1>
-        <p>No page exists for {path}.</p>
-      </section>
-    </div>
+    <PageLayout header={<DefaultHeader />}>
+      <p {...stylex.attrs(baseStyles.paragraph, baseStyles.eyebrow)}>Not Found</p>
+      <h1 {...stylex.attrs(baseStyles.heading, baseStyles.heading1, styles.pageCardHeading)}>
+        Route not found
+      </h1>
+      <p {...stylex.attrs(baseStyles.paragraph)}>No page exists for {path}.</p>
+    </PageLayout>
   );
 };
 

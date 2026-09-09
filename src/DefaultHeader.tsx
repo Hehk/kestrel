@@ -1,29 +1,46 @@
+import * as stylex from "@stylexjs/stylex";
 import { Link } from "./Link";
 import { appStore } from "./store";
 import * as Session from "./session";
+import { Button } from "./components/Button";
+import { SiteHeader } from "./components/SiteHeader";
+import { tokens } from "./styles/tokens.stylex";
+
+const styles = stylex.create({
+  navSeparator: {
+    color: tokens.textMuted,
+  },
+  authAction: {
+    marginTop: "0.25rem",
+  },
+});
 
 const DefaultHeader = () => {
   return (
-    <header class="app-header">
-      <p class="site-title">Kestrel</p>
-      <nav class="app-nav" aria-label="Primary">
-        <Link to={{ name: "Home" }}>Home</Link>
-        <span class="nav-separator" aria-hidden="true">
-          |
-        </span>
-        <Link to={{ name: "Settings" }}>Settings</Link>
-        <span class="nav-separator" aria-hidden="true">
-          |
-        </span>
-        <Link to={{ name: "PullRequest", repo: "kestrel", id: "42", view: "overview" }}>
-          Sample PR
-        </Link>
-        <span class="nav-separator" aria-hidden="true">
-          |
-        </span>
-        <AuthNav />
-      </nav>
-    </header>
+    <SiteHeader>
+      <Link variant="navigation" to={{ name: "Home" }}>
+        Home
+      </Link>
+      <span {...stylex.attrs(styles.navSeparator)} aria-hidden="true">
+        |
+      </span>
+      <Link variant="navigation" to={{ name: "Settings" }}>
+        Settings
+      </Link>
+      <span {...stylex.attrs(styles.navSeparator)} aria-hidden="true">
+        |
+      </span>
+      <Link
+        variant="navigation"
+        to={{ name: "PullRequest", repo: "kestrel", id: "42", view: "overview" }}
+      >
+        Sample PR
+      </Link>
+      <span {...stylex.attrs(styles.navSeparator)} aria-hidden="true">
+        |
+      </span>
+      <AuthNav />
+    </SiteHeader>
   );
 };
 
@@ -36,9 +53,11 @@ const AuthNav = () => {
   return (
     <>
       <span>{displayName()}</span>
-      <button type="button" class="counter" onClick={onLogout}>
-        Sign out
-      </button>
+      <span {...stylex.attrs(styles.authAction)}>
+        <Button onClick={onLogout} size="small">
+          Sign out
+        </Button>
+      </span>
     </>
   );
 };

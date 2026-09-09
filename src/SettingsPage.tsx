@@ -1,6 +1,67 @@
 import { Select } from "@kobalte/core/select";
+import * as stylex from "@stylexjs/stylex";
 import { appStore, send } from "./store";
+import { Button } from "./components/Button";
+import { PageLayout } from "./components/PageLayout";
 import * as Settings from "./settingsSlice";
+import { styles as baseStyles } from "./styles/base";
+import { tokens } from "./styles/tokens.stylex";
+
+const styles = stylex.create({
+  pageCardHeading: {
+    marginTop: 0,
+  },
+  form: {
+    display: "grid",
+    gap: "0.85rem",
+    justifyItems: "start",
+  },
+  error: {
+    color: tokens.textMuted,
+  },
+  label: {
+    marginBottom: "0.25rem",
+    fontWeight: 700,
+  },
+  value: {
+    textAlign: "left",
+  },
+  popup: {
+    zIndex: 10,
+    minWidth: "var(--kb-popper-anchor-width)",
+    padding: "0.25rem",
+    color: tokens.text,
+    backgroundColor: tokens.background,
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: tokens.border,
+    boxShadow: "0 0.35rem 1.25rem rgb(0 0 0 / 18%)",
+    outline: "none",
+  },
+  list: {
+    display: "grid",
+    gap: "0.1rem",
+    outline: "none",
+  },
+  item: {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.45rem",
+    paddingBlock: "0.25rem",
+    paddingInline: "0.45rem",
+    outline: "none",
+    cursor: "default",
+    color: { default: null, "[data-highlighted]": tokens.background },
+    backgroundColor: { default: null, "[data-highlighted]": tokens.text },
+  },
+  indicator: {
+    width: "1rem",
+  },
+  itemText: {
+    flexGrow: 1,
+    flexBasis: "0%",
+  },
+});
 import DefaultHeader from "./DefaultHeader";
 import { CaretUpDownIcon, CheckIcon } from "./icons/Icons";
 
@@ -30,17 +91,19 @@ const ThemeSelect = () => {
         }
       }}
       itemComponent={(props) => (
-        <Select.Item class="select-item" item={props.item}>
-          <Select.ItemIndicator class="select-item-indicator">
+        <Select.Item {...stylex.attrs(styles.item)} item={props.item}>
+          <Select.ItemIndicator {...stylex.attrs(styles.indicator)}>
             <CheckIcon />
           </Select.ItemIndicator>
-          <Select.ItemLabel class="select-item-text">{props.item.rawValue.label}</Select.ItemLabel>
+          <Select.ItemLabel {...stylex.attrs(styles.itemText)}>
+            {props.item.rawValue.label}
+          </Select.ItemLabel>
         </Select.Item>
       )}
     >
-      <Select.Label class="select-label">Theme</Select.Label>
-      <Select.Trigger class="theme-select-trigger">
-        <Select.Value<(typeof themes)[number]> class="select-value">
+      <Select.Label {...stylex.attrs(styles.label)}>Theme</Select.Label>
+      <Select.Trigger as={Button} variant="select">
+        <Select.Value<(typeof themes)[number]> {...stylex.attrs(styles.value)}>
           {(state) => state.selectedOption().label}
         </Select.Value>
         <Select.Icon>
@@ -48,8 +111,8 @@ const ThemeSelect = () => {
         </Select.Icon>
       </Select.Trigger>
       <Select.Portal>
-        <Select.Content class="select-popup select-positioner">
-          <Select.Listbox class="select-list" />
+        <Select.Content {...stylex.attrs(styles.popup)}>
+          <Select.Listbox {...stylex.attrs(styles.list)} />
         </Select.Content>
       </Select.Portal>
     </Select>
@@ -60,25 +123,23 @@ export const SettingsPage = () => {
   const themeSyncError = appStore((state) => state.settings.themeSyncError);
 
   return (
-    <div class="default-page">
-      <DefaultHeader />
-      <section class="page-card">
-        <h1>Settings</h1>
-        <div class="settings-form">
-          <ThemeSelect />
-          {themeSyncError() ? (
-            <p class="settings-error">
-              Theme is saved on this device but has not synced.{" "}
-              <button
-                onClick={() => send({ kind: "Settings", msg: { kind: "ThemeSyncRetryRequested" } })}
-                type="button"
-              >
-                Retry
-              </button>
-            </p>
-          ) : null}
-        </div>
-      </section>
-    </div>
+    <PageLayout header={<DefaultHeader />}>
+      <h1 {...stylex.attrs(baseStyles.heading, baseStyles.heading1, styles.pageCardHeading)}>
+        Settings
+      </h1>
+      <div {...stylex.attrs(styles.form)}>
+        <ThemeSelect />
+        {themeSyncError() ? (
+          <p {...stylex.attrs(baseStyles.paragraph, styles.error)}>
+            Theme is saved on this device but has not synced.{" "}
+            <Button
+              onClick={() => send({ kind: "Settings", msg: { kind: "ThemeSyncRetryRequested" } })}
+            >
+              Retry
+            </Button>
+          </p>
+        ) : null}
+      </div>
+    </PageLayout>
   );
 };

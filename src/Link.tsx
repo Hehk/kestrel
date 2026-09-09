@@ -2,8 +2,10 @@ import type { ComponentProps } from "solid-js";
 import { splitProps } from "solid-js";
 import * as Router from "./router";
 import * as Store from "./store";
+import { Anchor } from "./components/Anchor";
+import type { AnchorProps } from "./components/Anchor";
 
-type LinkProps = Omit<ComponentProps<"a">, "download" | "href"> & {
+type LinkProps = Omit<AnchorProps, "download" | "href"> & {
   download?: boolean | string;
   to: Router.ProtectedRoute;
   replace?: boolean;
@@ -37,7 +39,7 @@ export const Link = (props: LinkProps) => {
   ]);
 
   return (
-    <a
+    <Anchor
       {...anchorProps}
       ref={local.ref}
       href={Router.fromRoute(local.to)}

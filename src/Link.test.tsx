@@ -1,7 +1,9 @@
 import { cleanup, fireEvent, render, screen } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createSignal } from "solid-js";
 import { Link } from "./Link";
+import type { ProtectedRoute } from "./router";
 import * as Store from "./store";
 
 const testUser = {
@@ -73,6 +75,33 @@ describe("Link", () => {
     render(() => <Link to={{ name: "Settings" }}>Settings</Link>);
 
     expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
+  });
+
+  it("forwards refs and keeps href and navigation reactive through Anchor", async () => {
+    const user = userEvent.setup();
+    const cmds = collectCommands();
+    const [route, setRoute] = createSignal<ProtectedRoute>({ name: "Home" });
+    let ref: HTMLAnchorElement | undefined;
+    render(() => (
+      <Link
+        ref={(element) => {
+          ref = element;
+        }}
+        to={route()}
+        variant="navigation"
+      >
+        Destination
+      </Link>
+    ));
+
+    const anchor = screen.getByRole("link", { name: "Destination" });
+    expect(ref).toBe(anchor);
+    expect(anchor).toHaveAttribute("href", "/");
+    setRoute({ name: "Settings" });
+    expect(anchor).toHaveAttribute("href", "/settings");
+    expect(anchor).not.toHaveAttribute("variant");
+    await user.click(anchor);
+    expect(cmds).toEqual([{ kind: "Navigate", route: { name: "Settings" }, replace: false }]);
   });
 
   it("emits a navigation command on normal clicks", async () => {

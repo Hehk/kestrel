@@ -2,6 +2,7 @@ import fc from "fast-check";
 import { beforeEach, describe, expect, it } from "vitest";
 import * as Cache from "./cache";
 import * as Settings from "./settingsSlice";
+import { darkClasses, lightClasses } from "./styles/themes";
 
 const userId = "user_1";
 
@@ -16,6 +17,26 @@ const readyState = (theme: Settings.Theme = "system"): Settings.State => {
 describe("settingsSlice", () => {
   beforeEach(() => {
     window.localStorage.clear();
+  });
+
+  it("switches theme classes without replacing document styles", () => {
+    const root = document.documentElement;
+    const originalClass = root.className;
+    const originalTheme = root.getAttribute("data-theme");
+    try {
+      root.className = "document-style";
+      for (const theme of ["light", "dark", "dark", "system", "light", "system"] as const) {
+        Settings.applyTheme(theme);
+        const classes = theme === "system" ? [] : theme === "light" ? lightClasses : darkClasses;
+        expect(new Set(root.classList)).toEqual(new Set(["document-style", ...classes]));
+        expect(root.classList.contains("undefined")).toBe(false);
+        expect(root.getAttribute("data-theme")).toBe(theme === "system" ? null : theme);
+      }
+    } finally {
+      root.className = originalClass;
+      if (originalTheme === null) root.removeAttribute("data-theme");
+      else root.setAttribute("data-theme", originalTheme);
+    }
   });
 
   it("changes local state and derives effects through the public update", () => {

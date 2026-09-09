@@ -120,7 +120,7 @@ export const createDiffViewRuntime = (
     const sourceTarget = (target: EventTarget | null) =>
       target instanceof Element &&
       elements?.table.contains(target) &&
-      target.closest(".pr-diff-source") !== null;
+      target.closest("[data-diff-source]") !== null;
     const handleWheel = (event: WheelEvent) => {
       if (elements === null) return;
       if (!sourceTarget(event.target) || event.ctrlKey) {
@@ -221,8 +221,8 @@ export const createDiffViewRuntime = (
     resizeObserver = env.createResizeObserver?.(measureGeometry) ?? null;
     for (const element of new Set([
       elements.table.parentElement,
-      elements.table.closest(".PullRequestPage-diffContent"),
-      elements.table.closest(".PullRequestPage"),
+      elements.table.closest("[data-pr-diff-content]"),
+      elements.table.closest("[data-pr-view]"),
       elements.stickyStack,
       rail,
     ])) {
@@ -327,7 +327,7 @@ export const createDiffViewRuntime = (
           const match = elements.table.querySelector<HTMLElement>(
             `[data-diff-row="${target.rowIndex}"] mark[data-match-offset="${target.offset}"][data-match-length="${target.length}"]`,
           );
-          const source = match?.closest<HTMLElement>(".pr-diff-source");
+          const source = match?.closest<HTMLElement>("[data-diff-source]");
           const matchRect = match?.getBoundingClientRect();
           const sourceRect = source?.getBoundingClientRect();
           send({

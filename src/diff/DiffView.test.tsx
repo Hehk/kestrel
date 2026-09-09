@@ -137,7 +137,7 @@ describe("DiffView", () => {
 
     expect(
       await screen.findByText("Could not copy hunk from src/old.ts -> src/new.ts."),
-    ).toHaveClass("pr-diff-copyStatus--failure");
+    ).toHaveAttribute("data-copy-outcome", "failure");
     expect(input).toHaveValue("old");
     expect(screen.getByText("1 of 1")).toBeInTheDocument();
     expect(screen.getByRole("table", { name: "Pull request diff contents" })).toHaveAttribute(
@@ -215,7 +215,7 @@ describe("DiffView", () => {
   it("rebuilds virtual geometry when a same-count Diff changes row heights", async () => {
     const [diff, setDiff] = createSignal(sameCountDiff("source"));
     const { container } = render(() => <DiffView diff={diff()} />);
-    const spacer = container.querySelector<HTMLElement>(".pr-diff-spacer");
+    const spacer = container.querySelector<HTMLElement>("[data-diff-spacer]");
 
     await waitFor(() => expect(spacer).toHaveStyle({ height: "120px" }));
     setDiff(sameCountDiff("notices"));
@@ -261,9 +261,9 @@ describe("DiffView", () => {
     notifyResize();
 
     await waitFor(() => expect(firstMountedIndex()).toBeLessThan(before));
-    expect(container.querySelector<HTMLElement>(".pr-diff-virtualRows")?.style.transform).toMatch(
-      /^translateY\(/,
-    );
+    expect(
+      container.querySelector<HTMLElement>("[data-diff-virtual-rows]")?.style.transform,
+    ).toMatch(/^translateY\(/);
   });
 
   it("keeps the mounted DOM bounded and renders distant rows after window scrolling", async () => {
@@ -285,17 +285,17 @@ describe("DiffView", () => {
   it("reuses overlapping row DOM across scrolling and unrelated model updates", async () => {
     const { container } = render(() => <DiffView diff={largeDiff(1_000)} />);
     const row = container.querySelector<HTMLElement>('[data-diff-row="25"]');
-    const source = row?.querySelector(".pr-diff-sourceContent");
+    const source = row?.querySelector("[data-diff-source-content]");
     expect(row).not.toBeNull();
     vi.stubGlobal("scrollY", 480);
     window.dispatchEvent(new Event("scroll"));
     expect(container.querySelector('[data-diff-row="25"]')).toBe(row);
-    expect(row?.querySelector(".pr-diff-sourceContent")).toBe(source);
+    expect(row?.querySelector("[data-diff-source-content]")).toBe(source);
     const input = screen.getByRole("searchbox", { name: "Search diff" });
     fireEvent.input(input, { target: { value: "not found" } });
     await screen.findByText("No results");
     expect(container.querySelector('[data-diff-row="25"]')).toBe(row);
-    expect(row?.querySelector(".pr-diff-sourceContent")).toBe(source);
+    expect(row?.querySelector("[data-diff-source-content]")).toBe(source);
   });
 
   it("refreshes a distant viewport to an empty diff and back without stale rows", async () => {
@@ -353,12 +353,12 @@ describe("DiffView", () => {
     vi.stubGlobal("ResizeObserver", MockResizeObserver);
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(
       function (this: HTMLElement) {
-        return this.classList.contains("pr-diff-horizontalRail") ? 300 : 0;
+        return this.hasAttribute("data-diff-horizontal-rail") ? 300 : 0;
       },
     );
     vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(
       function (this: HTMLElement) {
-        return this.classList.contains("pr-diff-horizontalRail") ? railScrollWidth : 0;
+        return this.hasAttribute("data-diff-horizontal-rail") ? railScrollWidth : 0;
       },
     );
     const [diff, setDiff] = createSignal(largeDiff(1_000));
@@ -370,7 +370,7 @@ describe("DiffView", () => {
     rail.dispatchEvent(new Event("scroll"));
     expect(table.style.getPropertyValue("--pr-diff-horizontal-offset")).toBe("120px");
 
-    const source = container.querySelector<HTMLElement>(".pr-diff-source");
+    const source = container.querySelector<HTMLElement>("[data-diff-source]");
     const wheel = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaX: 80 });
     source?.dispatchEvent(wheel);
     expect(wheel.defaultPrevented).toBe(true);
@@ -420,24 +420,24 @@ describe("DiffView", () => {
     vi.stubGlobal("ResizeObserver", undefined);
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(
       function (this: HTMLElement) {
-        return this.classList.contains("pr-diff-horizontalRail")
+        return this.hasAttribute("data-diff-horizontal-rail")
           ? Math.max(0, Number.parseFloat(this.parentElement?.style.width ?? "0") - 100)
           : 0;
       },
     );
     vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(
       function (this: HTMLElement) {
-        return this.classList.contains("pr-diff-horizontalRail") ? 1_000 : 0;
+        return this.hasAttribute("data-diff-horizontal-rail") ? 1_000 : 0;
       },
     );
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
       function (this: HTMLElement) {
-        return domRect(0, this.classList.contains("pr-diff-table") ? tableWidth : 0);
+        return domRect(0, this.hasAttribute("data-diff-table") ? tableWidth : 0);
       },
     );
     const { container } = render(() => <DiffView diff={smallDiff()} />);
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    const source = container.querySelector(".pr-diff-source");
+    const source = container.querySelector("[data-diff-source]");
     source?.dispatchEvent(
       new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaX: 2_000 }),
     );
@@ -477,8 +477,8 @@ describe("DiffView", () => {
     expect(await screen.findByText("1 of 2")).toBeInTheDocument();
     expect(screen.getByText("1 of 2")).toHaveAttribute("aria-atomic", "true");
     expect(container.querySelectorAll("mark")).toHaveLength(2);
-    expect(container.querySelectorAll(".pr-diff-searchMatch--active")).toHaveLength(1);
-    expect(container.querySelector(".pr-diff-searchMatch--active")).toHaveTextContent("needle");
+    expect(container.querySelectorAll('[data-search-match="active"]')).toHaveLength(1);
+    expect(container.querySelector('[data-search-match="active"]')).toHaveTextContent("needle");
 
     await user.click(screen.getByRole("button", { name: "Next search result" }));
     expect(await screen.findByText("2 of 2")).toBeInTheDocument();
@@ -487,7 +487,7 @@ describe("DiffView", () => {
 
     await user.keyboard("{Enter}");
     expect(await screen.findByText("2 of 2")).toBeInTheDocument();
-    expect(container.querySelector(".pr-diff-searchMatch--active")).toHaveTextContent("NEEDLE");
+    expect(container.querySelector('[data-search-match="active"]')).toHaveTextContent("NEEDLE");
     await user.keyboard("{Enter}");
     expect(await screen.findByText("1 of 2")).toBeInTheDocument();
     await user.keyboard("{Shift>}{Enter}{/Shift}");
@@ -564,22 +564,22 @@ describe("DiffView", () => {
     const user = userEvent.setup();
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(
       function (this: HTMLElement) {
-        return this.classList.contains("pr-diff-horizontalRail") ? 200 : 0;
+        return this.hasAttribute("data-diff-horizontal-rail") ? 200 : 0;
       },
     );
     vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(
       function (this: HTMLElement) {
-        return this.classList.contains("pr-diff-horizontalRail") ? 1_000 : 0;
+        return this.hasAttribute("data-diff-horizontal-rail") ? 1_000 : 0;
       },
     );
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
       function (this: HTMLElement) {
-        const rail = document.querySelector<HTMLElement>(".pr-diff-horizontalRail");
+        const rail = document.querySelector<HTMLElement>("[data-diff-horizontal-rail]");
         const offset = rail?.scrollLeft ?? 0;
-        if (this.classList.contains("pr-diff-searchMatch--active")) {
+        if (this.getAttribute("data-search-match") === "active") {
           return domRect(400 - offset, 450 - offset);
         }
-        if (this.classList.contains("pr-diff-source")) return domRect(0, 200);
+        if (this.hasAttribute("data-diff-source")) return domRect(0, 200);
         return domRect(0, 0);
       },
     );
@@ -593,8 +593,8 @@ describe("DiffView", () => {
     await user.type(input, "rare");
     expect(await screen.findByText("1 of 1")).toBeInTheDocument();
     await waitFor(() => expect(rail.scrollLeft).toBeGreaterThan(0));
-    const activeMatch = document.querySelector<HTMLElement>(".pr-diff-searchMatch--active");
-    const source = activeMatch?.closest<HTMLElement>(".pr-diff-source");
+    const activeMatch = document.querySelector<HTMLElement>('[data-search-match="active"]');
+    const source = activeMatch?.closest<HTMLElement>("[data-diff-source]");
     expect(activeMatch?.getBoundingClientRect().left).toBeGreaterThanOrEqual(
       source?.getBoundingClientRect().left ?? 0,
     );
@@ -614,20 +614,20 @@ describe("DiffView", () => {
     vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(
       function (this: HTMLElement) {
-        return this.classList.contains("pr-diff-horizontalRail") ? viewportWidth : 0;
+        return this.hasAttribute("data-diff-horizontal-rail") ? viewportWidth : 0;
       },
     );
     vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(
       function (this: HTMLElement) {
-        return this.classList.contains("pr-diff-horizontalRail") ? 1_000 : 0;
+        return this.hasAttribute("data-diff-horizontal-rail") ? 1_000 : 0;
       },
     );
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
       function (this: HTMLElement) {
         const offset =
-          document.querySelector<HTMLElement>(".pr-diff-horizontalRail")?.scrollLeft ?? 0;
+          document.querySelector<HTMLElement>("[data-diff-horizontal-rail]")?.scrollLeft ?? 0;
         if (this.tagName === "MARK") return domRect(400 - offset, 450 - offset);
-        return this.classList.contains("pr-diff-source") || this.classList.contains("pr-diff-table")
+        return this.hasAttribute("data-diff-source") || this.hasAttribute("data-diff-table")
           ? domRect(0, viewportWidth)
           : domRect(0, 0);
       },
@@ -649,20 +649,20 @@ describe("DiffView", () => {
   it("does not pull horizontal scrolling back to an active search result", async () => {
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(
       function (this: HTMLElement) {
-        return this.classList.contains("pr-diff-horizontalRail") ? 200 : 0;
+        return this.hasAttribute("data-diff-horizontal-rail") ? 200 : 0;
       },
     );
     vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(
       function (this: HTMLElement) {
-        return this.classList.contains("pr-diff-horizontalRail") ? 1_000 : 0;
+        return this.hasAttribute("data-diff-horizontal-rail") ? 1_000 : 0;
       },
     );
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
       function (this: HTMLElement) {
         const offset =
-          document.querySelector<HTMLElement>(".pr-diff-horizontalRail")?.scrollLeft ?? 0;
+          document.querySelector<HTMLElement>("[data-diff-horizontal-rail]")?.scrollLeft ?? 0;
         if (this.tagName === "MARK") return domRect(400 - offset, 450 - offset);
-        return this.classList.contains("pr-diff-source") ? domRect(0, 200) : domRect(0, 0);
+        return this.hasAttribute("data-diff-source") ? domRect(0, 200) : domRect(0, 0);
       },
     );
     const { container } = render(() => <DiffView diff={largeDiff(1_000)} />);
@@ -670,7 +670,7 @@ describe("DiffView", () => {
     await screen.findByText("1 of 1");
     const rail = screen.getByRole("region", { name: "Scroll diff horizontally" });
     await waitFor(() => expect(rail.scrollLeft).toBe(250));
-    const source = container.querySelector(".pr-diff-source");
+    const source = container.querySelector("[data-diff-source]");
     source?.dispatchEvent(
       new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaX: -250 }),
     );
@@ -692,17 +692,17 @@ describe("DiffView", () => {
     async (options) => {
       vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(
         function (this: HTMLElement) {
-          return this.classList.contains("pr-diff-horizontalRail") ? 200 : 0;
+          return this.hasAttribute("data-diff-horizontal-rail") ? 200 : 0;
         },
       );
       vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(
         function (this: HTMLElement) {
-          return this.classList.contains("pr-diff-horizontalRail") ? 1_000 : 0;
+          return this.hasAttribute("data-diff-horizontal-rail") ? 1_000 : 0;
         },
       );
       const { container } = render(() => <DiffView diff={smallDiff()} />);
       const wheel = new WheelEvent("wheel", { bubbles: true, cancelable: true, ...options });
-      container.querySelector(".pr-diff-source")?.dispatchEvent(wheel);
+      container.querySelector("[data-diff-source]")?.dispatchEvent(wheel);
       expect(screen.getByRole("region", { name: "Scroll diff horizontally" }).scrollLeft).toBe(
         options.expected,
       );
@@ -721,9 +721,11 @@ describe("DiffView", () => {
     expect(await screen.findByText("1 of 500")).toBeInTheDocument();
     let marks = container.querySelectorAll("mark");
     expect(marks).toHaveLength(200);
-    expect(container.querySelector(".pr-diff-searchMatch--active")).toBe(marks[0]);
+    expect(container.querySelector('[data-search-match="active"]')).toBe(marks[0]);
     expect(
-      marks[0]?.closest(".pr-diff-sourceContent")?.textContent?.endsWith(sourceLine?.content ?? ""),
+      marks[0]
+        ?.closest("[data-diff-source-content]")
+        ?.textContent?.endsWith(sourceLine?.content ?? ""),
     ).toBe(true);
 
     input.focus();
@@ -731,12 +733,12 @@ describe("DiffView", () => {
     expect(await screen.findByText("500 of 500")).toBeInTheDocument();
     marks = container.querySelectorAll("mark");
     expect(marks).toHaveLength(200);
-    expect(container.querySelectorAll(".pr-diff-searchMatch--active")).toHaveLength(1);
-    expect(container.querySelector(".pr-diff-searchMatch--active")).toBe(marks[199]);
+    expect(container.querySelectorAll('[data-search-match="active"]')).toHaveLength(1);
+    expect(container.querySelector('[data-search-match="active"]')).toBe(marks[199]);
 
     await userEvent.setup().click(screen.getByRole("button", { name: "Next search result" }));
     expect(await screen.findByText("1 of 500")).toBeInTheDocument();
-    expect(container.querySelector(".pr-diff-searchMatch--active")).toBe(
+    expect(container.querySelector('[data-search-match="active"]')).toBe(
       container.querySelectorAll("mark")[0],
     );
   });
@@ -784,7 +786,7 @@ describe("DiffView", () => {
     vi.stubGlobal("scrollY", scrollOptions?.top ?? 0);
     window.dispatchEvent(new Event("scroll"));
     const activeMatch = await screen.findByText("line 900", { selector: "mark" });
-    expect(activeMatch).toHaveClass("pr-diff-searchMatch--active");
+    expect(activeMatch).toHaveAttribute("data-search-match", "active");
   });
 
   it("applies navigation requested while a new query is deferred", async () => {

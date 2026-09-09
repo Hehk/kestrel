@@ -1,18 +1,38 @@
+import * as stylex from "@stylexjs/stylex";
 import { apiUrl } from "./api/client";
-import { createMemo } from "solid-js";
+import { createMemo, splitProps } from "solid-js";
 import type { ParentProps } from "solid-js";
+import { Anchor } from "./components/Anchor";
+import type { AnchorProps } from "./components/Anchor";
+import { SiteHeader } from "./components/SiteHeader";
 import * as Router from "./router";
 import * as Session from "./session";
+import { styles as baseStyles } from "./styles/base";
+
+const styles = stylex.create({
+  pageCard: {
+    textAlign: "left",
+  },
+  pageCardHeading: {
+    marginTop: 0,
+  },
+  loginAction: {
+    display: "flex",
+    paddingTop: "0.25rem",
+  },
+});
 
 type LoggedOutProps = {
   route: Router.PublicRoute;
 };
 
-const PublicLink = ({ children, to }: ParentProps<{ to: Router.LoginRoute }>) => {
-  const href = Router.fromRoute(to);
+const PublicLink = (props: ParentProps<{ to: Router.LoginRoute }> & Omit<AnchorProps, "href">) => {
+  const [local, anchorProps] = splitProps(props, ["children", "to"]);
+  const href = Router.fromRoute(local.to);
 
   return (
-    <a
+    <Anchor
+      {...anchorProps}
       href={href}
       onClick={(event) => {
         if (
@@ -27,33 +47,41 @@ const PublicLink = ({ children, to }: ParentProps<{ to: Router.LoginRoute }>) =>
         }
 
         event.preventDefault();
-        Session.send({ kind: "RouteRequested", route: to, replace: false });
+        Session.send({ kind: "RouteRequested", route: local.to, replace: false });
       }}
     >
-      {children}
-    </a>
+      {local.children}
+    </Anchor>
   );
 };
 
 const LoginPage = () => {
   return (
-    <section class="page-card">
-      <p class="eyebrow">Login</p>
-      <h1>Sign in to Kestrel</h1>
-      <p>Use your GitHub account to create or continue your Kestrel session.</p>
-      <a class="counter" href={apiUrl("/api/auth/github/start")}>
-        Sign in with GitHub
-      </a>
+    <section {...stylex.attrs(styles.pageCard)}>
+      <p {...stylex.attrs(baseStyles.paragraph, baseStyles.eyebrow)}>Login</p>
+      <h1 {...stylex.attrs(baseStyles.heading, baseStyles.heading1, styles.pageCardHeading)}>
+        Sign in to Kestrel
+      </h1>
+      <p {...stylex.attrs(baseStyles.paragraph)}>
+        Use your GitHub account to create or continue your Kestrel session.
+      </p>
+      <div {...stylex.attrs(styles.loginAction)}>
+        <Anchor size="small" href={apiUrl("/api/auth/github/start")}>
+          Sign in with GitHub
+        </Anchor>
+      </div>
     </section>
   );
 };
 
 const NotFoundPage = ({ path }: { path: string }) => {
   return (
-    <section class="page-card">
-      <p class="eyebrow">Not Found</p>
-      <h1>Route not found</h1>
-      <p>No page exists for {path}.</p>
+    <section {...stylex.attrs(styles.pageCard)}>
+      <p {...stylex.attrs(baseStyles.paragraph, baseStyles.eyebrow)}>Not Found</p>
+      <h1 {...stylex.attrs(baseStyles.heading, baseStyles.heading1, styles.pageCardHeading)}>
+        Route not found
+      </h1>
+      <p {...stylex.attrs(baseStyles.paragraph)}>No page exists for {path}.</p>
     </section>
   );
 };
@@ -72,13 +100,12 @@ const Page = (props: { route: Router.PublicRoute }) => {
 
 export const LoggedOut = ({ route }: LoggedOutProps) => {
   return (
-    <div class="app-shell">
-      <header class="app-header">
-        <p class="site-title">Kestrel</p>
-        <nav class="app-nav" aria-label="Primary">
-          <PublicLink to={{ name: "Login" }}>Login</PublicLink>
-        </nav>
-      </header>
+    <div>
+      <SiteHeader>
+        <PublicLink variant="navigation" to={{ name: "Login" }}>
+          Login
+        </PublicLink>
+      </SiteHeader>
       <main>
         <Page route={route} />
       </main>
