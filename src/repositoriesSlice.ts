@@ -5,7 +5,7 @@ export type Repository = components["schemas"]["RepositoryDto"];
 export type PullRequest = components["schemas"]["PullRequestDto"];
 export type PullRequestDetail = components["schemas"]["PullRequestDetailDto"];
 export type PullRequestDiff = components["schemas"]["PullRequestDiffResponse"];
-export type PullRequestSyncPagination = components["schemas"]["PullRequestSyncPaginationDto"];
+type PullRequestSyncPagination = components["schemas"]["PullRequestSyncPaginationDto"];
 export type AddError = "duplicate" | "invalid" | "saveFailed";
 export type PullRequestsError =
   | "authorizationRequired"
@@ -30,7 +30,7 @@ export type PullRequestsState =
       pullRequests: PullRequest[];
       status: "error";
     };
-export type PullRequestsByRepository = Record<string, PullRequestsState>;
+type PullRequestsByRepository = Record<string, PullRequestsState>;
 
 export type PullRequestDetailState =
   | {
@@ -53,7 +53,7 @@ export type PullRequestDetailState =
       error: PullRequestsError;
       status: "timelineError";
     };
-export type PullRequestDetailsByKey = Record<string, PullRequestDetailState>;
+type PullRequestDetailsByKey = Record<string, PullRequestDetailState>;
 
 export type PullRequestDiffError =
   | "authenticationRequired"
@@ -70,7 +70,7 @@ export type PullRequestDiffState =
   | { status: "loading"; diff: PullRequestDiff | null }
   | { status: "loaded"; diff: PullRequestDiff }
   | { status: "error"; diff: PullRequestDiff | null; error: PullRequestDiffError };
-export type CurrentPullRequestDiff = {
+type CurrentPullRequestDiff = {
   key: string;
   requestId: number;
   state: PullRequestDiffState;

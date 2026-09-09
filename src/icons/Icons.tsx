@@ -71,42 +71,6 @@ export function CheckIcon(props: IconProps) {
   );
 }
 
-export function CaretUpIcon(props: IconProps) {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
-      fill="currentColor"
-      {...props}
-      aria-hidden="true"
-      focusable="false"
-      class={iconClass(props.class)}
-      style={props.style}
-    >
-      <path d="M12 10H4l4-4.5z" />
-    </svg>
-  );
-}
-
-export function CaretDownIcon(props: IconProps) {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
-      fill="currentColor"
-      {...props}
-      aria-hidden="true"
-      focusable="false"
-      class={iconClass(props.class)}
-      style={props.style}
-    >
-      <path d="M12 6H4l4 4.5z" />
-    </svg>
-  );
-}
-
 export function XIcon(props: IconProps) {
   return (
     <svg
