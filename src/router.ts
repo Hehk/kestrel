@@ -1,6 +1,6 @@
 export type PullRequestView = "overview" | "diff";
 
-export type PullRequestRoute = {
+type PullRequestRoute = {
   name: "PullRequest";
   repo: string;
   id: string;
@@ -22,7 +22,7 @@ export type LoginRoute = {
 
 export type LinkRoute = ProtectedRoute | LoginRoute;
 
-export type NotFoundRoute = {
+type NotFoundRoute = {
   name: "NotFound";
   path: string;
 };
@@ -115,10 +115,6 @@ export const equal = (a: Route, b: Route): boolean => {
 export const getRoute = (): Route => {
   const path = `${window.location.pathname}${window.location.search}`;
   return toRoute(path);
-};
-
-export const getCurrentPath = (): string => {
-  return `${window.location.pathname}${window.location.search}`;
 };
 
 export const navigate = (route: LinkRoute, options: { replace: boolean }) => {

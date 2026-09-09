@@ -65,7 +65,7 @@ const createInitialState = (
 const settingsCmd = (cmd: Settings.Cmd): Cmd => ({ kind: "Settings", cmd });
 const repositoriesCmd = (cmd: Repositories.Cmd): Cmd => ({ kind: "Repositories", cmd });
 
-export const update = (msg: Msg, state: State): Mvu.Transition<State, Cmd> => {
+const update = (msg: Msg, state: State): Mvu.Transition<State, Cmd> => {
   switch (msg.kind) {
     case "Started": {
       return [

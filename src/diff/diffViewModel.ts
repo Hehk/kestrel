@@ -7,7 +7,7 @@ import type { DiffSearchResults } from "./search";
 import { firstMatchAtOrAfterRow } from "./search";
 
 export type MountedSearchMatch = { active: boolean; length: number; offset: number };
-export type VirtualRow = { index: number; key: string; size: number; start: number };
+type VirtualRow = { index: number; key: string; size: number; start: number };
 export type VirtualWindow = { rows: VirtualRow[]; totalSize: number };
 export type Configuration = { revision: number; configuration: number };
 export type Geometry = {
@@ -24,11 +24,11 @@ export type Search =
   | { kind: "searching"; query: string; requestId: number; pendingMove: number }
   | { kind: "ready"; query: string; results: DiffSearchResults; activeIndex: number };
 
-export type Copy =
+type Copy =
   | { kind: "idle"; outcome: { kind: "failure" | "success"; message: string } | null }
   | { kind: "writing"; requestId: number; revision: number; subject: string };
 
-export type Reveal = {
+type Reveal = {
   id: number;
   revision: number;
   rowIndex: number;

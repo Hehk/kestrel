@@ -4,7 +4,6 @@ import * as Mvu from "./mvu";
 import { darkClasses, lightClasses } from "./styles/themes";
 
 export type Theme = "dark" | "light" | "system";
-export const DEFAULT_THEME: Theme = "system";
 
 export type State = {
   userId: string;
@@ -43,7 +42,7 @@ export type Msg =
 export const initialState = (userId: string, cached: Cache.CachedSettings | null = null): State => {
   return {
     userId,
-    theme: cached?.theme ?? DEFAULT_THEME,
+    theme: cached?.theme ?? "system",
     syncingTheme: null,
     themeSyncError: false,
   };

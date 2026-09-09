@@ -148,7 +148,7 @@ const [sessionStore, setSessionStore] = createStore<{ value: SessionState | null
 let started = false;
 let authCheckController: AbortController | null = null;
 
-const defaultRunCmd = (cmd: SessionCmd) => {
+const runCmd = (cmd: SessionCmd) => {
   switch (cmd.kind) {
     case "AuthCheck": {
       authCheckController?.abort();
@@ -201,8 +201,6 @@ const checkAuth = async (controller: AbortController) => {
 
   send({ kind: "AuthChecked", user: data.user ?? null });
 };
-
-let runCmd = defaultRunCmd;
 
 const sessionState = (): SessionState => {
   if (sessionStore.value === null) {
@@ -259,21 +257,9 @@ export const useSession = <A>(selector: (state: SessionState) => A) => {
   return createMemo(() => selector(sessionState()));
 };
 
-export const get = (): SessionState => {
-  return sessionState();
-};
-
-export const setRunCmdForTest = (nextRunCmd: (cmd: SessionCmd) => void) => {
-  runCmd = nextRunCmd;
-  return () => {
-    runCmd = defaultRunCmd;
-  };
-};
-
 export const resetForTest = () => {
   authCheckController?.abort();
   authCheckController = null;
   replaceSessionState(initialState());
   started = false;
-  runCmd = defaultRunCmd;
 };

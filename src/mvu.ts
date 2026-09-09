@@ -23,24 +23,3 @@ export const combineReactors = <State, Instruction>(
     return Cmd.batch(...reactors.map((reactor) => reactor(oldState, newState)));
   };
 };
-
-export const onChange = <State, Value, Instruction>(
-  select: (state: State) => Value,
-  makeCmd: (oldValue: Value, newValue: Value) => Cmd<Instruction>,
-  equal: (left: Value, right: Value) => boolean = Object.is,
-): Reactor<State, Instruction> => {
-  return (oldState, newState) => {
-    const oldValue = select(oldState);
-    const newValue = select(newState);
-    return equal(oldValue, newValue) ? Cmd.none() : makeCmd(oldValue, newValue);
-  };
-};
-
-export const whenBecomes = <State, Instruction>(
-  predicate: (state: State) => boolean,
-  makeCmd: (state: State) => Cmd<Instruction>,
-): Reactor<State, Instruction> => {
-  return (oldState, newState) => {
-    return !predicate(oldState) && predicate(newState) ? makeCmd(newState) : Cmd.none();
-  };
-};
