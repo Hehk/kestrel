@@ -55,27 +55,27 @@ const ROW_NOTICE = 5;
 export type DiffRow =
   | { kind: "file"; fileIndex: number; file: PullRequestDiffFile }
   | {
-    kind: "hunk";
-    fileIndex: number;
-    hunkIndex: number;
-    file: PullRequestDiffFile;
-    hunk: PullRequestDiffHunk;
-  }
+      kind: "hunk";
+      fileIndex: number;
+      hunkIndex: number;
+      file: PullRequestDiffFile;
+      hunk: PullRequestDiffHunk;
+    }
   | {
-    kind: "context" | "addition" | "deletion";
-    fileIndex: number;
-    hunkIndex: number;
-    lineIndex: number;
-    file: PullRequestDiffFile;
-    hunk: PullRequestDiffHunk;
-    line: PullRequestDiffLine;
-  }
+      kind: "context" | "addition" | "deletion";
+      fileIndex: number;
+      hunkIndex: number;
+      lineIndex: number;
+      file: PullRequestDiffFile;
+      hunk: PullRequestDiffHunk;
+      line: PullRequestDiffLine;
+    }
   | {
-    kind: "notice";
-    notice: "binary" | "hunkless";
-    fileIndex: number;
-    file: PullRequestDiffFile;
-  };
+      kind: "notice";
+      notice: "binary" | "hunkless";
+      fileIndex: number;
+      file: PullRequestDiffFile;
+    };
 
 export type DiffLayout = {
   readonly diff: PullRequestDiff;
@@ -281,7 +281,7 @@ export const sourceVisualColumns = (
 
   let columns = prefixColumns;
   let previousGlyphColumns = 0;
-  for (let offset = 0; offset < content.length;) {
+  for (let offset = 0; offset < content.length; ) {
     const codePoint = content.codePointAt(offset) as number;
     offset += codePoint > 0xffff ? 2 : 1;
     if (codePoint === 0x09) {
