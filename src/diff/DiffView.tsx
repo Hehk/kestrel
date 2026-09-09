@@ -83,29 +83,11 @@ const styles = stylex.create({
   },
   searchNav: {
     display: "flex",
+    minHeight: { default: "24px", [mobile]: "36px", "@media (pointer: coarse)": "44px" },
     flexGrow: "0",
     flexShrink: "0",
     flexBasis: "auto",
     gap: "0.25rem",
-  },
-  compactButton: {
-    minHeight: "24px",
-    flexGrow: "0",
-    flexShrink: "0",
-    flexBasis: "auto",
-    paddingBlock: "0.05rem",
-    paddingInline: "0.4rem",
-    fontFamily: tokens.mono,
-    fontSize: "0.7rem",
-    lineHeight: 1.2,
-    whiteSpace: "nowrap",
-    cursor: { default: null, ":disabled": "not-allowed", '[aria-disabled="true"]': "wait" },
-    opacity: { default: 1, ":disabled": 0.55, '[aria-disabled="true"]': 0.7 },
-    outline: { default: null, ":focus-visible": "2px solid currentColor" },
-    outlineOffset: { default: null, ":focus-visible": "-3px" },
-  },
-  searchButton: {
-    minHeight: { default: "24px", [mobile]: "36px", "@media (pointer: coarse)": "44px" },
   },
   searchCount: {
     minWidth: { default: "4.5rem", [mobile]: "3.5rem" },
@@ -422,7 +404,7 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
           >
             <Button
               aria-label="Previous search result"
-              xstyle={[styles.compactButton, styles.searchButton]}
+              size="compact"
               disabled={navigationDisabled()}
               onClick={() => send({ direction: -1, kind: "SearchMoveRequested" })}
               type="button"
@@ -431,7 +413,7 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
             </Button>
             <Button
               aria-label="Next search result"
-              xstyle={[styles.compactButton, styles.searchButton]}
+              size="compact"
               disabled={navigationDisabled()}
               onClick={() => send({ direction: 1, kind: "SearchMoveRequested" })}
               type="button"
@@ -469,7 +451,7 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
             }
             aria-busy={copy().kind === "writing"}
             aria-disabled={copy().kind === "writing" ? "true" : undefined}
-            xstyle={styles.compactButton}
+            size="compact"
             disabled={activeFile()?.content.kind !== "text"}
             onClick={() => send({ fileIndex: model().activeFileIndex, kind: "CopyFileRequested" })}
             title={
@@ -609,7 +591,7 @@ const DiffRowCells = (props: {
               }
               aria-busy={props.copyPending}
               aria-disabled={props.copyPending ? "true" : undefined}
-              xstyle={styles.compactButton}
+              size="compact"
               disabled={row().file.content.kind === "binary"}
               onClick={() => props.send({ kind: "CopyFileRequested", fileIndex: row().fileIndex })}
               title={
@@ -637,7 +619,7 @@ const DiffRowCells = (props: {
               aria-label={`Copy hunk from ${fileLabel(row().file)}, ${hunkLabel(row())}`}
               aria-busy={props.copyPending}
               aria-disabled={props.copyPending ? "true" : undefined}
-              xstyle={styles.compactButton}
+              size="compact"
               onClick={() =>
                 props.send({
                   kind: "CopyHunkRequested",

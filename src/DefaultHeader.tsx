@@ -10,13 +10,8 @@ const styles = stylex.create({
   navSeparator: {
     color: tokens.textMuted,
   },
-  counter: {
-    display: "inline-block",
+  authAction: {
     marginTop: "0.25rem",
-    paddingBlock: "0.25rem",
-    paddingInline: "0.55rem",
-    fontFamily: tokens.mono,
-    fontSize: "0.88rem",
   },
 });
 
@@ -58,9 +53,11 @@ const AuthNav = () => {
   return (
     <>
       <span>{displayName()}</span>
-      <Button onClick={onLogout} xstyle={styles.counter}>
-        Sign out
-      </Button>
+      <span {...stylex.attrs(styles.authAction)}>
+        <Button onClick={onLogout} size="small">
+          Sign out
+        </Button>
+      </span>
     </>
   );
 };

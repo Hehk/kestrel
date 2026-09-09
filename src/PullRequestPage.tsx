@@ -104,11 +104,6 @@ const styles = stylex.create({
     fontFamily: tokens.mono,
     fontSize: "0.85rem",
   },
-  currentViewLink: {
-    color: { default: tokens.text, ":visited": tokens.text },
-    fontWeight: 700,
-    textDecoration: "none",
-  },
   diffContent: {
     gridColumnEnd: "diff",
     gridColumnStart: "diff",
@@ -172,28 +167,6 @@ const styles = stylex.create({
     justifyContent: "flex-start",
     gap: "0.35rem",
     marginBottom: { default: 0, [narrow]: "1.5rem" },
-  },
-  sidebarAction: {
-    width: "2rem",
-    height: "2rem",
-    flexGrow: "0",
-    flexShrink: "0",
-    flexBasis: "2rem",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    boxSizing: "border-box",
-    padding: 0,
-    color: { default: tokens.text, ":visited": tokens.text },
-    backgroundColor: {
-      default: "transparent",
-      ":hover": `color-mix(in srgb, ${tokens.text} 6%, transparent)`,
-    },
-    borderWidth: 0,
-    borderRadius: tokens.borderRadius,
-    textDecoration: "none",
-    cursor: { default: null, ":disabled": "wait" },
-    opacity: { default: 1, ":disabled": 0.65 },
   },
   pageBack: {
     width: "2rem",
@@ -333,6 +306,7 @@ const styles = stylex.create({
     fontSize: "0.88rem",
   },
   loadOlder: {
+    display: "flex",
     justifySelf: "start",
     marginTop: "0.35rem",
   },
@@ -450,25 +424,6 @@ const styles = stylex.create({
   sidebarTime: {
     whiteSpace: "nowrap",
   },
-  statusTrigger: {
-    width: "100%",
-    minHeight: "1.5rem",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: "1rem",
-    paddingBlock: "0",
-    paddingInline: "0.25rem",
-    color: tokens.text,
-    backgroundColor: {
-      default: "transparent",
-      ":hover": `color-mix(in srgb, ${tokens.text} 6%, transparent)`,
-      "[data-popup-open]": `color-mix(in srgb, ${tokens.text} 6%, transparent)`,
-    },
-    borderWidth: 0,
-    borderRadius: tokens.borderRadius,
-    textAlign: "left",
-  },
   statusName: {
     fontFamily: tokens.mono,
     fontSize: tokens.fontSizeExtraSmall,
@@ -521,8 +476,7 @@ const styles = stylex.create({
   tooltipDetailTitle: {
     fontWeight: 700,
   },
-  tooltipLink: {
-    display: "inline-block",
+  tooltipAction: {
     marginTop: "0.3rem",
   },
   eyebrow: {
@@ -763,7 +717,6 @@ const PullRequestHeader = (props: {
       <nav aria-label="Pull request views" {...stylex.attrs(styles.views)}>
         <Link
           variant="navigation"
-          xstyle={props.view === "overview" && styles.currentViewLink}
           aria-current={props.view === "overview" ? "page" : undefined}
           to={{
             name: "PullRequest",
@@ -776,7 +729,6 @@ const PullRequestHeader = (props: {
         </Link>
         <Link
           variant="navigation"
-          xstyle={props.view === "diff" && styles.currentViewLink}
           aria-current={props.view === "diff" ? "page" : undefined}
           to={{
             name: "PullRequest",
@@ -927,14 +879,11 @@ const PullRequestDiffError = ({ error }: { error: Repositories.PullRequestDiffEr
 
 const PullRequestMessage = ({ children, title }: ParentProps<{ title: string }>) => (
   <section {...stylex.attrs(styles.message)}>
-    <Link
-      aria-label="Back to home"
-      xstyle={[styles.sidebarAction, styles.pageBack]}
-      title="Back to home"
-      to={{ name: "Home" }}
-    >
-      <ArrowLeftIcon />
-    </Link>
+    <div {...stylex.attrs(styles.pageBack)}>
+      <Link aria-label="Back to home" variant="icon" title="Back to home" to={{ name: "Home" }}>
+        <ArrowLeftIcon />
+      </Link>
+    </div>
     <h1 {...stylex.attrs(baseStyles.heading, baseStyles.heading1, styles.title)}>{title}</h1>
     {children}
   </section>
@@ -954,12 +903,7 @@ const PullRequestActions = (props: {
   return (
     <nav aria-label="Pull request actions" {...stylex.attrs(styles.sidebarActions)}>
       <Tooltip closeDelay={150} gutter={8} ignoreSafeArea openDelay={0}>
-        <Tooltip.Trigger
-          as={Link}
-          aria-label="Back to home"
-          xstyle={styles.sidebarAction}
-          to={{ name: "Home" }}
-        >
+        <Tooltip.Trigger as={Link} aria-label="Back to home" variant="icon" to={{ name: "Home" }}>
           <ArrowLeftIcon />
         </Tooltip.Trigger>
         <PullRequestTooltip>Back to tracked repositories</PullRequestTooltip>
@@ -968,7 +912,7 @@ const PullRequestActions = (props: {
         <Tooltip.Trigger
           as={Anchor}
           aria-label="Open on GitHub"
-          xstyle={styles.sidebarAction}
+          variant="icon"
           href={props.data().pullRequest.htmlUrl}
         >
           <GitHubIcon />
@@ -980,7 +924,7 @@ const PullRequestActions = (props: {
           as={Button}
           aria-busy={props.data().pullRequestDetail?.status === "syncing"}
           aria-label="Sync pull request from GitHub"
-          xstyle={styles.sidebarAction}
+          variant="icon"
           disabled={
             props.data().pullRequestDetail?.status === "loading" ||
             props.data().pullRequestDetail?.status === "loadingTimeline" ||
@@ -1199,26 +1143,27 @@ const PullRequestTimeline = (props: { data: Accessor<PullRequestPageData> }) => 
         </p>
       ) : null}
       <Show when={detail()?.timelinePagination.kind === "hasOlder"}>
-        <Button
-          aria-busy={detailState()?.status === "loadingTimeline"}
-          xstyle={styles.loadOlder}
-          disabled={detailState()?.status === "loadingTimeline"}
-          onClick={() =>
-            send({
-              kind: "Repositories",
-              msg: {
-                kind: "PullRequestTimelineOlderRequested",
-                number: props.data().number,
-                repository: props.data().repository,
-              },
-            })
-          }
-          type="button"
-        >
-          {detailState()?.status === "loadingTimeline"
-            ? "Loading older activity..."
-            : "Load older activity"}
-        </Button>
+        <div {...stylex.attrs(styles.loadOlder)}>
+          <Button
+            aria-busy={detailState()?.status === "loadingTimeline"}
+            disabled={detailState()?.status === "loadingTimeline"}
+            onClick={() =>
+              send({
+                kind: "Repositories",
+                msg: {
+                  kind: "PullRequestTimelineOlderRequested",
+                  number: props.data().number,
+                  repository: props.data().repository,
+                },
+              })
+            }
+            type="button"
+          >
+            {detailState()?.status === "loadingTimeline"
+              ? "Loading older activity..."
+              : "Load older activity"}
+          </Button>
+        </div>
       </Show>
     </section>
   );
@@ -1577,8 +1522,8 @@ const PullRequestStatusIcon = ({
     <Tooltip closeDelay={150} gutter={8} ignoreSafeArea openDelay={0} placement="right">
       <Tooltip.Trigger
         as={Button}
+        variant="row"
         aria-label={`${label}: ${accessibleState}`}
-        xstyle={styles.statusTrigger}
         data-status-kind={kind}
         type="button"
       >
@@ -1601,9 +1546,11 @@ const PullRequestStatusIcon = ({
           ) : null}
           {detail ? <p {...stylex.attrs(styles.tooltipText)}>{detail}</p> : null}
           {url ? (
-            <Anchor xstyle={styles.tooltipLink} href={url} rel="noreferrer" target="_blank">
-              View run
-            </Anchor>
+            <div {...stylex.attrs(styles.tooltipAction)}>
+              <Anchor href={url} rel="noreferrer" target="_blank">
+                View run
+              </Anchor>
+            </div>
           ) : null}
         </Tooltip.Content>
       </Tooltip.Portal>

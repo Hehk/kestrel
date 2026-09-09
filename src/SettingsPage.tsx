@@ -23,15 +23,6 @@ const styles = stylex.create({
     marginBottom: "0.25rem",
     fontWeight: 700,
   },
-  trigger: {
-    minWidth: "12rem",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: "1rem",
-    paddingBlock: "0.3rem",
-    paddingInline: "0.55rem",
-  },
   value: {
     textAlign: "left",
   },
@@ -111,7 +102,7 @@ const ThemeSelect = () => {
       )}
     >
       <Select.Label {...stylex.attrs(styles.label)}>Theme</Select.Label>
-      <Select.Trigger as={Button} xstyle={styles.trigger}>
+      <Select.Trigger as={Button} variant="select">
         <Select.Value<(typeof themes)[number]> {...stylex.attrs(styles.value)}>
           {(state) => state.selectedOption().label}
         </Select.Value>

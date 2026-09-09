@@ -26,13 +26,9 @@ const styles = stylex.create({
     fontFamily: tokens.mono,
     fontSize: "0.78rem",
   },
-  counter: {
-    display: "inline-block",
-    marginTop: "0.25rem",
-    paddingBlock: "0.25rem",
-    paddingInline: "0.55rem",
-    fontFamily: tokens.mono,
-    fontSize: "0.88rem",
+  loginAction: {
+    display: "flex",
+    paddingTop: "0.25rem",
   },
 });
 
@@ -79,9 +75,11 @@ const LoginPage = () => {
       <p {...stylex.attrs(baseStyles.paragraph)}>
         Use your GitHub account to create or continue your Kestrel session.
       </p>
-      <Anchor xstyle={styles.counter} href={apiUrl("/api/auth/github/start")}>
-        Sign in with GitHub
-      </Anchor>
+      <div {...stylex.attrs(styles.loginAction)}>
+        <Anchor size="small" href={apiUrl("/api/auth/github/start")}>
+          Sign in with GitHub
+        </Anchor>
+      </div>
     </section>
   );
 };
