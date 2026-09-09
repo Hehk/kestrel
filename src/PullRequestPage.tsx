@@ -24,8 +24,10 @@ import { diffFileHunks } from "./diff/layout";
 import { styles as baseStyles } from "./styles/base";
 import { tokens } from "./styles/tokens.stylex";
 
-const mobile = "@media (max-width: 640px)";
-const narrow = "@media (max-width: 1100px)";
+import { media } from "./styles/media.stylex";
+
+const mobile = media.mobile;
+const narrow = media.singleColumn;
 const syncing = stylex.keyframes({ to: { transform: "rotate(360deg)" } });
 
 const styles = stylex.create({
@@ -150,7 +152,7 @@ const styles = stylex.create({
     display: { default: "flex", [narrow]: "block" },
     flexDirection: "column",
     gap: "1.5rem",
-    marginBottom: { default: 0, [narrow]: { default: 0, ":not(:empty)": "2rem" } },
+    marginBottom: { default: 0, [media.singleColumn]: { default: 0, ":not(:empty)": "2rem" } },
   },
   rightSidebar: {
     gridColumnEnd: "right",
@@ -159,7 +161,7 @@ const styles = stylex.create({
     gridRowStart: "right",
     display: "grid",
     gap: "1.5rem",
-    marginTop: { default: 0, [narrow]: { default: 0, ":not(:empty)": "2rem" } },
+    marginTop: { default: 0, [media.singleColumn]: { default: 0, ":not(:empty)": "2rem" } },
   },
   sidebarActions: {
     display: "flex",
@@ -173,7 +175,7 @@ const styles = stylex.create({
     marginBottom: "1rem",
   },
   syncIcon: {
-    animationName: { default: syncing, "@media (prefers-reduced-motion: reduce)": "none" },
+    animationName: { default: syncing, [media.reducedMotion]: "none" },
     animationDuration: "0.8s",
     animationTimingFunction: "linear",
     animationIterationCount: "infinite",

@@ -1,6 +1,8 @@
 import * as stylex from "@stylexjs/stylex";
 
-const dark = "@media (prefers-color-scheme: dark)";
+import { media } from "./media.stylex";
+
+const dark = media.dark;
 
 export const tokens = stylex.defineVars({
   text: { default: "#1d1a16", [dark]: "#eee7dd" },

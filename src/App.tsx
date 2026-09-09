@@ -16,7 +16,9 @@ import PullRequestsError from "./PullRequestError";
 import { styles as baseStyles } from "./styles/base";
 import { tokens } from "./styles/tokens.stylex";
 
-const mobile = "@media (max-width: 640px)";
+import { media } from "./styles/media.stylex";
+
+const mobile = media.mobile;
 
 const styles = stylex.create({
   pageCardHeading: {

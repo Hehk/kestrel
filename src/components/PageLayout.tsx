@@ -1,7 +1,9 @@
 import * as stylex from "@stylexjs/stylex";
 import type { JSX, ParentProps } from "solid-js";
 
-const mobile = "@media (max-width: 640px)";
+import { media } from "../styles/media.stylex";
+
+const mobile = media.mobile;
 
 const styles = stylex.create({
   page: {

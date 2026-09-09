@@ -1,5 +1,6 @@
 import * as stylex from "@stylexjs/stylex";
 import { tokens } from "./tokens.stylex";
+import { media } from "./media.stylex";
 
 export const styles = stylex.create({
   document: {
@@ -7,7 +8,7 @@ export const styles = stylex.create({
     backgroundColor: tokens.background,
     colorScheme: tokens.colorScheme,
     fontFamily: tokens.serif,
-    fontSize: { default: "18px", "@media (max-width: 1024px)": "16px" },
+    fontSize: { default: "18px", [media.compactTypography]: "16px" },
     lineHeight: 1.55,
     fontSynthesis: "none",
     textRendering: "optimizeLegibility",
@@ -35,7 +36,7 @@ export const styles = stylex.create({
     marginRight: "0",
     marginBottom: "0.75rem",
     marginLeft: "0",
-    fontSize: { default: "2rem", "@media (max-width: 1024px)": "1.75rem" },
+    fontSize: { default: "2rem", [media.compactTypography]: "1.75rem" },
     lineHeight: 1.15,
   },
   heading2: {

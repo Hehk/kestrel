@@ -23,8 +23,10 @@ import { diffLineNumbers, rowAt, rowHeight } from "./layout";
 import { styles as baseStyles } from "../styles/base";
 import { tokens } from "../styles/tokens.stylex";
 
-const mobile = "@media (max-width: 640px)";
-const forcedColors = "@media (forced-colors: active)";
+import { media } from "../styles/media.stylex";
+
+const mobile = media.mobile;
+const forcedColors = media.forcedColors;
 
 const styles = stylex.create({
   root: {
@@ -83,7 +85,7 @@ const styles = stylex.create({
   },
   searchNav: {
     display: "flex",
-    minHeight: { default: "24px", [mobile]: "36px", "@media (pointer: coarse)": "44px" },
+    minHeight: { default: "24px", [mobile]: "36px", [media.coarsePointer]: "44px" },
     flexGrow: "0",
     flexShrink: "0",
     flexBasis: "auto",
@@ -267,7 +269,7 @@ const styles = stylex.create({
     overflowX: "auto",
     overflowY: "hidden",
     direction: "ltr",
-    scrollBehavior: { default: null, "@media (prefers-reduced-motion: reduce)": "auto" },
+    scrollBehavior: { default: null, [media.reducedMotion]: "auto" },
     outline: { ":focus-visible": "2px solid currentColor" },
     outlineOffset: { ":focus-visible": "-3px" },
   },
