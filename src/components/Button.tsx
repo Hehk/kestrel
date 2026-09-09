@@ -19,15 +19,6 @@ const styles = stylex.create({
     fontSize: "inherit",
     fontWeight: "inherit",
     lineHeight: "inherit",
-    outline: { ":focus-visible": "2px solid currentColor" },
-    outlineOffset: { ":focus-visible": "3px" },
-  },
-  small: {
-    display: "inline-block",
-    paddingBlock: "0.25rem",
-    paddingInline: "0.55rem",
-    fontFamily: tokens.mono,
-    fontSize: "0.88rem",
   },
   compact: {
     minHeight: "24px",
@@ -42,7 +33,6 @@ const styles = stylex.create({
     whiteSpace: "nowrap",
     cursor: { default: "pointer", ":disabled": "not-allowed", '[aria-disabled="true"]': "wait" },
     opacity: { default: 1, ":disabled": 0.55, '[aria-disabled="true"]': 0.7 },
-    outlineOffset: { default: null, ":focus-visible": "-3px" },
   },
   select: {
     minWidth: "12rem",
@@ -86,8 +76,9 @@ export const Button = (props: ButtonProps) => {
       {...buttonProps}
       {...stylex.attrs(
         styles.button,
-        local.size === "small" && styles.small,
-        local.size === "compact" && styles.compact,
+        baseStyles.focusable,
+        local.size === "small" && baseStyles.smallControl,
+        local.size === "compact" && [styles.compact, baseStyles.focusInset],
         local.variant === "icon" && baseStyles.iconControl,
         local.variant === "select" && styles.select,
         local.variant === "row" && styles.row,

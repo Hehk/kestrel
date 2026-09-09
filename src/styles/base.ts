@@ -1,6 +1,7 @@
 import * as stylex from "@stylexjs/stylex";
 import { tokens } from "./tokens.stylex";
 import { media } from "./media.stylex";
+import { layout } from "./layout.stylex";
 
 export const styles = stylex.create({
   document: {
@@ -48,7 +49,7 @@ export const styles = stylex.create({
     lineHeight: 1.2,
   },
   paragraph: {
-    maxWidth: "66ch",
+    maxWidth: layout.proseWidth,
     marginTop: "0",
     marginRight: "0",
     marginBottom: "1rem",
@@ -63,6 +64,39 @@ export const styles = stylex.create({
   focusable: {
     outline: { ":focus-visible": "2px solid currentColor" },
     outlineOffset: { ":focus-visible": "3px" },
+  },
+  focusInset: {
+    outlineOffset: { ":focus-visible": "-3px" },
+  },
+  smallControl: {
+    display: "inline-block",
+    paddingBlock: "0.25rem",
+    paddingInline: "0.55rem",
+    fontFamily: tokens.mono,
+    fontSize: tokens.fontSizeSmall,
+  },
+  eyebrow: {
+    marginTop: 0,
+    marginRight: 0,
+    marginBottom: "0.35rem",
+    marginLeft: 0,
+    color: tokens.textMuted,
+    fontFamily: tokens.mono,
+    fontSize: tokens.fontSizeMetadata,
+  },
+  mutedMetadata: {
+    color: tokens.textMuted,
+    fontFamily: tokens.mono,
+    fontSize: tokens.fontSizeMetadata,
+  },
+  statusText: {
+    maxWidth: layout.proseWidth,
+    marginTop: 0,
+    marginRight: 0,
+    marginBottom: 0,
+    marginLeft: 0,
+    color: tokens.textMuted,
+    fontSize: tokens.fontSizeStatus,
   },
   codeFont: {
     fontFamily: tokens.mono,
@@ -95,10 +129,6 @@ export const styles = stylex.create({
     textDecoration: "none",
     cursor: { default: "pointer", ":disabled": "wait" },
     opacity: { default: 1, ":disabled": 0.65 },
-  },
-  input: {
-    outline: { ":focus-visible": "2px solid currentColor" },
-    outlineOffset: { ":focus-visible": "3px" },
   },
 });
 

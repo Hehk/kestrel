@@ -24,15 +24,6 @@ const styles = stylex.create({
   pageCardHeading: {
     marginTop: 0,
   },
-  eyebrow: {
-    marginTop: "0",
-    marginRight: "0",
-    marginBottom: "0.35rem",
-    marginLeft: "0",
-    color: tokens.textMuted,
-    fontFamily: tokens.mono,
-    fontSize: "0.78rem",
-  },
   repoStatus: {
     color: tokens.textMuted,
   },
@@ -68,19 +59,6 @@ const styles = stylex.create({
     justifyContent: "flex-start",
     gap: "0.5rem",
   },
-  repoProvider: {
-    color: tokens.textMuted,
-    fontFamily: tokens.mono,
-    fontSize: "0.78rem",
-  },
-  repoPrStatus: {
-    marginTop: 0,
-    marginRight: 0,
-    marginBottom: 0,
-    marginLeft: 0,
-    color: tokens.textMuted,
-    fontSize: "0.92rem",
-  },
   repoPrList: {
     display: "grid",
     gap: "0.25rem",
@@ -90,11 +68,6 @@ const styles = stylex.create({
     marginBottom: "0",
     marginLeft: "0",
     listStyle: "none",
-  },
-  repoPrMeta: {
-    color: tokens.textMuted,
-    fontFamily: tokens.mono,
-    fontSize: "0.78rem",
   },
   repoAddForm: {
     display: "grid",
@@ -159,7 +132,7 @@ const Page = (props: { route: Router.AuthenticatedRoute }) => {
 const HomePage = () => {
   return (
     <PageLayout header={<DefaultHeader />}>
-      <p {...stylex.attrs(baseStyles.paragraph, styles.eyebrow)}>Repositories</p>
+      <p {...stylex.attrs(baseStyles.paragraph, baseStyles.eyebrow)}>Repositories</p>
       <h1 {...stylex.attrs(baseStyles.heading, baseStyles.heading1, styles.pageCardHeading)}>
         Tracked repositories
       </h1>
@@ -210,7 +183,7 @@ const RepositoryRow = (props: {
     <li {...stylex.attrs(styles.repoRow)}>
       <div {...stylex.attrs(styles.row)}>
         <Anchor href={props.repository.htmlUrl}>{props.repository.fullName}</Anchor>
-        <span {...stylex.attrs(styles.repoProvider)}>GitHub</span>
+        <span {...stylex.attrs(baseStyles.mutedMetadata)}>GitHub</span>
       </div>
       <div {...stylex.attrs(styles.repoActions)}>
         <Button
@@ -249,7 +222,7 @@ const RepositoryRow = (props: {
 const RepositorySyncStatus = ({ repository }: { repository: Repositories.Repository }) => {
   if (repository.pullRequestsSyncError) {
     return (
-      <p {...stylex.attrs(baseStyles.paragraph, styles.repoPrStatus)}>
+      <p {...stylex.attrs(baseStyles.paragraph, baseStyles.statusText)}>
         Last PR sync failed: {repositorySyncErrorText(repository.pullRequestsSyncError)}
       </p>
     );
@@ -257,7 +230,7 @@ const RepositorySyncStatus = ({ repository }: { repository: Repositories.Reposit
 
   if (repository.pullRequestsSyncedAt) {
     return (
-      <p {...stylex.attrs(baseStyles.paragraph, styles.repoPrStatus)}>
+      <p {...stylex.attrs(baseStyles.paragraph, baseStyles.statusText)}>
         Last PR sync: {repository.pullRequestsSyncedAt}
       </p>
     );
@@ -284,16 +257,20 @@ const PullRequestsSummary = (props: {
   return (
     <Switch
       fallback={
-        <p {...stylex.attrs(baseStyles.paragraph, styles.repoPrStatus)}>
+        <p {...stylex.attrs(baseStyles.paragraph, baseStyles.statusText)}>
           Pull requests not loaded.
         </p>
       }
     >
       <Match when={props.pullRequests?.status === "loading"}>
-        <p {...stylex.attrs(baseStyles.paragraph, styles.repoPrStatus)}>Loading pull requests...</p>
+        <p {...stylex.attrs(baseStyles.paragraph, baseStyles.statusText)}>
+          Loading pull requests...
+        </p>
       </Match>
       <Match when={props.pullRequests?.status === "syncing"}>
-        <p {...stylex.attrs(baseStyles.paragraph, styles.repoPrStatus)}>Syncing pull requests...</p>
+        <p {...stylex.attrs(baseStyles.paragraph, baseStyles.statusText)}>
+          Syncing pull requests...
+        </p>
       </Match>
       <Match when={props.pullRequests?.status === "error"}>
         <PullRequestsError
@@ -308,7 +285,7 @@ const PullRequestsSummary = (props: {
           props.pullRequests?.status === "loaded" && props.pullRequests.pullRequests.length === 0
         }
       >
-        <p {...stylex.attrs(baseStyles.paragraph, styles.repoPrStatus)}>
+        <p {...stylex.attrs(baseStyles.paragraph, baseStyles.statusText)}>
           No pull requests stored yet.
         </p>
       </Match>
@@ -330,7 +307,7 @@ const PullRequestsSummary = (props: {
                 >
                   #{pullRequest.number} {pullRequest.title}
                 </Link>
-                <span {...stylex.attrs(styles.repoPrMeta)}>{pullRequest.state}</span>
+                <span {...stylex.attrs(baseStyles.mutedMetadata)}>{pullRequest.state}</span>
               </li>
             )}
           </For>
@@ -384,7 +361,7 @@ const AddRepositoryForm = () => {
           placeholder="owner/name or GitHub URL"
           type="text"
           value={repositoryInput()}
-          {...stylex.attrs(baseStyles.input, styles.repoInput)}
+          {...stylex.attrs(baseStyles.focusable, styles.repoInput)}
         />
         <Button disabled={repositories().status !== "loaded" || saving()} type="submit">
           {saving() ? "Tracking..." : "Track repo"}
@@ -419,7 +396,7 @@ const addErrorText = (error: Repositories.AddError | null) => {
 const NotFoundPage = ({ path }: { path: string }) => {
   return (
     <PageLayout header={<DefaultHeader />}>
-      <p {...stylex.attrs(baseStyles.paragraph, styles.eyebrow)}>Not Found</p>
+      <p {...stylex.attrs(baseStyles.paragraph, baseStyles.eyebrow)}>Not Found</p>
       <h1 {...stylex.attrs(baseStyles.heading, baseStyles.heading1, styles.pageCardHeading)}>
         Route not found
       </h1>

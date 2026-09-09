@@ -1,30 +1,39 @@
 import * as stylex from "@stylexjs/stylex";
-
 import { media } from "./media.stylex";
-
-const dark = media.dark;
+import { lightPalette, darkPalette } from "./palettes.stylex";
 
 export const tokens = stylex.defineVars({
-  text: { default: "#1d1a16", [dark]: "#eee7dd" },
-  textMuted: { default: "#625a50", [dark]: "#bbb0a2" },
-  background: { default: "#fffdf7", [dark]: "#16130f" },
-  border: { default: "#9c9388", [dark]: "#7e7365" },
-  rule: { default: "#d8d1c7", [dark]: "#403a32" },
-  codeBackground: { default: "#f4efe5", [dark]: "#242019" },
-  link: { default: "#0645ad", [dark]: "#8ab4f8" },
-  linkVisited: { default: "#5a2a8a", [dark]: "#c58af9" },
-  buttonFace: { default: "#efede7", [dark]: "#2b261f" },
-  buttonBorderLight: { default: "#ffffff", [dark]: "#6a5f52" },
-  buttonBorderDark: { default: "#6b6258", [dark]: "#080706" },
-  statusSuccess: { default: "#2f6f3e", [dark]: "#65b979" },
-  statusFailure: { default: "#9f352d", [dark]: "#df7b70" },
-  statusPending: { default: "#7a5919", [dark]: "#d3ad5c" },
-  statusNeutral: { default: "#625a50", [dark]: "#bbb0a2" },
-  colorScheme: { default: "light", [dark]: "dark" },
+  text: { default: lightPalette.text, [media.dark]: darkPalette.text },
+  textMuted: { default: lightPalette.textMuted, [media.dark]: darkPalette.textMuted },
+  background: { default: lightPalette.background, [media.dark]: darkPalette.background },
+  border: { default: lightPalette.border, [media.dark]: darkPalette.border },
+  rule: { default: lightPalette.rule, [media.dark]: darkPalette.rule },
+  codeBackground: {
+    default: lightPalette.codeBackground,
+    [media.dark]: darkPalette.codeBackground,
+  },
+  link: { default: lightPalette.link, [media.dark]: darkPalette.link },
+  linkVisited: { default: lightPalette.linkVisited, [media.dark]: darkPalette.linkVisited },
+  buttonFace: { default: lightPalette.buttonFace, [media.dark]: darkPalette.buttonFace },
+  buttonBorderLight: {
+    default: lightPalette.buttonBorderLight,
+    [media.dark]: darkPalette.buttonBorderLight,
+  },
+  buttonBorderDark: {
+    default: lightPalette.buttonBorderDark,
+    [media.dark]: darkPalette.buttonBorderDark,
+  },
+  statusSuccess: { default: lightPalette.statusSuccess, [media.dark]: darkPalette.statusSuccess },
+  statusFailure: { default: lightPalette.statusFailure, [media.dark]: darkPalette.statusFailure },
+  statusPending: { default: lightPalette.statusPending, [media.dark]: darkPalette.statusPending },
+  statusNeutral: { default: lightPalette.statusNeutral, [media.dark]: darkPalette.statusNeutral },
+  colorScheme: { default: lightPalette.colorScheme, [media.dark]: darkPalette.colorScheme },
   serif: 'Georgia, "Times New Roman", Times, serif',
   mono: "ui-monospace, Consolas, monospace",
   fontSizeMedium: "1rem",
   fontSizeSmall: "0.875rem",
   fontSizeExtraSmall: "0.75rem",
+  fontSizeMetadata: "0.78rem",
+  fontSizeStatus: "0.92rem",
   borderRadius: "2px",
 });

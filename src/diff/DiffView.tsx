@@ -20,6 +20,7 @@ import type { DiffViewElements } from "./diffViewRuntime";
 import { fileLabel, filePath, hunkLabel } from "./labels";
 import type { DiffRow, PullRequestDiff } from "./layout";
 import { diffLineNumbers, rowAt, rowHeight } from "./layout";
+import { DIFF_ROW_HEIGHT, metrics } from "./metrics.stylex";
 import { styles as baseStyles } from "../styles/base";
 import { tokens } from "../styles/tokens.stylex";
 
@@ -98,7 +99,7 @@ const styles = stylex.create({
     flexBasis: "auto",
     color: tokens.textMuted,
     fontFamily: tokens.mono,
-    fontSize: "0.75rem",
+    fontSize: tokens.fontSizeExtraSmall,
     textAlign: "right",
     whiteSpace: "nowrap",
   },
@@ -111,7 +112,7 @@ const styles = stylex.create({
     gap: { default: "0.6rem", [mobile]: "0.35rem" },
     backgroundColor: `color-mix(in srgb, ${tokens.text} 7%, ${tokens.background})`,
     fontFamily: tokens.mono,
-    fontSize: "0.85rem",
+    fontSize: metrics.fontSize,
     fontWeight: 700,
   },
   truncate: {
@@ -126,7 +127,7 @@ const styles = stylex.create({
     maxWidth: { default: "min(32vw, 22rem)", [mobile]: "7rem" },
     overflow: "hidden",
     color: tokens.statusSuccess,
-    fontSize: "0.75rem",
+    fontSize: tokens.fontSizeExtraSmall,
     fontWeight: 400,
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
@@ -141,18 +142,20 @@ const styles = stylex.create({
     borderTopStyle: "solid",
     borderTopColor: tokens.rule,
     fontFamily: tokens.mono,
-    fontSize: "0.85rem",
+    fontSize: metrics.fontSize,
   },
   spacer: { position: "relative", minWidth: "100%" },
   virtualRows: { position: "absolute", top: 0, left: 0, minWidth: "100%" },
+  columns: {
+    display: "grid",
+    gridTemplateColumns: {
+      default: `${metrics.gutter} ${metrics.gutter} minmax(0, 1fr)`,
+      [mobile]: `${metrics.mobileGutter} ${metrics.mobileGutter} minmax(0, 1fr)`,
+    },
+  },
   row: {
     width: "100%",
     minWidth: 0,
-    display: "grid",
-    gridTemplateColumns: {
-      default: "4.5rem 4.5rem minmax(0, 1fr)",
-      [mobile]: "3rem 3rem minmax(0, 1fr)",
-    },
     boxSizing: "border-box",
     borderBottomWidth: 1,
     borderBottomStyle: "solid",
@@ -171,7 +174,7 @@ const styles = stylex.create({
   },
   headerCell: {
     minWidth: 0,
-    height: "40px",
+    height: DIFF_ROW_HEIGHT.file,
     overflow: "hidden",
     backgroundColor: `color-mix(in srgb, ${tokens.text} 7%, ${tokens.background})`,
     fontWeight: 700,
@@ -179,13 +182,19 @@ const styles = stylex.create({
   },
   hunkCell: {
     minWidth: 0,
-    height: "32px",
+    height: DIFF_ROW_HEIGHT.hunk,
     overflow: "hidden",
     color: tokens.textMuted,
     backgroundColor: `color-mix(in srgb, ${tokens.link} 7%, ${tokens.background})`,
     textOverflow: "ellipsis",
   },
-  lineCell: { height: "24px", boxSizing: "border-box", lineHeight: "24px", whiteSpace: "pre" },
+  noticeCell: { height: DIFF_ROW_HEIGHT.notice },
+  lineCell: {
+    height: DIFF_ROW_HEIGHT.source,
+    boxSizing: "border-box",
+    lineHeight: `${DIFF_ROW_HEIGHT.source}px`,
+    whiteSpace: "pre",
+  },
   lineNumber: {
     paddingBlock: "0",
     paddingInline: "0.6rem",
@@ -196,7 +205,12 @@ const styles = stylex.create({
     textAlign: "right",
     userSelect: "none",
   },
-  source: { minWidth: 0, overflow: "hidden", tabSize: 4, touchAction: "pan-y pinch-zoom" },
+  source: {
+    minWidth: 0,
+    overflow: "hidden",
+    tabSize: metrics.tabSize,
+    touchAction: "pan-y pinch-zoom",
+  },
   sourceContent: {
     width: "max-content",
     paddingRight: "1rem",
@@ -247,11 +261,6 @@ const styles = stylex.create({
     zIndex: 6,
     bottom: "env(safe-area-inset-bottom)",
     height: "28px",
-    display: "grid",
-    gridTemplateColumns: {
-      default: "4.5rem 4.5rem minmax(0, 1fr)",
-      [mobile]: "3rem 3rem minmax(0, 1fr)",
-    },
     boxSizing: "border-box",
     overflow: "hidden",
     backgroundColor: tokens.background,
@@ -270,14 +279,12 @@ const styles = stylex.create({
     overflowY: "hidden",
     direction: "ltr",
     scrollBehavior: { default: null, [media.reducedMotion]: "auto" },
-    outline: { ":focus-visible": "2px solid currentColor" },
-    outlineOffset: { ":focus-visible": "-3px" },
   },
   railContent: {
     minWidth: "100%",
     height: "1px",
     fontFamily: tokens.mono,
-    fontSize: "0.85rem",
+    fontSize: metrics.fontSize,
   },
 });
 
@@ -388,7 +395,7 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
           </select>
           <input
             aria-label="Search diff"
-            {...stylex.attrs(baseStyles.input, styles.searchInput)}
+            {...stylex.attrs(baseStyles.focusable, styles.searchInput)}
             onInput={(event) =>
               send({ kind: "SearchQueryChanged", query: event.currentTarget.value })
             }
@@ -511,14 +518,14 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
         </div>
       </div>
       <div
-        {...stylex.attrs(styles.railFrame)}
+        {...stylex.attrs(styles.columns, styles.railFrame)}
         style={{ left: `${model().geometry.railLeft}px`, width: `${model().geometry.railWidth}px` }}
       >
         <div aria-hidden="true" {...stylex.attrs(styles.railGutter)} />
         <div aria-hidden="true" {...stylex.attrs(styles.railGutter)} />
         <div
           aria-label="Scroll diff horizontally"
-          {...stylex.attrs(styles.rail)}
+          {...stylex.attrs(baseStyles.focusable, baseStyles.focusInset, styles.rail)}
           data-diff-horizontal-rail=""
           ref={(element) => {
             horizontalRail = element;
@@ -546,7 +553,7 @@ const DiffRowView = (props: {
 }) => (
   <div
     aria-rowindex={props.index + 1}
-    {...stylex.attrs(styles.row)}
+    {...stylex.attrs(styles.columns, styles.row)}
     data-diff-row={props.index}
     role="row"
     style={{ height: `${props.size}px` }}
@@ -638,7 +645,11 @@ const DiffRowCells = (props: {
       </Match>
       <Match when={noticeRow()}>
         {(row) => (
-          <div aria-colspan="3" {...stylex.attrs(styles.fullCell, styles.hunkCell)} role="cell">
+          <div
+            aria-colspan="3"
+            {...stylex.attrs(styles.fullCell, styles.hunkCell, styles.noticeCell)}
+            role="cell"
+          >
             {row().notice === "binary"
               ? "Binary file changed."
               : "File changed without textual hunks."}

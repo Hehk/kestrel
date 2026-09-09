@@ -1,4 +1,7 @@
 import type { components } from "../api/schema";
+import { DIFF_ROW_HEIGHT, metrics } from "./metrics.stylex";
+
+export { DIFF_ROW_HEIGHT };
 
 export type PullRequestDiff = components["schemas"]["PullRequestDiffResponse"];
 export type PullRequestDiffFile = components["schemas"]["PullRequestDiffFileDto"];
@@ -37,14 +40,6 @@ export const diffLineNumbers = (
   }
 };
 
-export const DIFF_ROW_HEIGHT = {
-  file: 40,
-  hunk: 32,
-  notice: 32,
-  source: 24,
-} as const;
-
-export const DIFF_TAB_SIZE = 4;
 const NONE = 0xffff_ffff;
 const MAX_INDEX = NONE - 1;
 const MARK = /\p{Mark}/u;
@@ -60,27 +55,27 @@ const ROW_NOTICE = 5;
 export type DiffRow =
   | { kind: "file"; fileIndex: number; file: PullRequestDiffFile }
   | {
-      kind: "hunk";
-      fileIndex: number;
-      hunkIndex: number;
-      file: PullRequestDiffFile;
-      hunk: PullRequestDiffHunk;
-    }
+    kind: "hunk";
+    fileIndex: number;
+    hunkIndex: number;
+    file: PullRequestDiffFile;
+    hunk: PullRequestDiffHunk;
+  }
   | {
-      kind: "context" | "addition" | "deletion";
-      fileIndex: number;
-      hunkIndex: number;
-      lineIndex: number;
-      file: PullRequestDiffFile;
-      hunk: PullRequestDiffHunk;
-      line: PullRequestDiffLine;
-    }
+    kind: "context" | "addition" | "deletion";
+    fileIndex: number;
+    hunkIndex: number;
+    lineIndex: number;
+    file: PullRequestDiffFile;
+    hunk: PullRequestDiffHunk;
+    line: PullRequestDiffLine;
+  }
   | {
-      kind: "notice";
-      notice: "binary" | "hunkless";
-      fileIndex: number;
-      file: PullRequestDiffFile;
-    };
+    kind: "notice";
+    notice: "binary" | "hunkless";
+    fileIndex: number;
+    file: PullRequestDiffFile;
+  };
 
 export type DiffLayout = {
   readonly diff: PullRequestDiff;
@@ -275,7 +270,7 @@ export const hunkStartRow = (layout: DiffLayout, fileIndex: number, hunkIndex: n
 export const sourceVisualColumns = (
   content: string,
   prefixColumns = 1,
-  tabSize = DIFF_TAB_SIZE,
+  tabSize = metrics.tabSize,
 ): number => {
   if (!Number.isInteger(prefixColumns) || prefixColumns < 0) {
     throw new RangeError("Prefix columns must be a non-negative integer");
@@ -286,7 +281,7 @@ export const sourceVisualColumns = (
 
   let columns = prefixColumns;
   let previousGlyphColumns = 0;
-  for (let offset = 0; offset < content.length; ) {
+  for (let offset = 0; offset < content.length;) {
     const codePoint = content.codePointAt(offset) as number;
     offset += codePoint > 0xffff ? 2 : 1;
     if (codePoint === 0x09) {

@@ -9,15 +9,6 @@ const styles = stylex.create({
     color: { default: tokens.link, ":visited": tokens.linkVisited },
     textDecoration: "underline",
     textUnderlineOffset: "0.12em",
-    outline: { ":focus-visible": "2px solid currentColor" },
-    outlineOffset: { ":focus-visible": "3px" },
-  },
-  small: {
-    display: "inline-block",
-    paddingBlock: "0.25rem",
-    paddingInline: "0.55rem",
-    fontFamily: tokens.mono,
-    fontSize: "0.88rem",
   },
   navigation: {
     color: { default: tokens.link, ":visited": tokens.link },
@@ -42,7 +33,8 @@ export const Anchor = (props: AnchorProps) => {
       {...anchorProps}
       {...stylex.attrs(
         styles.link,
-        local.size === "small" && styles.small,
+        baseStyles.focusable,
+        local.size === "small" && baseStyles.smallControl,
         local.variant === "navigation" && styles.navigation,
         local.variant === "navigation" && props["aria-current"] === "page" && styles.current,
         local.variant === "icon" && baseStyles.iconControl,

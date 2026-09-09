@@ -8,7 +8,6 @@ import { SiteHeader } from "./components/SiteHeader";
 import * as Router from "./router";
 import * as Session from "./session";
 import { styles as baseStyles } from "./styles/base";
-import { tokens } from "./styles/tokens.stylex";
 
 const styles = stylex.create({
   pageCard: {
@@ -16,15 +15,6 @@ const styles = stylex.create({
   },
   pageCardHeading: {
     marginTop: 0,
-  },
-  eyebrow: {
-    marginTop: "0",
-    marginRight: "0",
-    marginBottom: "0.35rem",
-    marginLeft: "0",
-    color: tokens.textMuted,
-    fontFamily: tokens.mono,
-    fontSize: "0.78rem",
   },
   loginAction: {
     display: "flex",
@@ -68,7 +58,7 @@ const PublicLink = (props: ParentProps<{ to: Router.LoginRoute }> & Omit<AnchorP
 const LoginPage = () => {
   return (
     <section {...stylex.attrs(styles.pageCard)}>
-      <p {...stylex.attrs(baseStyles.paragraph, styles.eyebrow)}>Login</p>
+      <p {...stylex.attrs(baseStyles.paragraph, baseStyles.eyebrow)}>Login</p>
       <h1 {...stylex.attrs(baseStyles.heading, baseStyles.heading1, styles.pageCardHeading)}>
         Sign in to Kestrel
       </h1>
@@ -87,7 +77,7 @@ const LoginPage = () => {
 const NotFoundPage = ({ path }: { path: string }) => {
   return (
     <section {...stylex.attrs(styles.pageCard)}>
-      <p {...stylex.attrs(baseStyles.paragraph, styles.eyebrow)}>Not Found</p>
+      <p {...stylex.attrs(baseStyles.paragraph, baseStyles.eyebrow)}>Not Found</p>
       <h1 {...stylex.attrs(baseStyles.heading, baseStyles.heading1, styles.pageCardHeading)}>
         Route not found
       </h1>

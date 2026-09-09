@@ -8,6 +8,7 @@ import { apiUrl } from "./api/client";
 import { Link } from "./Link";
 import { Anchor } from "./components/Anchor";
 import { Button } from "./components/Button";
+import { PageLayout } from "./components/PageLayout";
 import {
   ArrowLeftIcon,
   CheckIcon,
@@ -25,22 +26,32 @@ import { styles as baseStyles } from "./styles/base";
 import { tokens } from "./styles/tokens.stylex";
 
 import { media } from "./styles/media.stylex";
+import { layout } from "./styles/layout.stylex";
 
 const mobile = media.mobile;
 const narrow = media.singleColumn;
 const syncing = stylex.keyframes({ to: { transform: "rotate(360deg)" } });
 
+const sidebarTypography = {
+  fontFamily: tokens.mono,
+  fontSize: tokens.fontSizeExtraSmall,
+  lineHeight: 1.45,
+};
+
 const styles = stylex.create({
   page: {
-    width: { default: "min(1280px, calc(100vw - 32px))", [mobile]: "calc(100vw - 24px)" },
+    width: {
+      default: `min(${layout.widePage}, calc(100vw - 2 * ${layout.pageGutter}))`,
+      [mobile]: `calc(100vw - 2 * ${layout.pageGutter})`,
+    },
     display: "grid",
     gridTemplateAreas: {
       default: '"header header header" "left content right"',
       [narrow]: '"header" "left" "content" "right"',
     },
     gridTemplateColumns: {
-      default: "minmax(0, 1fr) minmax(0, 720px) minmax(0, 1fr)",
-      [narrow]: "minmax(0, 720px)",
+      default: `minmax(0, 1fr) minmax(0, ${layout.readingColumn}) minmax(0, 1fr)`,
+      [narrow]: `minmax(0, ${layout.readingColumn})`,
     },
     alignItems: "start",
     justifyContent: { default: "normal", [narrow]: "center" },
@@ -52,14 +63,8 @@ const styles = stylex.create({
     width: "auto",
     gridTemplateAreas: '"header" "diff"',
     gridTemplateColumns: "minmax(0, 1fr)",
-    marginRight: {
-      default: "calc(16px + env(safe-area-inset-right))",
-      [mobile]: "calc(12px + env(safe-area-inset-right))",
-    },
-    marginLeft: {
-      default: "calc(16px + env(safe-area-inset-left))",
-      [mobile]: "calc(12px + env(safe-area-inset-left))",
-    },
+    marginRight: `calc(${layout.pageGutter} + env(safe-area-inset-right))`,
+    marginLeft: `calc(${layout.pageGutter} + env(safe-area-inset-left))`,
   },
   header: {
     gridColumnEnd: "header",
@@ -68,8 +73,8 @@ const styles = stylex.create({
     gridRowStart: "header",
     display: "grid",
     gridTemplateColumns: {
-      default: "minmax(0, 1fr) minmax(0, 720px) minmax(0, 1fr)",
-      [narrow]: "minmax(0, 720px)",
+      default: `minmax(0, 1fr) minmax(0, ${layout.readingColumn}) minmax(0, 1fr)`,
+      [narrow]: `minmax(0, ${layout.readingColumn})`,
     },
     justifyContent: { default: "normal", [narrow]: "center" },
     minWidth: 0,
@@ -195,7 +200,7 @@ const styles = stylex.create({
     marginRight: 0,
     marginBottom: 0,
     marginLeft: 0,
-    fontSize: "1rem",
+    fontSize: tokens.fontSizeMedium,
   },
   description: {
     paddingTop: "0.25rem",
@@ -267,7 +272,7 @@ const styles = stylex.create({
     whiteSpace: "nowrap",
   },
   activityBody: {
-    maxWidth: "66ch",
+    maxWidth: layout.proseWidth,
     marginTop: "0.65rem",
     marginRight: "0",
     marginBottom: "0",
@@ -299,13 +304,13 @@ const styles = stylex.create({
     borderLeftColor: tokens.rule,
   },
   activityTruncated: {
-    maxWidth: "66ch",
+    maxWidth: layout.proseWidth,
     marginTop: "0.75rem",
     marginRight: "0",
     marginBottom: "0",
     marginLeft: "0",
     color: tokens.textMuted,
-    fontSize: "0.88rem",
+    fontSize: tokens.fontSizeSmall,
   },
   loadOlder: {
     display: "flex",
@@ -332,15 +337,11 @@ const styles = stylex.create({
   },
   sidebarTitle: {
     margin: 0,
-    fontFamily: tokens.mono,
-    fontSize: tokens.fontSizeExtraSmall,
-    lineHeight: 1.45,
+    ...sidebarTypography,
   },
   sidebarCount: {
     color: tokens.textMuted,
-    fontFamily: tokens.mono,
-    fontSize: tokens.fontSizeExtraSmall,
-    lineHeight: 1.45,
+    ...sidebarTypography,
   },
   sidebarList: {
     display: "grid",
@@ -362,9 +363,7 @@ const styles = stylex.create({
     paddingInline: "0.25rem",
   },
   sidebarData: {
-    fontFamily: tokens.mono,
-    fontSize: tokens.fontSizeExtraSmall,
-    lineHeight: 1.45,
+    ...sidebarTypography,
   },
   sidebarDataPrimary: {
     minWidth: 0,
@@ -381,12 +380,10 @@ const styles = stylex.create({
     marginLeft: 0,
     paddingInline: "0.25rem",
     color: tokens.textMuted,
-    fontFamily: tokens.mono,
-    fontSize: tokens.fontSizeExtraSmall,
-    lineHeight: 1.45,
+    ...sidebarTypography,
   },
   reviewDecision: {
-    maxWidth: "66ch",
+    maxWidth: layout.proseWidth,
     minHeight: "1.5rem",
     display: "flex",
     alignItems: "center",
@@ -410,26 +407,20 @@ const styles = stylex.create({
   },
   metadataTerm: {
     color: tokens.textMuted,
-    fontFamily: tokens.mono,
-    fontSize: tokens.fontSizeExtraSmall,
-    lineHeight: 1.45,
+    ...sidebarTypography,
   },
   metadataValue: {
     minWidth: 0,
     margin: 0,
     overflowWrap: "anywhere",
     textAlign: "right",
-    fontFamily: tokens.mono,
-    fontSize: tokens.fontSizeExtraSmall,
-    lineHeight: 1.45,
+    ...sidebarTypography,
   },
   sidebarTime: {
     whiteSpace: "nowrap",
   },
   statusName: {
-    fontFamily: tokens.mono,
-    fontSize: tokens.fontSizeExtraSmall,
-    lineHeight: 1.45,
+    ...sidebarTypography,
   },
   statusIcon: {
     display: "inline-flex",
@@ -458,9 +449,7 @@ const styles = stylex.create({
     borderColor: tokens.border,
     borderRadius: tokens.borderRadius,
     boxShadow: "0.25rem 0.25rem 0 rgb(0 0 0 / 12%)",
-    fontFamily: tokens.mono,
-    fontSize: tokens.fontSizeExtraSmall,
-    lineHeight: 1.45,
+    ...sidebarTypography,
     outline: "none",
   },
   checkTooltip: {
@@ -480,36 +469,6 @@ const styles = stylex.create({
   },
   tooltipAction: {
     marginTop: "0.3rem",
-  },
-  eyebrow: {
-    marginTop: "0",
-    marginRight: "0",
-    marginBottom: "0.35rem",
-    marginLeft: "0",
-    color: tokens.textMuted,
-    fontFamily: tokens.mono,
-    fontSize: "0.78rem",
-  },
-  repoStatus: {
-    maxWidth: "66ch",
-    marginTop: 0,
-    marginRight: 0,
-    marginBottom: 0,
-    marginLeft: 0,
-    color: tokens.textMuted,
-    fontSize: "0.92rem",
-  },
-  repoPrMeta: {
-    color: tokens.textMuted,
-    fontFamily: tokens.mono,
-    fontSize: "0.78rem",
-  },
-  message: {
-    width: { default: "min(720px, calc(100vw - 32px))", [mobile]: "min(100% - 24px, 720px)" },
-    marginBlock: "0",
-    marginInline: "auto",
-    padding: { default: "40px 0 64px", [mobile]: "24px 0 48px" },
-    textAlign: "left",
   },
 });
 
@@ -761,14 +720,14 @@ const PullRequestDiff = (props: { data: Accessor<PullRequestPageData> }) => {
       data-pr-diff-content=""
       {...stylex.attrs(styles.diffContent)}
     >
-      <p {...stylex.attrs(baseStyles.paragraph, styles.eyebrow)}>Changed files</p>
+      <p {...stylex.attrs(baseStyles.paragraph, baseStyles.eyebrow)}>Changed files</p>
       <h2 {...stylex.attrs(baseStyles.heading, baseStyles.heading2, styles.diffHeading)}>
         Diff view
       </h2>
       <div aria-live="polite">
         <Switch>
           <Match when={detailState()?.status === "syncing"}>
-            <p {...stylex.attrs(styles.repoStatus)}>Syncing pull request details...</p>
+            <p {...stylex.attrs(baseStyles.statusText)}>Syncing pull request details...</p>
           </Match>
           <Match when={detailState()?.status === "error"}>
             <PullRequestDetailError
@@ -783,7 +742,9 @@ const PullRequestDiff = (props: { data: Accessor<PullRequestPageData> }) => {
           when={diff()}
           fallback={
             <Switch
-              fallback={<p {...stylex.attrs(styles.repoStatus)}>Loading pull request diff...</p>}
+              fallback={
+                <p {...stylex.attrs(baseStyles.statusText)}>Loading pull request diff...</p>
+              }
             >
               <Match when={error()}>
                 {(currentError) => <PullRequestDiffError error={currentError()} />}
@@ -793,13 +754,13 @@ const PullRequestDiff = (props: { data: Accessor<PullRequestPageData> }) => {
         >
           <>
             <Show when={diffState()?.status === "loading"}>
-              <p {...stylex.attrs(styles.repoStatus)}>Refreshing pull request diff...</p>
+              <p {...stylex.attrs(baseStyles.statusText)}>Refreshing pull request diff...</p>
             </Show>
             <Show when={error()}>
               {(currentError) => (
                 <>
                   <PullRequestDiffError error={currentError()} />
-                  <p {...stylex.attrs(styles.repoStatus)}>
+                  <p {...stylex.attrs(baseStyles.statusText)}>
                     Showing the last successfully loaded diff.
                   </p>
                 </>
@@ -835,9 +796,11 @@ const PullRequestDiffTotals = (props: { diff: Repositories.PullRequestDiff }) =>
   return (
     <Show
       when={props.diff.files.length > 0}
-      fallback={<p {...stylex.attrs(styles.repoStatus)}>This pull request has no changed files.</p>}
+      fallback={
+        <p {...stylex.attrs(baseStyles.statusText)}>This pull request has no changed files.</p>
+      }
     >
-      <p {...stylex.attrs(styles.repoStatus)}>
+      <p {...stylex.attrs(baseStyles.statusText)}>
         {props.diff.files.length} changed {props.diff.files.length === 1 ? "file" : "files"},{" "}
         {lineCount()} source {lineCount() === 1 ? "line" : "lines"}.
       </p>
@@ -850,37 +813,47 @@ const PullRequestDiffError = ({ error }: { error: Repositories.PullRequestDiffEr
   switch (error) {
     case "authenticationRequired":
       return (
-        <p {...stylex.attrs(styles.repoStatus)}>Authentication is required to load this diff.</p>
+        <p {...stylex.attrs(baseStyles.statusText)}>
+          Authentication is required to load this diff.
+        </p>
       );
     case "authorizationRequired":
       return (
-        <p {...stylex.attrs(styles.repoStatus)}>
+        <p {...stylex.attrs(baseStyles.statusText)}>
           GitHub App authorization required.{" "}
           <Anchor href={apiUrl("/api/github-app/authorize")}>Authorize more repos</Anchor>.
         </p>
       );
     case "diffParseFailed":
-      return <p {...stylex.attrs(styles.repoStatus)}>The stored diff could not be parsed.</p>;
+      return <p {...stylex.attrs(baseStyles.statusText)}>The stored diff could not be parsed.</p>;
     case "diffResourceLimitExceeded":
-      return <p {...stylex.attrs(styles.repoStatus)}>The stored diff is too large to display.</p>;
+      return (
+        <p {...stylex.attrs(baseStyles.statusText)}>The stored diff is too large to display.</p>
+      );
     case "diffUnavailable":
       return (
-        <p {...stylex.attrs(styles.repoStatus)}>The stored pull request does not include a diff.</p>
+        <p {...stylex.attrs(baseStyles.statusText)}>
+          The stored pull request does not include a diff.
+        </p>
       );
     case "pullRequestNotFound":
-      return <p {...stylex.attrs(styles.repoStatus)}>Pull request details are not stored yet.</p>;
+      return (
+        <p {...stylex.attrs(baseStyles.statusText)}>Pull request details are not stored yet.</p>
+      );
     case "repositoryNotTracked":
-      return <p {...stylex.attrs(styles.repoStatus)}>Repository is not tracked.</p>;
+      return <p {...stylex.attrs(baseStyles.statusText)}>Repository is not tracked.</p>;
     case "invalidPullRequest":
     case "invalidRepository":
-      return <p {...stylex.attrs(styles.repoStatus)}>The pull request diff URL is invalid.</p>;
+      return <p {...stylex.attrs(baseStyles.statusText)}>The pull request diff URL is invalid.</p>;
     case "loadFailed":
-      return <p {...stylex.attrs(styles.repoStatus)}>The pull request diff could not be loaded.</p>;
+      return (
+        <p {...stylex.attrs(baseStyles.statusText)}>The pull request diff could not be loaded.</p>
+      );
   }
 };
 
 const PullRequestMessage = ({ children, title }: ParentProps<{ title: string }>) => (
-  <section {...stylex.attrs(styles.message)}>
+  <PageLayout>
     <div {...stylex.attrs(styles.pageBack)}>
       <Link aria-label="Back to home" variant="icon" title="Back to home" to={{ name: "Home" }}>
         <ArrowLeftIcon />
@@ -888,7 +861,7 @@ const PullRequestMessage = ({ children, title }: ParentProps<{ title: string }>)
     </div>
     <h1 {...stylex.attrs(baseStyles.heading, baseStyles.heading1, styles.title)}>{title}</h1>
     {children}
-  </section>
+  </PageLayout>
 );
 
 const PullRequestActions = (props: {
@@ -986,12 +959,14 @@ const PullRequestDetailPanel = (props: { data: Accessor<PullRequestPageData> }) 
   const detailState = () => props.data().pullRequestDetail;
   const detail = () => getDetails(detailState());
   return (
-    <Switch fallback={<p {...stylex.attrs(styles.repoStatus)}>Pull request details not loaded.</p>}>
+    <Switch
+      fallback={<p {...stylex.attrs(baseStyles.statusText)}>Pull request details not loaded.</p>}
+    >
       <Match when={detailState()?.status === "loading"}>
-        <p {...stylex.attrs(styles.repoStatus)}>Loading pull request details...</p>
+        <p {...stylex.attrs(baseStyles.statusText)}>Loading pull request details...</p>
       </Match>
       <Match when={detailState()?.status === "syncing"}>
-        <p {...stylex.attrs(styles.repoStatus)}>Syncing pull request details...</p>
+        <p {...stylex.attrs(baseStyles.statusText)}>Syncing pull request details...</p>
       </Match>
       <Match when={detailState()?.status === "error" && detail() === undefined}>
         <PullRequestDetailError
@@ -1023,17 +998,21 @@ const PullRequestDetailError = ({ error }: { error: Repositories.PullRequestsErr
   switch (error) {
     case "authorizationRequired":
       return (
-        <p {...stylex.attrs(styles.repoStatus)}>
+        <p {...stylex.attrs(baseStyles.statusText)}>
           GitHub App authorization required.{" "}
           <Anchor href={apiUrl("/api/github-app/authorize")}>Authorize more repos</Anchor>.
         </p>
       );
     case "pullRequestNotFound":
-      return <p {...stylex.attrs(styles.repoStatus)}>Pull request details are not stored yet.</p>;
+      return (
+        <p {...stylex.attrs(baseStyles.statusText)}>Pull request details are not stored yet.</p>
+      );
     case "repositoryNotTracked":
-      return <p {...stylex.attrs(styles.repoStatus)}>Repository is not tracked.</p>;
+      return <p {...stylex.attrs(baseStyles.statusText)}>Repository is not tracked.</p>;
     case "syncFailed":
-      return <p {...stylex.attrs(styles.repoStatus)}>Pull request details could not be loaded.</p>;
+      return (
+        <p {...stylex.attrs(baseStyles.statusText)}>Pull request details could not be loaded.</p>
+      );
   }
 };
 
@@ -1103,7 +1082,7 @@ const PullRequestDescription = (props: { body: Accessor<string | null | undefine
       {props.body()?.trim() ? (
         <p {...stylex.attrs(baseStyles.paragraph, styles.descriptionText)}>{props.body()}</p>
       ) : (
-        <p {...stylex.attrs(styles.repoStatus)}>No description provided.</p>
+        <p {...stylex.attrs(baseStyles.statusText)}>No description provided.</p>
       )}
     </section>
   );
@@ -1126,21 +1105,21 @@ const PullRequestTimeline = (props: { data: Accessor<PullRequestPageData> }) => 
         >
           Activity
         </h2>
-        <span {...stylex.attrs(styles.repoPrMeta)}>
+        <span {...stylex.attrs(baseStyles.mutedMetadata)}>
           {timeline().some((event) => event.id === undefined && event.occurredAt === undefined)
             ? "Stored activity; sync to refresh"
             : "Newest first"}
         </span>
       </header>
       {timeline().length === 0 ? (
-        <p {...stylex.attrs(styles.repoStatus)}>No activity stored.</p>
+        <p {...stylex.attrs(baseStyles.statusText)}>No activity stored.</p>
       ) : (
         <ol {...stylex.attrs(styles.activityList)}>
           <For each={timeline()}>{(event) => <PullRequestTimelineItem event={event} />}</For>
         </ol>
       )}
       {detailState()?.status === "timelineError" ? (
-        <p {...stylex.attrs(styles.repoStatus)} role="alert">
+        <p {...stylex.attrs(baseStyles.statusText)} role="alert">
           Older activity could not be loaded. Try again.
         </p>
       ) : null}
@@ -1199,7 +1178,7 @@ const PullRequestTimelineItem = ({ event }: { event: TimelineEvent }) => {
         </span>
         {event.occurredAt ? (
           <time
-            {...stylex.attrs(styles.repoPrMeta, styles.activityTime)}
+            {...stylex.attrs(baseStyles.mutedMetadata, styles.activityTime)}
             dateTime={event.occurredAt}
           >
             {formatLocalDateTime(event.occurredAt)}
@@ -1215,7 +1194,7 @@ const PullRequestTimelineItem = ({ event }: { event: TimelineEvent }) => {
                 <strong>{comment.actorLogin ?? "GitHub"}</strong>
                 {comment.occurredAt ? (
                   <time
-                    {...stylex.attrs(styles.repoPrMeta, styles.activityTime)}
+                    {...stylex.attrs(baseStyles.mutedMetadata, styles.activityTime)}
                     dateTime={comment.occurredAt}
                   >
                     {formatLocalDateTime(comment.occurredAt)}
