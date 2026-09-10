@@ -1,5 +1,16 @@
 import "@testing-library/jest-dom/vitest";
 
+// jsdom has popover UA styles but no Popover API or top-layer layout.
+if (!HTMLElement.prototype.showPopover) {
+  Object.defineProperty(HTMLElement.prototype, "showPopover", {
+    configurable: true,
+    writable: true,
+    value(this: HTMLElement) {
+      this.style.display = "block";
+    },
+  });
+}
+
 if (typeof window.localStorage.getItem !== "function") {
   const storage = new Map<string, string>();
 

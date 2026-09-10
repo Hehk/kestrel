@@ -1,4 +1,3 @@
-import { Tooltip } from "@kobalte/core/tooltip";
 import * as stylex from "@stylexjs/stylex";
 import { createMemo, For, Match, Show, Switch } from "solid-js";
 import type { Accessor, JSX, ParentProps } from "solid-js";
@@ -9,6 +8,7 @@ import { Link } from "./Link";
 import { Anchor } from "./components/Anchor";
 import { Button } from "./components/Button";
 import { PageLayout } from "./components/PageLayout";
+import { Tooltip } from "./components/Tooltip";
 import {
   ArrowLeftIcon,
   CheckIcon,
@@ -432,9 +432,6 @@ const styles = stylex.create({
   statusSuccess: { color: tokens.statusSuccess },
   statusFailure: { color: tokens.statusFailure },
   statusPending: { color: tokens.statusPending },
-  tooltipPositioner: {
-    zIndex: 20,
-  },
   tooltip: {
     display: "grid",
     gap: "0.2rem",
@@ -877,13 +874,13 @@ const PullRequestActions = (props: {
 
   return (
     <nav aria-label="Pull request actions" {...stylex.attrs(styles.sidebarActions)}>
-      <Tooltip closeDelay={150} gutter={8} ignoreSafeArea openDelay={0}>
+      <Tooltip>
         <Tooltip.Trigger as={Link} aria-label="Back to home" variant="icon" to={{ name: "Home" }}>
           <ArrowLeftIcon />
         </Tooltip.Trigger>
         <PullRequestTooltip>Back to tracked repositories</PullRequestTooltip>
       </Tooltip>
-      <Tooltip closeDelay={150} gutter={8} ignoreSafeArea openDelay={0}>
+      <Tooltip>
         <Tooltip.Trigger
           as={Anchor}
           aria-label="Open on GitHub"
@@ -894,7 +891,7 @@ const PullRequestActions = (props: {
         </Tooltip.Trigger>
         <PullRequestTooltip>Open this pull request on GitHub</PullRequestTooltip>
       </Tooltip>
-      <Tooltip closeDelay={150} gutter={8} ignoreSafeArea openDelay={0}>
+      <Tooltip>
         <Tooltip.Trigger
           as={Button}
           aria-busy={props.data().pullRequestDetail?.status === "syncing"}
@@ -939,9 +936,7 @@ const PullRequestActions = (props: {
 
 const PullRequestTooltip = ({ children }: ParentProps) => (
   <Tooltip.Portal>
-    <Tooltip.Content {...stylex.attrs(styles.tooltip, styles.tooltipPositioner)}>
-      {children}
-    </Tooltip.Content>
+    <Tooltip.Content {...stylex.attrs(styles.tooltip)}>{children}</Tooltip.Content>
   </Tooltip.Portal>
 );
 
@@ -1500,7 +1495,7 @@ const PullRequestStatusIcon = ({
   const detail = description ?? summary;
 
   return (
-    <Tooltip closeDelay={150} gutter={8} ignoreSafeArea openDelay={0} placement="right">
+    <Tooltip placement="right">
       <Tooltip.Trigger
         as={Button}
         variant="row"
@@ -1517,9 +1512,7 @@ const PullRequestStatusIcon = ({
         </span>
       </Tooltip.Trigger>
       <Tooltip.Portal>
-        <Tooltip.Content
-          {...stylex.attrs(styles.tooltip, styles.checkTooltip, styles.tooltipPositioner)}
-        >
+        <Tooltip.Content {...stylex.attrs(styles.tooltip, styles.checkTooltip)}>
           <p {...stylex.attrs(styles.tooltipText)}>{label}</p>
           <p {...stylex.attrs(styles.tooltipText, styles.tooltipSecondary)}>{accessibleState}</p>
           {title ? (
