@@ -14,6 +14,9 @@ import {
 import type { ComponentProps, JSX, ParentProps, ValidComponent } from "solid-js";
 import { Dynamic, Portal } from "solid-js/web";
 
+// TODO: This was a vibe coded copy of other tooltip implementations
+// This should be rebuilt to work better with the tea style used in the rest of the app
+
 const styles = stylex.create({
   content: {
     position: "fixed",
@@ -302,10 +305,10 @@ const Content = (props: JSX.HTMLAttributes<HTMLDivElement>) => {
           typeof local.style === "string"
             ? `${local.style};position-anchor:${tooltip.anchor};--tooltip-gutter:${tooltip.gutter()}px;`
             : {
-                ...local.style,
-                "position-anchor": tooltip.anchor,
-                "--tooltip-gutter": `${tooltip.gutter()}px`,
-              }
+              ...local.style,
+              "position-anchor": tooltip.anchor,
+              "--tooltip-gutter": `${tooltip.gutter()}px`,
+            }
         }
         data-placement={tooltip.placement()}
       />
