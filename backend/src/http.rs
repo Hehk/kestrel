@@ -1,4 +1,4 @@
-use axum::{extract::State, http::StatusCode, routing::get, Json, Router};
+use axum::{extract::State, http::StatusCode, response::Response, routing::get, Json, Router};
 use reqwest::Client;
 use serde::Serialize;
 use sqlx::SqlitePool;
@@ -78,6 +78,20 @@ pub fn app(config: &Config, state: AppState) -> Router {
         "/settings",
         get(settings::get_settings).put(settings::put_settings),
     );
+    let api = api
+        .route(
+            "/review/{repository_id}/{number}",
+            get(crate::review::discover).post(crate::review::update),
+        )
+        .route(
+            "/review/{repository_id}/{number}/socket",
+            get(crate::review::websocket),
+        )
+        .route(
+            "/review/{repository_id}/{number}/demo-agent",
+            axum::routing::post(crate::review::fake_agent),
+        )
+        .layer(axum::extract::DefaultBodyLimit::max(128 * 1024));
     let api = api.route(
         "/repositories",
         get(repositories::list_repositories).post(repositories::create_repository),
@@ -109,6 +123,10 @@ pub fn app(config: &Config, state: AppState) -> Router {
 
     let router = Router::new()
         .nest("/api", api)
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            account_header,
+        ))
         .layer(TraceLayer::new_for_http())
         .layer(CompressionLayer::new())
         .layer(CorsLayer::permissive())
@@ -119,6 +137,26 @@ pub fn app(config: &Config, state: AppState) -> Router {
     } else {
         router
     }
+}
+
+async fn account_header(
+    State(state): State<AppState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let user = auth::current_user_id(&state, request.headers())
+        .await
+        .ok()
+        .flatten();
+    let mut response = next.run(request).await;
+    if let Some(user) = user.and_then(|id| axum::http::HeaderValue::from_str(&id).ok()) {
+        response.headers_mut().insert("x-kestrel-user", user);
+    }
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    response
 }
 
 async fn openapi_json() -> Json<utoipa::openapi::OpenApi> {

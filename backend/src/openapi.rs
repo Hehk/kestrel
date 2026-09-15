@@ -30,6 +30,9 @@ use crate::{
         description = "Backend API for Kestrel"
     ),
     paths(
+        crate::review::discover,
+        crate::review::update,
+        crate::review::fake_agent,
         crate::auth::logout,
         crate::auth::me,
         crate::github_app::authorize,

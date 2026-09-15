@@ -21,6 +21,7 @@ import {
 import PullRequestsError from "./PullRequestError";
 import type { PullRequestView } from "./router";
 import { DiffView } from "./diff/DiffView";
+import { ReviewWorkspace } from "./review/ReviewWorkspace";
 import { diffFileHunks } from "./diff/layout";
 import { styles as baseStyles } from "./styles/base";
 import { tokens } from "./styles/tokens.stylex";
@@ -773,7 +774,7 @@ const PullRequestDiff = (props: { data: Accessor<PullRequestPageData> }) => {
             when={Repositories.pullRequestDiffKey(props.data().repository, props.data().number)}
           >
             <div>
-              <PullRequestDiffTotals diff={currentDiff()} />
+              <PullRequestDiffTotals diff={currentDiff()} number={props.data().number} />
             </div>
           </Show>
         )}
@@ -782,7 +783,8 @@ const PullRequestDiff = (props: { data: Accessor<PullRequestPageData> }) => {
   );
 };
 
-const PullRequestDiffTotals = (props: { diff: Repositories.PullRequestDiff }) => {
+const PullRequestDiffTotals = (props: { diff: Repositories.PullRequestDiff; number: number }) => {
+  const user = appStore((state) => state.user.id);
   const lineCount = () =>
     props.diff.files.reduce(
       (total, file) =>
@@ -801,7 +803,27 @@ const PullRequestDiffTotals = (props: { diff: Repositories.PullRequestDiff }) =>
         {props.diff.files.length} changed {props.diff.files.length === 1 ? "file" : "files"},{" "}
         {lineCount()} source {lineCount() === 1 ? "line" : "lines"}.
       </p>
-      <DiffView diff={props.diff} />
+      <Show
+        when={import.meta.env["VITE_REVIEW_ENABLED"] !== "false" && props.diff.review}
+        fallback={
+          <>
+            <p {...stylex.attrs(baseStyles.statusText)}>
+              {import.meta.env["VITE_REVIEW_ENABLED"] === "false"
+                ? "Personal review is disabled in this build."
+                : "Refresh from GitHub to enable version-bound review for this stored diff."}
+            </p>
+            <DiffView diff={props.diff} />
+          </>
+        }
+      >
+        {(manifest) => (
+          <Show keyed when={`${user()}:${manifest().repositoryId}:${props.number}`}>
+            <ReviewWorkspace manifest={manifest()} user={user()} number={props.number}>
+              <DiffView diff={props.diff} />
+            </ReviewWorkspace>
+          </Show>
+        )}
+      </Show>
     </Show>
   );
 };

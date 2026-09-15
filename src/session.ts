@@ -189,7 +189,9 @@ const runCmd = (cmd: SessionCmd) => {
 };
 
 const checkAuth = async (controller: AbortController) => {
-  const { data, error } = await api.GET("/api/auth/me", { signal: controller.signal });
+  const { data, error } = await api
+    .GET("/api/auth/me", { signal: controller.signal })
+    .catch(() => ({ data: undefined, error: undefined }));
   if (controller.signal.aborted) {
     return;
   }
@@ -241,6 +243,16 @@ export const send = (msg: SessionMsg) => {
 Router.onStateChange((route) => {
   if (started) {
     send({ kind: "RouteChanged", route });
+  }
+});
+
+window.addEventListener("storage", (event) => {
+  if (started && event.key === "kestrel.session") {
+    const cached = Cache.readCachedUser();
+    const state = sessionState();
+    if (state.status === "loggedIn" && cached?.id !== state.user.id) {
+      send({ kind: "AuthChecked", user: cached });
+    }
   }
 });
 

@@ -4,6 +4,7 @@ import * as Mvu from "./mvu";
 import * as Repositories from "./repositoriesSlice";
 import * as Router from "./router";
 import * as Settings from "./settingsSlice";
+import { setOfflineAccount } from "./review/offline";
 
 export type User = {
   id: string;
@@ -269,7 +270,14 @@ const [store, setStore] = createStore<{ value: State | null }>({ value: null });
 let messageQueue: Msg[] = [];
 let processingMessages = false;
 
+let sessionGeneration = 0;
 const defaultRunCmd = (cmd: Cmd) => {
+  const generation = sessionGeneration;
+  const user = store.value?.user.id;
+  setOfflineAccount(user ?? null);
+  const deliver = (msg: Msg) => {
+    if (store.value?.user.id === user && generation === sessionGeneration) send(msg);
+  };
   switch (cmd.kind) {
     case "Navigate": {
       Router.navigate(cmd.route, { replace: cmd.replace });
@@ -277,11 +285,11 @@ const defaultRunCmd = (cmd: Cmd) => {
       return;
     }
     case "Settings": {
-      Settings.runCmd(cmd.cmd, (msg) => send({ kind: "Settings", msg }));
+      Settings.runCmd(cmd.cmd, (msg) => deliver({ kind: "Settings", msg }));
       return;
     }
     case "Repositories": {
-      Repositories.runCmd(cmd.cmd, (msg) => send({ kind: "Repositories", msg }));
+      Repositories.runCmd(cmd.cmd, (msg) => deliver({ kind: "Repositories", msg }));
       return;
     }
   }
@@ -300,11 +308,15 @@ export const start = (
   user: User,
   route: Router.AuthenticatedRoute = Router.toAuthenticatedRoute(Router.getRoute()),
 ) => {
+  sessionGeneration += 1;
+  setOfflineAccount(user.id);
   replaceState(createInitialState(user, route));
   send({ kind: "Started" });
 };
 
 export const stop = () => {
+  sessionGeneration += 1;
+  setOfflineAccount(null);
   Settings.applyTheme("system");
   setStore("value", null);
   messageQueue = [];

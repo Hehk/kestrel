@@ -1,4 +1,5 @@
 import createClient from "openapi-fetch";
+import { offlineFetch } from "../review/offline";
 import type { paths } from "./schema";
 
 const apiBaseUrl =
@@ -15,5 +16,5 @@ export const apiUrl = (path: string) => {
 export const api = createClient<paths>({
   baseUrl: apiBaseUrl,
   credentials: "include",
-  fetch: (...args) => fetch(...args),
+  fetch: (...args) => offlineFetch(...args),
 });

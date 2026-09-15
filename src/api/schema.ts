@@ -228,6 +228,38 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/review/{repository_id}/{number}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["discover"];
+    put?: never;
+    post: operations["update"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/review/{repository_id}/{number}/demo-agent": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["fake_agent"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/settings": {
     parameters: {
       query?: never;
@@ -248,6 +280,56 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
+    AgentRequest: {
+      snapshot: string;
+      userId: string;
+      version: string;
+    };
+    Command:
+      | {
+          /** @enum {string} */
+          kind: "review";
+          value: boolean;
+          version: string;
+        }
+      | {
+          /** @enum {string} */
+          kind: "reassertReview";
+          value: boolean;
+          version: string;
+        }
+      | {
+          /** @enum {string} */
+          kind: "collapse";
+          value: boolean;
+          version: string;
+        }
+      | {
+          /** @enum {string} */
+          kind: "importance";
+          value: components["schemas"]["Importance"];
+          version: string;
+        }
+      | {
+          /** @enum {string} */
+          kind: "reassertImportance";
+          value: components["schemas"]["Importance"];
+          version: string;
+        }
+      | {
+          contribution: components["schemas"]["Contribution"];
+          /** @enum {string} */
+          kind: "assess";
+        };
+    Contribution: {
+      agent: string;
+      context: string;
+      evidence: string[];
+      id: string;
+      importance: components["schemas"]["Importance"];
+      run: string;
+      version: string;
+    };
     CreateRepositoryRequest: {
       repository: string;
     };
@@ -260,6 +342,8 @@ export interface components {
     };
     /** @enum {string} */
     HealthStatus: "ok";
+    /** @enum {string} */
+    Importance: "important" | "unimportant" | "inherit";
     ListPullRequestsResponse: {
       pullRequests: components["schemas"]["PullRequestDto"][];
     };
@@ -268,6 +352,19 @@ export interface components {
     };
     MeResponse: {
       user?: null | components["schemas"]["UserDto"];
+    };
+    ObjectIdentity: {
+      mode: string;
+      path: string;
+      sha: string;
+    };
+    Proposal: {
+      actor: string;
+      command: components["schemas"]["Command"];
+      dependencies: string[];
+      hash: string;
+      /** Format: int32 */
+      protocol: number;
     };
     PullRequestCheckRunDto: {
       name: string;
@@ -406,6 +503,7 @@ export interface components {
         };
     PullRequestDiffResponse: {
       files: components["schemas"]["PullRequestDiffFileDto"][];
+      review?: null | components["schemas"]["ReviewSnapshot"];
       syncedAt: string;
     };
     PullRequestDto: {
@@ -595,6 +693,45 @@ export interface components {
     RepositoryErrorCode: "duplicateRepository" | "invalidRepository" | "repositorySaveFailed";
     RepositoryErrorResponse: {
       error: components["schemas"]["RepositoryErrorCode"];
+    };
+    ReviewEntry: {
+      proposal: components["schemas"]["Proposal"];
+      snapshot: string;
+    };
+    ReviewError: {
+      error: string;
+    };
+    ReviewReceipt: {
+      acknowledged: string[];
+      document: number[];
+      /** Format: int32 */
+      protocol: number;
+      /** Format: int64 */
+      revision: number;
+      userId: string;
+    };
+    ReviewSnapshot: {
+      baseCommit: string;
+      files: components["schemas"]["ReviewVersion"][];
+      hashAlgorithm: string;
+      headCommit: string;
+      id: string;
+      mergeBaseCommit: string;
+      /** Format: int64 */
+      repositoryId: number;
+    };
+    ReviewUpdate: {
+      entries: components["schemas"]["ReviewEntry"][];
+      /** Format: int32 */
+      protocol: number;
+      userId: string;
+    };
+    ReviewVersion: {
+      after?: null | components["schemas"]["ObjectIdentity"];
+      before?: null | components["schemas"]["ObjectIdentity"];
+      id: string;
+      path: string;
+      predecessor?: string | null;
     };
     SettingsResponse: {
       theme: components["schemas"]["Theme"];
@@ -1231,6 +1368,142 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["PullRequestErrorResponse"];
+        };
+      };
+    };
+  };
+  discover: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        repository_id: number;
+        number: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReviewReceipt"];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReviewError"];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReviewError"];
+        };
+      };
+    };
+  };
+  update: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        repository_id: number;
+        number: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ReviewUpdate"];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReviewReceipt"];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReviewError"];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReviewError"];
+        };
+      };
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReviewError"];
+        };
+      };
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  fake_agent: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        repository_id: number;
+        number: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AgentRequest"];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReviewReceipt"];
+        };
+      };
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReviewError"];
+        };
+      };
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReviewError"];
         };
       };
     };

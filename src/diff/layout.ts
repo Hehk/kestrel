@@ -79,6 +79,7 @@ export type DiffRow =
 
 export type DiffLayout = {
   readonly diff: PullRequestDiff;
+  readonly collapsed: readonly number[];
   readonly rowCount: number;
   readonly maxSourceColumns: number;
   readonly metadataByteLength: number;
@@ -91,7 +92,11 @@ export type DiffLayout = {
   readonly fileHunkOffsets: Uint32Array;
 };
 
-export const buildDiffLayout = (diff: PullRequestDiff): DiffLayout => {
+export const buildDiffLayout = (
+  diff: PullRequestDiff,
+  collapsed: readonly number[] = [],
+): DiffLayout => {
+  const hidden = new Set(collapsed);
   if (diff.files.length > MAX_INDEX) {
     throw new RangeError("Diff has too many files");
   }
@@ -105,8 +110,9 @@ export const buildDiffLayout = (diff: PullRequestDiff): DiffLayout => {
     const hunks = diffFileHunks(file);
     if (hunks.length > MAX_INDEX) throw new RangeError("Diff has too many hunks");
     fileHunkOffsets[fileIndex] = hunkCount;
-    hunkCount = checkedAdd(hunkCount, hunks.length, "Diff has too many hunks");
     rowCount = checkedAdd(rowCount, 1, "Diff has too many rows");
+    if (hidden.has(fileIndex)) continue;
+    hunkCount = checkedAdd(hunkCount, hunks.length, "Diff has too many hunks");
     if (file.content.kind === "binary" || hunks.length === 0) {
       rowCount = checkedAdd(rowCount, 1, "Diff has too many rows");
     }
@@ -138,6 +144,7 @@ export const buildDiffLayout = (diff: PullRequestDiff): DiffLayout => {
     fileIndexes[rowIndex] = fileIndex;
     rowIndex += 1;
 
+    if (hidden.has(fileIndex)) continue;
     const hunks = diffFileHunks(file);
     if (file.content.kind === "binary" || hunks.length === 0) {
       kinds[rowIndex] = ROW_NOTICE;
@@ -181,6 +188,7 @@ export const buildDiffLayout = (diff: PullRequestDiff): DiffLayout => {
 
   return {
     diff,
+    collapsed,
     fileHunkOffsets,
     fileIndexes,
     fileStartRows,

@@ -459,6 +459,8 @@ pub struct SyncPullRequestResponse {
 #[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PullRequestDiffResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub review: Option<crate::review_snapshot::ReviewSnapshot>,
     pub files: Vec<PullRequestDiffFileDto>,
     pub synced_at: String,
 }
@@ -1120,6 +1122,7 @@ pub(crate) async fn get_pull_request_diff(
     };
     let raw_bytes = raw.len();
     let synced_at = snapshot.synced_at;
+    let review = snapshot.review;
     let blocking_started_at = Instant::now();
     let built = tokio::task::spawn_blocking(move || {
         let parse_started_at = Instant::now();
@@ -1140,7 +1143,11 @@ pub(crate) async fn get_pull_request_diff(
             .map(|hunk| hunk.lines.len())
             .sum();
         let file_count = files.len();
-        let response = PullRequestDiffResponse { files, synced_at };
+        let response = PullRequestDiffResponse {
+            files,
+            synced_at,
+            review,
+        };
         let dto_millis = elapsed_millis(dto_started_at);
 
         let serialize_started_at = Instant::now();
@@ -1300,7 +1307,7 @@ pub(crate) async fn sync_pull_request_detail(
             )
         })?;
 
-    let github_snapshot =
+    let mut github_snapshot =
         match fetch_pull_request_detail_with_installation(&state, &user_id, &tracked, number).await
         {
             Ok(detail) => detail,
@@ -1332,6 +1339,35 @@ pub(crate) async fn sync_pull_request_detail(
             PullRequestErrorCode::SyncFailed,
         )
     })?;
+    if let Some(manifest) = &mut github_snapshot.detail.review_snapshot {
+        let previous: Option<Option<String>> = sqlx::query_scalar("SELECT review_snapshot_json FROM tracked_repository_pull_request_details WHERE user_id = ? AND provider = 'github' AND owner = ? AND name = ? AND number = ?")
+            .bind(&user_id).bind(&tracked.owner).bind(&tracked.name).bind(number)
+            .fetch_optional(&mut *transaction).await.map_err(|_| api_error(StatusCode::INTERNAL_SERVER_ERROR, PullRequestErrorCode::SyncFailed))?;
+        if let Some(previous) = previous
+            .flatten()
+            .and_then(|json| serde_json::from_str(&json).ok())
+        {
+            crate::review_snapshot::lineage(
+                manifest,
+                &previous,
+                github_snapshot.detail.diff.as_deref().unwrap_or_default(),
+            );
+        }
+        crate::review::store_snapshot(
+            &mut transaction,
+            &user_id,
+            number,
+            manifest,
+            github_snapshot.detail.diff.as_deref().unwrap_or_default(),
+        )
+        .await
+        .map_err(|_| {
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                PullRequestErrorCode::SyncFailed,
+            )
+        })?;
+    }
     let pull_request = upsert_pull_request(
         &mut *transaction,
         &tracked,
@@ -1628,7 +1664,7 @@ async fn load_pull_request_diff(
     number: i64,
 ) -> Result<Option<PullRequestDiffSnapshot>, PullRequestDataError> {
     sqlx::query_as::<_, PullRequestDiffRow>(
-        "SELECT CASE WHEN octet_length(diff) <= ? THEN diff END AS diff, octet_length(diff) AS diff_bytes, synced_at FROM tracked_repository_pull_request_details WHERE user_id = ? AND provider = ? AND owner = ? AND name = ? AND number = ?",
+        "SELECT CASE WHEN octet_length(diff) <= ? THEN diff END AS diff, octet_length(diff) AS diff_bytes, synced_at, review_snapshot_json FROM tracked_repository_pull_request_details WHERE user_id = ? AND provider = ? AND owner = ? AND name = ? AND number = ?",
     )
     .bind(MAX_DIFF_BYTES as i64)
     .bind(&repository.user_id)
@@ -1877,7 +1913,23 @@ async fn fetch_github_pull_request_detail(
         ),
     )
     .await?;
-    let diff = fetch_github_diff(state, token, &pull_request_url).await?;
+    let (diff, review_snapshot) = if let Some(base) = &pull_request.base {
+        let (diff, manifest) = crate::review_snapshot::fetch(
+            state,
+            token,
+            &format!("{}/{}", repository.owner, repository.name),
+            base.repo.id,
+            &base.sha,
+            &pull_request.head.sha,
+        )
+        .await?;
+        (diff, Some(manifest))
+    } else {
+        (
+            fetch_github_diff(state, token, &pull_request_url).await?,
+            None,
+        )
+    };
 
     Ok(PullRequestSyncSnapshot {
         detail: PullRequestDetailSnapshot {
@@ -1892,6 +1944,7 @@ async fn fetch_github_pull_request_detail(
                 .map(PullRequestCommitDto::from)
                 .collect(),
             diff: Some(diff),
+            review_snapshot,
             files: files.into_iter().map(PullRequestFileDto::from).collect(),
             issue_comments: Vec::new(),
             review_comments: Vec::new(),
@@ -1999,7 +2052,7 @@ fn github_graphql_url(api_url: &str) -> String {
     }
 }
 
-async fn fetch_github_json<T: DeserializeOwned>(
+pub(crate) async fn fetch_github_json<T: DeserializeOwned>(
     state: &AppState,
     token: &str,
     url: &str,
@@ -2021,7 +2074,7 @@ async fn fetch_github_json<T: DeserializeOwned>(
     Ok(response.error_for_status()?.json::<T>().await?)
 }
 
-async fn fetch_github_diff(
+pub(crate) async fn fetch_github_diff(
     state: &AppState,
     token: &str,
     url: &str,
@@ -2166,7 +2219,7 @@ where
     let (timeline_cursor, timeline_has_older) = detail.timeline_pagination.parts();
 
     sqlx::query(
-        "INSERT INTO tracked_repository_pull_request_details (user_id, provider, owner, name, number, body, files_json, commits_json, reviews_json, review_comments_json, review_decision, issue_comments_json, timeline_json, timeline_cursor, timeline_has_older, check_runs_json, statuses_json, diff, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, provider, owner, name, number) DO UPDATE SET body = excluded.body, files_json = excluded.files_json, commits_json = excluded.commits_json, reviews_json = excluded.reviews_json, review_comments_json = excluded.review_comments_json, review_decision = excluded.review_decision, issue_comments_json = excluded.issue_comments_json, timeline_json = excluded.timeline_json, timeline_cursor = excluded.timeline_cursor, timeline_has_older = excluded.timeline_has_older, check_runs_json = excluded.check_runs_json, statuses_json = excluded.statuses_json, diff = excluded.diff, synced_at = excluded.synced_at",
+        "INSERT INTO tracked_repository_pull_request_details (user_id, provider, owner, name, number, body, files_json, commits_json, reviews_json, review_comments_json, review_decision, issue_comments_json, timeline_json, timeline_cursor, timeline_has_older, check_runs_json, statuses_json, diff, synced_at, review_snapshot_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, provider, owner, name, number) DO UPDATE SET body = excluded.body, files_json = excluded.files_json, commits_json = excluded.commits_json, reviews_json = excluded.reviews_json, review_comments_json = excluded.review_comments_json, review_decision = excluded.review_decision, issue_comments_json = excluded.issue_comments_json, timeline_json = excluded.timeline_json, timeline_cursor = excluded.timeline_cursor, timeline_has_older = excluded.timeline_has_older, check_runs_json = excluded.check_runs_json, statuses_json = excluded.statuses_json, diff = excluded.diff, synced_at = excluded.synced_at, review_snapshot_json = excluded.review_snapshot_json",
     )
     .bind(&repository.user_id)
     .bind(GITHUB_PROVIDER)
@@ -2187,6 +2240,7 @@ where
     .bind(&statuses_json)
     .bind(&detail.diff)
     .bind(synced_at)
+    .bind(detail.review_snapshot.as_ref().map(serde_json::to_string).transpose()?)
     .execute(executor)
     .await?;
 
@@ -2268,7 +2322,7 @@ enum PullRequestSyncError {
 }
 
 #[derive(Debug)]
-enum PullRequestDataError {
+pub(crate) enum PullRequestDataError {
     GitHubAccessDenied,
     GitHubApp(github_app::GitHubAppError),
     GitHubDiffInvalidUtf8(std::string::FromUtf8Error),
@@ -2366,6 +2420,7 @@ struct PullRequestRow {
 }
 
 struct PullRequestDetailSnapshot {
+    review_snapshot: Option<crate::review_snapshot::ReviewSnapshot>,
     body: Option<String>,
     check_runs: Vec<PullRequestCheckRunDto>,
     commits: Vec<PullRequestCommitDto>,
@@ -2425,12 +2480,14 @@ struct PullRequestDetailRow {
 
 #[derive(sqlx::FromRow)]
 struct PullRequestDiffRow {
+    review_snapshot_json: Option<String>,
     diff: Option<String>,
     diff_bytes: Option<i64>,
     synced_at: String,
 }
 
 struct PullRequestDiffSnapshot {
+    review: Option<crate::review_snapshot::ReviewSnapshot>,
     content: StoredPullRequestDiff,
     synced_at: String,
 }
@@ -2456,6 +2513,10 @@ impl PullRequestDiffRow {
             }
         };
         Ok(PullRequestDiffSnapshot {
+            review: self
+                .review_snapshot_json
+                .map(|json| serde_json::from_str(&json))
+                .transpose()?,
             content,
             synced_at: self.synced_at,
         })
@@ -2579,10 +2640,22 @@ struct GitHubUser {
 
 #[derive(Deserialize)]
 struct GitHubPullRequestDetail {
+    #[serde(default)]
+    base: Option<GitHubPullRequestBase>,
     body: Option<String>,
     head: GitHubPullRequestHead,
     #[serde(flatten)]
     pull_request: GitHubPullRequest,
+}
+
+#[derive(Deserialize)]
+struct GitHubPullRequestBase {
+    sha: String,
+    repo: GitHubRepositoryIdentity,
+}
+#[derive(Deserialize)]
+struct GitHubRepositoryIdentity {
+    id: i64,
 }
 
 #[derive(Deserialize)]
@@ -3782,6 +3855,7 @@ mod tests {
                 let files: Vec<super::PullRequestDiffFileDto> =
                     parsed.into_iter().map(Into::into).collect();
                 let response = super::PullRequestDiffResponse {
+                    review: None,
                     files,
                     synced_at: "2026-01-04T00:00:00Z".to_string(),
                 };
@@ -4432,6 +4506,7 @@ mod tests {
                 sha: "head-sha".to_string(),
             }],
             diff: Some("diff --git a/app.rs b/app.rs".to_string()),
+            review_snapshot: None,
             files: vec![PullRequestFileDto {
                 filename: "app.rs".to_string(),
                 status: "modified".to_string(),

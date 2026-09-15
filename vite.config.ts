@@ -7,7 +7,7 @@ export default defineConfig(({ mode }) => ({
   plugins: [mode === "test" ? stylex.rollup() : stylex.vite(), solid()],
   server: {
     proxy: {
-      "/api": "http://localhost:3000",
+      "/api": { target: "http://localhost:3000", ws: true },
     },
   },
   test: {
