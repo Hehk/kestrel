@@ -1,0 +1,21 @@
+[package]
+name = "review-core"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[features]
+wasm = ["dep:tsify", "dep:wasm-bindgen"]
+
+[dependencies]
+automerge.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tsify = { workspace = true, optional = true }
+wasm-bindgen = { workspace = true, optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+automerge = { workspace = true, features = ["wasm"] }
+
+[dev-dependencies]
+proptest = "1"
