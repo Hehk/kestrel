@@ -2,9 +2,9 @@
 
 ## Verdict
 
-**Continue evaluating the shared Rust/WASM core; do not connect opaque imports to an authenticated endpoint yet.** This implements the testable portion of step 1 in [the plan](../../automerge-plan.md), not the review feature. No production app imports this package and the backend remains outside the experimental Cargo workspace.
+This is the retained compatibility harness, not the production UI or storage adapter. **The actual review feature is now implemented:** see [setup and architecture](../../src/review/README.md) and [the updated plan](../../automerge-plan.md). Production uses the shared Rust/WASM crates but does not import this test package or the official JS runtime.
 
-Binary interoperability and domain semantics work with the pinned pair. The import authorization gate is **not passed**. Public operation inspection exists, but demonstrating access to operations is not an authorization implementation. Steps 2–5 remain unimplemented; the product decisions in the plan still require review.
+Binary interoperability and domain semantics work with the pinned pair. Arbitrary binary history authorization remains unproven; production instead reconstructs bounded typed proposals at their exact original causal frontier and verifies change hashes. These counterexamples remain regression evidence for why opaque client imports are not exposed.
 
 ## Reproduce
 
@@ -51,7 +51,7 @@ Initial local run on Apple Silicon, release WASM with `opt-level = "s"` and LTO:
 - Canonical bootstrap approximately **203 bytes**, three-writer fixture approximately **508 bytes**. Actor IDs and compression can change sizes slightly.
 - First WASM release compilation after fetching dependencies approximately **16 seconds**; excludes CLI installation. Generated bindings require an exactly matching `wasm-bindgen` CLI.
 
-The test prints fresh measurements. Bundle cost is material: lazy-load for opened review workspaces if adopted. No representative large-PR/long-history benchmark or retention quota has been established.
+The test prints fresh measurements. Bundle cost is material: lazy-load for opened review workspaces if adopted. This harness does not establish a representative large-PR/long-history benchmark. Production adds explicit quotas, documented separately.
 
 ### Important findings
 
@@ -70,7 +70,7 @@ See `crates/review-core/tests/import_boundary.rs` and the deleted-history test i
 
 `get_changes()` plus `Change::decode().operations` exposes the needed operation data publicly. This removes one API uncertainty, **not** the trust-boundary problem. `check_schema` only checks the schema version and collection shape. The explicit `load_trusted`, `merge_trusted`, and `receiveSyncTrusted` names are intentional; these methods are not validators.
 
-Before shipping imports, implement and adversarially test:
+Before ever exposing arbitrary binary imports, implement and adversarially test:
 
 - Trusted scope and actor registration, including rejection of spoofed actors; replica actor IDs are not credentials.
 - Validation of every new operation, object ancestry, conflicting values, deletion, and attempted replacement of canonical maps; reject noncanonical ancestry and actor-sequence collisions.
@@ -78,21 +78,18 @@ Before shipping imports, implement and adversarially test:
 - Limits on compressed input **and expanded resource use**, operation counts, strings, nesting, pending dependencies, and decoding time. A frame-length check is insufficient.
 - Extend the tested candidate document **and candidate peer state** rollback for schema rejection to the full validator and durable storage path; add durable rejection/recovery/export behavior.
 
-There is no network route in this change. If a complete bounded validator is too complex, reconsider the document/capability split before implementing transport. Do not promote the test harness's command capability checks into a claim that arbitrary Automerge history is authorized.
+This harness exposes no network route. The production service deliberately accepts typed proposals, not opaque history; its tests check exact causal reconstruction, fresh actors, command capability and external snapshot membership. Do not promote the test harness's command capability checks into a claim that arbitrary Automerge history is authorized.
 
 ## Deliberate spike simplifications
 
 - Version IDs (`v1`, `v2`) are fixtures, not backend fingerprints or snapshot authorization. No source/diff data is stored.
 - Immutable contributions are scalar JSON payloads under unique map keys, not replaceable collection snapshots. Assessment and attributed context are committed together. A single assessment supplies inherited importance; multiple assessments are retained without inventing consensus. Sequential stream replacement, contribution amendments/dismissals, and conflict UI are not implemented.
-- Only reviewed-field conflicts have a projected alternatives/resolution surface. Importance and visibility conflict UX remains a product decision.
+- Shared-core review and importance alternatives/reassertion are exposed by the production UI; this synthetic page is not its UX test.
 - The core's durable callback exercises candidate publication, not real SQLite/IndexedDB+journal atomicity or optimistic UI rollback. The WASM sync wrapper is trusted-only and in-memory.
 - The page does not model active-tab visibility, route integration, review controls, session expiry, account switching, or a service worker.
 
-## Next review decisions
+## Current review decisions
 
-- [ ] Approve or change deterministic concurrent-human winners and explicit reassert behavior.
-- [ ] Accept the custom WASM build/bundle cost, subject to cold-load measurements.
-- [ ] Finish the import validator/resource-limits spike or choose a safer capability boundary.
-- [ ] Then implement revision-consistent snapshot identity, before production review flags.
+See the [implementation checklist](../../automerge-plan.md). Deterministic human winners and WASM cost remain product-review topics. Revision-consistent snapshot identity, authenticated typed synchronization, real IndexedDB/SQLite durability and the review UI are implemented outside this harness.
 
 Repository validation also needs the existing root checks. This change includes a four-line indentation-only fix in `src/components/Tooltip.tsx` because the baseline failed `npm run format:check`.

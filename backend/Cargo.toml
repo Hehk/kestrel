@@ -5,7 +5,9 @@ edition = "2021"
 
 [dependencies]
 aes-gcm = "0.10"
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
+automerge = "=0.11.0"
+review-core = { path = "../crates/review-core", features = ["api-schema"] }
 base64 = "0.22"
 cookie = "0.18"
 dotenvy = "0.15"

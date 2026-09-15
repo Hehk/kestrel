@@ -1,9 +1,11 @@
-//! Experimental domain semantics. Binary imports are trusted-only, not an authorization boundary.
+//! Shared review domain. Network writes are reconstructed from bounded typed proposals.
+mod proposal;
 use automerge::{
     sync::{Message, State, SyncDoc},
     transaction::Transactable,
     ActorId, Automerge, ObjId, ObjType, ReadDoc, ROOT,
 };
+pub use proposal::Proposal;
 use serde::{Deserialize, Serialize};
 
 pub const SCHEMA_VERSION: u32 = 1;
@@ -20,6 +22,7 @@ pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "api-schema", derive(utoipa::ToSchema))]
 pub enum Importance {
     Important,
     Unimportant,
@@ -48,6 +51,7 @@ impl Importance {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "api-schema", derive(utoipa::ToSchema))]
 pub struct Contribution {
     pub id: String,
     pub version: String,
@@ -59,13 +63,15 @@ pub struct Contribution {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "api-schema", derive(utoipa::ToSchema))]
 pub enum Command {
     Review { version: String, value: bool },
     ReassertReview { version: String, value: bool },
     Collapse { version: String, value: bool },
     Importance { version: String, value: Importance },
+    ReassertImportance { version: String, value: Importance },
     Assess { contribution: Contribution },
 }
 
@@ -77,6 +83,7 @@ pub struct View {
     pub collapsed: bool,
     pub review_alternatives: Vec<bool>,
     pub human_importance: Importance,
+    pub importance_alternatives: Vec<Importance>,
     pub effective_importance: Option<Importance>,
     pub assessments: Vec<Contribution>,
 }
@@ -129,6 +136,11 @@ impl Workspace {
 
     /// Only for local experiments with replicas of known provenance.
     pub fn merge_trusted(&mut self, other: &mut Self) -> Result<()> {
+        for name in MAPS {
+            if self.map(name)? != other.map(name)? {
+                return Err("workspace ancestry changed; export and recover local commands".into());
+            }
+        }
         let mut candidate = self.doc.clone();
         candidate.merge(&mut other.doc)?;
         let candidate = Self { doc: candidate };
@@ -179,6 +191,33 @@ impl Workspace {
     }
 
     pub fn view(&self, version: &str) -> Result<View> {
+        self.views(&[version.to_owned()])
+            .map(|mut views| views.remove(0))
+    }
+
+    pub fn views(&self, versions: &[String]) -> Result<Vec<View>> {
+        let mut assessments = std::collections::HashMap::<String, Vec<Contribution>>::new();
+        for entry in self.doc.map_range(self.map("agentAssessments")?, ..) {
+            let value = automerge::Value::from(entry.value);
+            let contribution: Contribution =
+                serde_json::from_str(value.to_str().ok_or("expected contribution")?)?;
+            assessments
+                .entry(contribution.version.clone())
+                .or_default()
+                .push(contribution);
+        }
+        versions
+            .iter()
+            .map(|version| {
+                self.project(
+                    version,
+                    assessments.get(version).cloned().unwrap_or_default(),
+                )
+            })
+            .collect()
+    }
+
+    fn project(&self, version: &str, assessments: Vec<Contribution>) -> Result<View> {
         let reviewed = self.map("reviewed")?;
         let mut alternatives = self
             .doc
@@ -192,18 +231,13 @@ impl Workspace {
             Some((v, _)) => Importance::parse(v.to_str().ok_or("expected importance")?)?,
             None => Importance::Inherit,
         };
-        let assessments: Vec<Contribution> = self
+        let mut importance_alternatives = self
             .doc
-            .map_range(self.map("agentAssessments")?, ..)
-            .map(|entry| {
-                let value = automerge::Value::from(entry.value);
-                let json = value.to_str().ok_or("expected contribution")?;
-                Ok(serde_json::from_str::<Contribution>(json)?)
-            })
-            .collect::<Result<Vec<_>>>()?
+            .get_all(self.map("humanImportance")?, version)?
             .into_iter()
-            .filter(|c| c.version == version)
-            .collect();
+            .map(|(value, _)| Importance::parse(value.to_str().ok_or("expected importance")?))
+            .collect::<Result<Vec<_>>>()?;
+        importance_alternatives.sort_by_key(Importance::as_str);
         let effective_importance = if human_importance != Importance::Inherit {
             Some(human_importance.clone())
         } else if assessments.len() == 1 {
@@ -216,6 +250,7 @@ impl Workspace {
             collapsed: self.flag(&self.map("collapsed")?, version)?,
             review_alternatives: alternatives,
             human_importance,
+            importance_alternatives,
             effective_importance,
             assessments,
         })
@@ -226,6 +261,7 @@ impl Workspace {
         if (capability == Capability::Agent) != matches!(command, Command::Assess { .. }) {
             return Err("command is outside this writer's capability".into());
         }
+        let reassert_importance = matches!(command, Command::ReassertImportance { .. });
         match command {
             Command::Review { version, .. } | Command::ReassertReview { version, .. }
                 if version.is_empty() =>
@@ -247,11 +283,15 @@ impl Workspace {
                 tx.commit();
                 Ok(true)
             }
-            Command::Importance { version, value } => {
+            Command::Importance { version, value }
+            | Command::ReassertImportance { version, value } => {
                 if version.is_empty() {
                     return Err("empty version".into());
                 }
-                if self.view(&version)?.human_importance == value {
+                let view = self.view(&version)?;
+                if view.human_importance == value
+                    && (!reassert_importance || view.importance_alternatives.len() <= 1)
+                {
                     return Ok(false);
                 }
                 let map = self.map("humanImportance")?;

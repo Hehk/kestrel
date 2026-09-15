@@ -5,9 +5,11 @@ edition = "2021"
 publish = false
 
 [features]
+api-schema = ["dep:utoipa"]
 wasm = ["dep:tsify", "dep:wasm-bindgen"]
 
 [dependencies]
+utoipa = { version = "5", optional = true }
 automerge.workspace = true
 serde.workspace = true
 serde_json.workspace = true

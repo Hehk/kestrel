@@ -1,5 +1,6 @@
 import * as stylex from "@stylexjs/stylex";
 import { Button } from "../components/Button";
+import { ReviewControls, useReview } from "../review/ReviewWorkspace";
 import {
   createEffect,
   createMemo,
@@ -335,8 +336,17 @@ export const createDiffViewProgram = (
 };
 
 export const DiffView = (props: { diff: PullRequestDiff }) => {
-  const program = createDiffViewProgram(props.diff);
+  const review = useReview();
+  const displayedDiff = createMemo(() => props.diff);
+  const program = createDiffViewProgram(displayedDiff());
   const { model, send } = program;
+  const searching = createMemo(() => searchQuery(model().search) !== "");
+  const collapsedFiles = createMemo(
+    () =>
+      review
+        ?.manifest()
+        .files.flatMap((file, index) => (review.runtime.collapsed()[file.id] ? [index] : [])) ?? [],
+  );
   let horizontalRail!: HTMLDivElement;
   let searchInput!: HTMLInputElement;
   let stickyStack!: HTMLDivElement;
@@ -344,9 +354,9 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
   onMount(() => program.attach({ horizontalRail, searchInput, stickyStack, table }));
   createEffect(
     on(
-      () => props.diff,
-      (diff) => send({ kind: "DiffChanged", diff }),
-      { defer: true },
+      () => ({ diff: displayedDiff(), collapsed: searching() ? [] : collapsedFiles() }),
+      ({ diff, collapsed }) => send({ kind: "DiffChanged", diff, collapsed }),
+      { defer: false },
     ),
   );
   onCleanup(program.dispose);
@@ -400,6 +410,7 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
               send({ kind: "SearchQueryChanged", query: event.currentTarget.value })
             }
             placeholder="Search"
+            title="Search temporarily expands collapsed files. Clearing the search restores their visibility."
             ref={(element) => {
               searchInput = element;
             }}
@@ -472,6 +483,7 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
           >
             {activeFile()?.content.kind === "binary" ? "Copy unavailable" : "Copy file"}
           </Button>
+          <ReviewControls index={model().activeFileIndex} />
         </div>
       </div>
       <div
@@ -612,6 +624,7 @@ const DiffRowCells = (props: {
             >
               {row().file.content.kind === "binary" ? "Copy unavailable" : "Copy file"}
             </Button>
+            <ReviewControls index={row().fileIndex} />
           </div>
         )}
       </Match>

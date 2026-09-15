@@ -2,7 +2,7 @@ use automerge::{
     sync::{Message, State, SyncDoc},
     ActorId,
 };
-use review_core::{Capability, Command, View, Workspace};
+use review_core::{Capability, Command, Proposal, View, Workspace};
 use tsify::{Ts, Tsify};
 use wasm_bindgen::prelude::*;
 
@@ -31,6 +31,20 @@ impl ReviewReplica {
         Ok(Workspace::bootstrap().map_err(error)?.save())
     }
 
+    pub fn propose(&mut self, command: Ts<Command>) -> Result<Option<Ts<Proposal>>, JsError> {
+        self.workspace
+            .propose(command.to_rust().map_err(error)?)
+            .map_err(error)?
+            .map(|proposal| proposal.into_ts().map_err(error))
+            .transpose()
+    }
+
+    #[wasm_bindgen(js_name = mergeTrusted)]
+    pub fn merge_trusted(&mut self, bytes: &[u8]) -> Result<(), JsError> {
+        let mut remote = Workspace::load_trusted(bytes, ActorId::random()).map_err(error)?;
+        self.workspace.merge_trusted(&mut remote).map_err(error)
+    }
+
     pub fn save(&self) -> Vec<u8> {
         self.workspace.save()
     }
@@ -41,6 +55,15 @@ impl ReviewReplica {
             .map_err(error)?
             .into_ts()
             .map_err(error)
+    }
+
+    pub fn views(&self, versions: Vec<String>) -> Result<Vec<Ts<View>>, JsError> {
+        self.workspace
+            .views(&versions)
+            .map_err(error)?
+            .into_iter()
+            .map(|view| view.into_ts().map_err(error))
+            .collect()
     }
 
     pub fn apply(&mut self, command: Ts<Command>) -> Result<bool, JsError> {

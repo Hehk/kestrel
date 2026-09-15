@@ -54,7 +54,7 @@ export type Msg =
   | { kind: "ClipboardWriteFinished"; ok: boolean; requestId: number; revision: number }
   | { kind: "CopyFileRequested"; fileIndex: number }
   | { kind: "CopyHunkRequested"; fileIndex: number; hunkIndex: number }
-  | { kind: "DiffChanged"; diff: PullRequestDiff }
+  | { kind: "DiffChanged"; diff: PullRequestDiff; collapsed?: readonly number[] }
   | { kind: "FindRequested" }
   | ({ kind: "GeometryObserved"; geometry: Geometry } & Configuration)
   | { kind: "HorizontalOffsetObserved"; offset: number; revision: number }
@@ -128,10 +128,16 @@ export const init = (diff: PullRequestDiff): Model => ({
 export const update = (msg: Msg, model: Model): Change => {
   switch (msg.kind) {
     case "DiffChanged": {
-      if (model.layout.diff === msg.diff) return [model, NONE];
+      const collapsed = msg.collapsed ?? [];
+      if (
+        model.layout.diff === msg.diff &&
+        model.layout.collapsed.length === collapsed.length &&
+        model.layout.collapsed.every((value, index) => value === collapsed[index])
+      )
+        return [model, NONE];
       const revision = model.revision + 1;
       const configuration = model.configuration + 1;
-      const layout = buildDiffLayout(msg.diff);
+      const layout = buildDiffLayout(msg.diff, collapsed);
       const searchRequestId = model.searchRequestId + 1;
       const search: Search =
         model.search.kind === "idle"
@@ -144,7 +150,7 @@ export const update = (msg: Msg, model: Model): Change => {
             };
       const next: Model = {
         ...model,
-        activeFileIndex: 0,
+        activeFileIndex: model.layout.diff === msg.diff ? model.activeFileIndex : 0,
         configuration,
         copy: model.copy.kind === "writing" ? model.copy : { kind: "idle", outcome: null },
         layout,

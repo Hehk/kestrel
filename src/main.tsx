@@ -16,3 +16,9 @@ rootElement.className = mountClass;
 Session.start();
 
 render(() => <App />, rootElement);
+
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  void navigator.serviceWorker.register("/sw.js").catch(() => {
+    console.warn("Offline app shell could not be installed. Reload requires a connection.");
+  });
+}

@@ -9,6 +9,8 @@ mod openapi;
 mod pull_request_diff;
 mod pull_requests;
 mod repositories;
+mod review;
+mod review_snapshot;
 mod session;
 mod settings;
 

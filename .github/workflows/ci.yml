@@ -14,6 +14,7 @@ concurrency:
 
 jobs:
   frontend:
+    needs: review-core
     name: Frontend / ${{ matrix.name }}
     runs-on: ubuntu-latest
     strategy:
@@ -41,6 +42,10 @@ jobs:
           node-version: 24
           cache: npm
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: review-wasm
+          path: src/review/generated
       - run: npm ci
       - run: ${{ matrix.command }}
 
@@ -70,8 +75,8 @@ jobs:
 
       - run: ${{ matrix.command }}
 
-  automerge-spike:
-    name: Automerge spike
+  review-core:
+    name: Review core and interoperability
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -92,6 +97,31 @@ jobs:
       - run: npm ci --prefix spikes/automerge
       - run: npx --prefix spikes/automerge playwright install --with-deps chromium
       - run: npm test --prefix spikes/automerge
+      - run: node scripts/review-wasm.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: review-wasm
+          path: src/review/generated
+
+  review-browser:
+    needs: review-core
+    name: Review feature / offline browser
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/download-artifact@v4
+        with:
+          name: review-wasm
+          path: src/review/generated
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:review:e2e
 
   api-schema:
     name: API schema
