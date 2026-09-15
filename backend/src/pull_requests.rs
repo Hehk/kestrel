@@ -23,6 +23,9 @@ use crate::{
     repositories,
 };
 
+mod review_identity;
+pub use review_identity::ReviewManifest;
+
 const GITHUB_PROVIDER: &str = "github";
 const PAGE_SIZE: u8 = 100;
 const USER_AGENT: &str = "kestrel";
@@ -459,6 +462,8 @@ pub struct SyncPullRequestResponse {
 #[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PullRequestDiffResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub review: Option<ReviewManifest>,
     pub files: Vec<PullRequestDiffFileDto>,
     pub synced_at: String,
 }
@@ -1125,7 +1130,6 @@ pub(crate) async fn get_pull_request_diff(
         let parse_started_at = Instant::now();
         let parsed = pull_request_diff::parse_pull_request_diff(&raw);
         let parse_millis = elapsed_millis(parse_started_at);
-        drop(raw);
         let parsed = parsed.map_err(|error| PullRequestDiffResponseError::Parse {
             error,
             parse_millis,
@@ -1140,7 +1144,13 @@ pub(crate) async fn get_pull_request_diff(
             .map(|hunk| hunk.lines.len())
             .sum();
         let file_count = files.len();
-        let response = PullRequestDiffResponse { files, synced_at };
+        let review = review_identity::load(snapshot.review_manifest_json.as_deref(), &raw, &files);
+        drop(raw);
+        let response = PullRequestDiffResponse {
+            files,
+            synced_at,
+            review,
+        };
         let dto_millis = elapsed_millis(dto_started_at);
 
         let serialize_started_at = Instant::now();
@@ -1628,7 +1638,7 @@ async fn load_pull_request_diff(
     number: i64,
 ) -> Result<Option<PullRequestDiffSnapshot>, PullRequestDataError> {
     sqlx::query_as::<_, PullRequestDiffRow>(
-        "SELECT CASE WHEN octet_length(diff) <= ? THEN diff END AS diff, octet_length(diff) AS diff_bytes, synced_at FROM tracked_repository_pull_request_details WHERE user_id = ? AND provider = ? AND owner = ? AND name = ? AND number = ?",
+        "SELECT CASE WHEN octet_length(diff) <= ? THEN diff END AS diff, octet_length(diff) AS diff_bytes, synced_at, CASE WHEN octet_length(review_manifest_json) <= 4194304 THEN review_manifest_json END AS review_manifest_json FROM tracked_repository_pull_request_details WHERE user_id = ? AND provider = ? AND owner = ? AND name = ? AND number = ?",
     )
     .bind(MAX_DIFF_BYTES as i64)
     .bind(&repository.user_id)
@@ -1877,7 +1887,22 @@ async fn fetch_github_pull_request_detail(
         ),
     )
     .await?;
-    let diff = fetch_github_diff(state, token, &pull_request_url).await?;
+    let (diff, review_manifest_json) = match &pull_request.base {
+        Some(base) => {
+            review_identity::fetch(
+                state,
+                token,
+                &format!("{base_url}/repos/{}/{}", repository.owner, repository.name),
+                base,
+                &pull_request.head.sha,
+            )
+            .await?
+        }
+        None => (
+            fetch_github_diff(state, token, &pull_request_url).await?,
+            None,
+        ),
+    };
 
     Ok(PullRequestSyncSnapshot {
         detail: PullRequestDetailSnapshot {
@@ -1892,6 +1917,7 @@ async fn fetch_github_pull_request_detail(
                 .map(PullRequestCommitDto::from)
                 .collect(),
             diff: Some(diff),
+            review_manifest_json,
             files: files.into_iter().map(PullRequestFileDto::from).collect(),
             issue_comments: Vec::new(),
             review_comments: Vec::new(),
@@ -2166,7 +2192,7 @@ where
     let (timeline_cursor, timeline_has_older) = detail.timeline_pagination.parts();
 
     sqlx::query(
-        "INSERT INTO tracked_repository_pull_request_details (user_id, provider, owner, name, number, body, files_json, commits_json, reviews_json, review_comments_json, review_decision, issue_comments_json, timeline_json, timeline_cursor, timeline_has_older, check_runs_json, statuses_json, diff, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, provider, owner, name, number) DO UPDATE SET body = excluded.body, files_json = excluded.files_json, commits_json = excluded.commits_json, reviews_json = excluded.reviews_json, review_comments_json = excluded.review_comments_json, review_decision = excluded.review_decision, issue_comments_json = excluded.issue_comments_json, timeline_json = excluded.timeline_json, timeline_cursor = excluded.timeline_cursor, timeline_has_older = excluded.timeline_has_older, check_runs_json = excluded.check_runs_json, statuses_json = excluded.statuses_json, diff = excluded.diff, synced_at = excluded.synced_at",
+        "INSERT INTO tracked_repository_pull_request_details (user_id, provider, owner, name, number, body, files_json, commits_json, reviews_json, review_comments_json, review_decision, issue_comments_json, timeline_json, timeline_cursor, timeline_has_older, check_runs_json, statuses_json, diff, review_manifest_json, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, provider, owner, name, number) DO UPDATE SET body = excluded.body, files_json = excluded.files_json, commits_json = excluded.commits_json, reviews_json = excluded.reviews_json, review_comments_json = excluded.review_comments_json, review_decision = excluded.review_decision, issue_comments_json = excluded.issue_comments_json, timeline_json = excluded.timeline_json, timeline_cursor = excluded.timeline_cursor, timeline_has_older = excluded.timeline_has_older, check_runs_json = excluded.check_runs_json, statuses_json = excluded.statuses_json, diff = excluded.diff, review_manifest_json = excluded.review_manifest_json, synced_at = excluded.synced_at",
     )
     .bind(&repository.user_id)
     .bind(GITHUB_PROVIDER)
@@ -2186,6 +2212,7 @@ where
     .bind(&check_runs_json)
     .bind(&statuses_json)
     .bind(&detail.diff)
+    .bind(&detail.review_manifest_json)
     .bind(synced_at)
     .execute(executor)
     .await?;
@@ -2370,6 +2397,7 @@ struct PullRequestDetailSnapshot {
     check_runs: Vec<PullRequestCheckRunDto>,
     commits: Vec<PullRequestCommitDto>,
     diff: Option<String>,
+    review_manifest_json: Option<String>,
     files: Vec<PullRequestFileDto>,
     issue_comments: Vec<PullRequestCommentDto>,
     review_comments: Vec<PullRequestCommentDto>,
@@ -2425,12 +2453,14 @@ struct PullRequestDetailRow {
 
 #[derive(sqlx::FromRow)]
 struct PullRequestDiffRow {
+    review_manifest_json: Option<String>,
     diff: Option<String>,
     diff_bytes: Option<i64>,
     synced_at: String,
 }
 
 struct PullRequestDiffSnapshot {
+    review_manifest_json: Option<String>,
     content: StoredPullRequestDiff,
     synced_at: String,
 }
@@ -2456,6 +2486,7 @@ impl PullRequestDiffRow {
             }
         };
         Ok(PullRequestDiffSnapshot {
+            review_manifest_json: self.review_manifest_json,
             content,
             synced_at: self.synced_at,
         })
@@ -2579,6 +2610,7 @@ struct GitHubUser {
 
 #[derive(Deserialize)]
 struct GitHubPullRequestDetail {
+    base: Option<review_identity::Base>,
     body: Option<String>,
     head: GitHubPullRequestHead,
     #[serde(flatten)]
@@ -3782,6 +3814,7 @@ mod tests {
                 let files: Vec<super::PullRequestDiffFileDto> =
                     parsed.into_iter().map(Into::into).collect();
                 let response = super::PullRequestDiffResponse {
+                    review: None,
                     files,
                     synced_at: "2026-01-04T00:00:00Z".to_string(),
                 };
@@ -4244,6 +4277,101 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn review_identity_uses_pinned_comparison_and_merge_base_trees() {
+        use axum::{extract::Path, http::HeaderMap, response::IntoResponse, routing::get, Router};
+        let raw = "diff --git a/main.rs b/main.rs\nindex 1111111..2222222 100644\n--- a/main.rs\n+++ b/main.rs\n@@ -1 +1 @@\n-old\n+new\n";
+        let github = Router::new()
+            .route("/repos/kestrel/app/compare/{refs}", get(move |Path(refs): Path<String>, headers: HeaderMap| async move {
+                assert_eq!(refs, format!("{}...{}", "a".repeat(40), "b".repeat(40)));
+                assert_eq!(headers.get("authorization").unwrap(), "Bearer installation_token");
+                if headers.get("accept").unwrap() == "application/vnd.github.v3.diff" {
+                    raw.into_response()
+                } else {
+                    axum::Json(serde_json::json!({ "merge_base_commit": { "sha": "c".repeat(40) } })).into_response()
+                }
+            }))
+            .route("/repos/kestrel/app/git/commits/{sha}", get(|Path(sha): Path<String>| async move {
+                // The old side is the merge base, NOT the current base-branch tip.
+                assert!(sha == "c".repeat(40) || sha == "b".repeat(40));
+                axum::Json(serde_json::json!({ "tree": { "sha": if sha == "c".repeat(40) { "d".repeat(40) } else { "e".repeat(40) } } }))
+            }))
+            .route("/repos/kestrel/app/git/trees/{sha}", get(|Path(sha): Path<String>| async move {
+                axum::Json(serde_json::json!({ "truncated": false, "tree": [{ "path": "main.rs", "mode": "100644", "sha": if sha == "d".repeat(40) { "1".repeat(40) } else { "2".repeat(40) } }] }))
+            }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!(
+            "http://{}/repos/kestrel/app",
+            listener.local_addr().unwrap()
+        );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, github).await.unwrap();
+        });
+        let state = AppState::new(test_db().await, test_config());
+        let base = serde_json::from_value(
+            serde_json::json!({ "sha": "a".repeat(40), "repo": { "id": 9007199254740993u64 } }),
+        )
+        .unwrap();
+        let (diff, manifest) = super::review_identity::fetch(
+            &state,
+            "installation_token",
+            &url,
+            &base,
+            &"b".repeat(40),
+        )
+        .await
+        .unwrap();
+        server.abort();
+        assert_eq!(diff, raw);
+        insert_tracked_repository(&state.db).await;
+        insert_pull_request_diff_snapshot(&state.db, Some(&diff)).await;
+        sqlx::query("UPDATE tracked_repository_pull_request_details SET review_manifest_json = ?")
+            .bind(&manifest)
+            .execute(&state.db)
+            .await
+            .unwrap();
+        let config = test_config();
+        let cookie = session_cookie(&state.db, &config).await;
+        let response = app(&config, AppState::new(state.db.clone(), config.clone()))
+            .oneshot(pull_request_diff_request(
+                &cookie,
+                "/api/repositories/kestrel/app/pull-requests/42/diff",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["review"]["repositoryId"], "github:9007199254740993");
+        assert!(body["review"]["fileVersions"][0]
+            .as_str()
+            .unwrap()
+            .starts_with("file:v1:"));
+        sqlx::query("UPDATE tracked_repository_pull_request_details SET diff = ?")
+            .bind(raw.replace("+new", "+changed"))
+            .execute(&state.db)
+            .await
+            .unwrap();
+        let response = app(&config, AppState::new(state.db.clone(), config.clone()))
+            .oneshot(pull_request_diff_request(
+                &cookie,
+                "/api/repositories/kestrel/app/pull-requests/42/diff",
+            ))
+            .await
+            .unwrap();
+        assert!(response_json(response).await.get("review").is_none());
+        let files: Vec<_> = crate::pull_request_diff::parse_pull_request_diff(&diff)
+            .unwrap()
+            .into_iter()
+            .map(super::PullRequestDiffFileDto::from)
+            .collect();
+        let manifest = super::review_identity::load(manifest.as_deref(), &diff, &files).unwrap();
+        assert_eq!(manifest.repository_id, "github:9007199254740993");
+        assert!(manifest.file_versions[0]
+            .as_ref()
+            .unwrap()
+            .starts_with("file:v1:"));
+    }
+
+    #[tokio::test]
     async fn fetch_pull_request_detail_uses_configured_github_api_url() {
         let (github_api_url, server) = mock_github_detail_api().await;
         let mut config = test_config();
@@ -4419,6 +4547,7 @@ mod tests {
         .expect("tracked repository should load")
         .expect("tracked repository should exist");
         let detail = PullRequestDetailSnapshot {
+            review_manifest_json: None,
             body: Some("This pull request adds syncing.".to_string()),
             check_runs: vec![PullRequestCheckRunDto {
                 name: "test".to_string(),
