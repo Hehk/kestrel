@@ -30,3 +30,6 @@ target
 *.sw?
 
 .ai/
+
+# Generated experimental review WASM
+crates/review-wasm/pkg/

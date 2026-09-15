@@ -70,6 +70,27 @@ jobs:
 
       - run: ${{ matrix.command }}
 
+  review-spike:
+    name: Review core / WASM interoperability
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+      - run: cargo install wasm-bindgen-cli --version 0.2.128 --locked
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: cargo fmt --manifest-path crates/Cargo.toml --all -- --check
+      - run: cargo clippy --locked --manifest-path crates/Cargo.toml --all-targets -- -D warnings
+      - run: cargo clippy --locked --manifest-path crates/Cargo.toml -p review-wasm --target wasm32-unknown-unknown -- -D warnings
+      - run: npm run review:check
+
   api-schema:
     name: API schema
     runs-on: ubuntu-latest
