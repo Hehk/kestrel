@@ -12,7 +12,7 @@ use crate::{
         PullRequestErrorCode, PullRequestErrorResponse, PullRequestFileDto, PullRequestReviewDto,
         PullRequestStatusDto, PullRequestSyncPaginationDto, PullRequestTimelineEventDto,
         PullRequestTimelineEventKindDto, PullRequestTimelinePaginationDto,
-        PullRequestTimelineReviewCommentDto, PullRequestTimelineReviewCommentsDto,
+        PullRequestTimelineReviewCommentDto, PullRequestTimelineReviewCommentsDto, ReviewManifest,
         SyncPullRequestResponse, SyncPullRequestsResponse,
     },
     repositories::{
@@ -68,6 +68,7 @@ use crate::{
         PullRequestDiffLineDto,
         PullRequestDiffModeChangeDto,
         PullRequestDiffResponse,
+        ReviewManifest,
         MeResponse,
         PullRequestDto,
         PullRequestErrorCode,

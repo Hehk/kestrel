@@ -54,6 +54,26 @@ const measurement = (model: Model): Msg => ({
 });
 
 describe("diffViewModel", () => {
+  it("reconfigures virtualization and search when collapsing without replacing the displayed diff", () => {
+    const before = readySearch();
+    const [collapsed, effects] = step(before, { kind: "VisibilityChanged", collapsed: [true] });
+    expect(collapsed.layout.diff).toBe(before.layout.diff);
+    expect(collapsed.layout.rowCount).toBe(1);
+    expect(effects.map((effect) => effect.kind)).toContain("ConfigureVirtualizer");
+    expect(effects.map((effect) => effect.kind)).toContain("CancelReveal");
+    const [searched] = completeSearch(collapsed);
+    expect(searched.search).toMatchObject({ kind: "ready", results: { count: 0 } });
+    expect(step(searched, { kind: "VisibilityChanged", collapsed: [true] })[0]).toBe(searched);
+    const [expanded] = step(searched, { kind: "VisibilityChanged", collapsed: [false] });
+    expect(completeSearch(expanded)[0].search).toMatchObject({
+      kind: "ready",
+      results: { count: 2 },
+    });
+    expect(step(collapsed, { kind: "CopyFileRequested", fileIndex: 0 })[1][0]?.kind).toBe(
+      "WriteClipboard",
+    );
+    expect(step(collapsed, snapshot(before))[0]).toBe(collapsed);
+  });
   it("initializes one document and plain interaction state", () => {
     const diff = makeDiff("needle");
     const model = init(diff);

@@ -406,6 +406,7 @@ export interface components {
         };
     PullRequestDiffResponse: {
       files: components["schemas"]["PullRequestDiffFileDto"][];
+      review?: null | components["schemas"]["ReviewManifest"];
       syncedAt: string;
     };
     PullRequestDto: {
@@ -595,6 +596,11 @@ export interface components {
     RepositoryErrorCode: "duplicateRepository" | "invalidRepository" | "repositorySaveFailed";
     RepositoryErrorResponse: {
       error: components["schemas"]["RepositoryErrorCode"];
+    };
+    ReviewManifest: {
+      fileVersions: (string | null)[];
+      repositoryId: string;
+      snapshotId: string;
     };
     SettingsResponse: {
       theme: components["schemas"]["Theme"];

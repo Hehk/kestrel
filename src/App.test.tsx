@@ -6,6 +6,13 @@ import { resetForTest, send } from "./store";
 import type { PullRequestDetail, PullRequestDiff } from "./repositoriesSlice";
 import * as Session from "./session";
 
+// These legacy API fixtures have no review manifests. Real WASM runs in the PR-page browser suite.
+vi.mock("./review/engine", () => ({
+  loadReviewEngine: vi
+    .fn()
+    .mockRejectedValue(new Error("Review engine is unavailable in this fixture")),
+}));
+
 const signedInResponse = {
   user: {
     avatarUrl: "https://avatars.example.test/user_1",

@@ -1,0 +1,13 @@
+[package]
+name = "review-wasm"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+review-core = { path = "../review-core" }
+wasm-bindgen.workspace = true
+tsify.workspace = true
