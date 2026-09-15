@@ -25,7 +25,8 @@ run("wasm-bindgen", [
   "--target",
   "web",
   "--out-dir",
-  "crates/review-wasm/pkg",
+  "src/review/generated",
 ]);
-const wasm = readFileSync("crates/review-wasm/pkg/review_wasm_bg.wasm");
+run("npx", ["oxfmt", "--write", "src/review/generated/review_wasm.d.ts"]);
+const wasm = readFileSync("src/review/generated/review_wasm_bg.wasm");
 console.log(`review WASM: ${wasm.length} bytes; ${gzipSync(wasm).length} bytes gzip`);

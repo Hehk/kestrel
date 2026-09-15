@@ -21,6 +21,7 @@ import {
 import PullRequestsError from "./PullRequestError";
 import type { PullRequestView } from "./router";
 import { DiffView } from "./diff/DiffView";
+import { ReviewDiff } from "./review/ReviewDiff";
 import { diffFileHunks } from "./diff/layout";
 import { styles as baseStyles } from "./styles/base";
 import { tokens } from "./styles/tokens.stylex";
@@ -703,6 +704,7 @@ const PullRequestHeader = (props: {
 );
 
 const PullRequestDiff = (props: { data: Accessor<PullRequestPageData> }) => {
+  const account = appStore((state) => state.user.id);
   const detailState = () => props.data().pullRequestDetail;
   const diffState = () => props.data().pullRequestDiff;
   const diff = () => diffState()?.diff;
@@ -773,7 +775,11 @@ const PullRequestDiff = (props: { data: Accessor<PullRequestPageData> }) => {
             when={Repositories.pullRequestDiffKey(props.data().repository, props.data().number)}
           >
             <div>
-              <PullRequestDiffTotals diff={currentDiff()} />
+              <PullRequestDiffTotals
+                diff={currentDiff()}
+                account={account()}
+                number={props.data().number}
+              />
             </div>
           </Show>
         )}
@@ -782,7 +788,15 @@ const PullRequestDiff = (props: { data: Accessor<PullRequestPageData> }) => {
   );
 };
 
-const PullRequestDiffTotals = (props: { diff: Repositories.PullRequestDiff }) => {
+const PullRequestDiffTotals = (props: {
+  diff: Repositories.PullRequestDiff;
+  account: string;
+  number: number;
+}) => {
+  const reviewKey = () =>
+    props.diff.review
+      ? JSON.stringify([props.account, props.diff.review.repositoryId, props.number])
+      : undefined;
   const lineCount = () =>
     props.diff.files.reduce(
       (total, file) =>
@@ -801,7 +815,43 @@ const PullRequestDiffTotals = (props: { diff: Repositories.PullRequestDiff }) =>
         {props.diff.files.length} changed {props.diff.files.length === 1 ? "file" : "files"},{" "}
         {lineCount()} source {lineCount() === 1 ? "line" : "lines"}.
       </p>
-      <DiffView diff={props.diff} />
+      <Show
+        keyed
+        when={reviewKey()}
+        fallback={
+          <>
+            <p {...stylex.attrs(baseStyles.statusText)}>
+              Review unavailable for this stored diff. Sync the pull request from GitHub to load
+              exact file versions.
+            </p>
+            <DiffView
+              diff={props.diff}
+              review={{
+                files: props.diff.files.map(() => ({
+                  reviewed: false,
+                  collapsed: false,
+                  invalidated: false,
+                  available: false,
+                })),
+                disabled: true,
+                review: () => {},
+                collapse: () => {},
+              }}
+            />
+          </>
+        }
+      >
+        {(_scope) => (
+          <ReviewDiff
+            diff={props.diff}
+            scope={{
+              account: props.account,
+              repository: props.diff.review!.repositoryId,
+              number: props.number,
+            }}
+          />
+        )}
+      </Show>
     </Show>
   );
 };

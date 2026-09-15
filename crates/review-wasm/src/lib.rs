@@ -8,7 +8,7 @@ fn js_error(error: review_core::Error) -> JsError {
     JsError::new(&error.to_string())
 }
 
-/// Experimental trusted-data boundary. No network or storage side effects.
+/// Local review domain boundary. No network or storage side effects.
 #[wasm_bindgen]
 pub struct ReviewWorkspace(Workspace);
 

@@ -1,9 +1,12 @@
 import * as stylex from "@stylexjs/stylex";
 import { Button } from "../components/Button";
+import { Tooltip } from "../components/Tooltip";
+import type { FileReview } from "../review/runtime";
 import {
   createEffect,
   createMemo,
   createSignal,
+  createUniqueId,
   For,
   Match,
   on,
@@ -30,6 +33,26 @@ const mobile = media.mobile;
 const forcedColors = media.forcedColors;
 
 const styles = stylex.create({
+  changeBadge: { display: { default: "inline", [mobile]: "none" } },
+  reviewLabel: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "0.35rem",
+    fontWeight: 400,
+    fontSize: tokens.fontSizeExtraSmall,
+    whiteSpace: "nowrap",
+  },
+  reviewTooltip: {
+    padding: "0.5rem",
+    maxWidth: "20rem",
+    backgroundColor: tokens.background,
+    color: tokens.text,
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: tokens.rule,
+    fontFamily: tokens.mono,
+    fontSize: tokens.fontSizeExtraSmall,
+  },
   root: {
     position: "relative",
     paddingBottom: "calc(2rem + env(safe-area-inset-bottom))",
@@ -334,7 +357,14 @@ export const createDiffViewProgram = (
   };
 };
 
-export const DiffView = (props: { diff: PullRequestDiff }) => {
+export type DiffReview = {
+  files: readonly FileReview[];
+  disabled: boolean;
+  review: (index: number, reviewed: boolean) => void;
+  collapse: (index: number, collapsed: boolean) => void;
+};
+
+export const DiffView = (props: { diff: PullRequestDiff; review?: DiffReview }) => {
   const program = createDiffViewProgram(props.diff);
   const { model, send } = program;
   let horizontalRail!: HTMLDivElement;
@@ -344,9 +374,9 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
   onMount(() => program.attach({ horizontalRail, searchInput, stickyStack, table }));
   createEffect(
     on(
-      () => props.diff,
-      (diff) => send({ kind: "DiffChanged", diff }),
-      { defer: true },
+      () => [props.diff, props.review?.files] as const,
+      ([diff, files]) =>
+        send({ kind: "DiffChanged", diff, collapsed: files?.map((file) => file.collapsed) ?? [] }),
     ),
   );
   onCleanup(program.dispose);
@@ -399,7 +429,8 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
             onInput={(event) =>
               send({ kind: "SearchQueryChanged", query: event.currentTarget.value })
             }
-            placeholder="Search"
+            placeholder="Search open files"
+            title="Search expanded files. Expand a file to include its contents."
             ref={(element) => {
               searchInput = element;
             }}
@@ -439,6 +470,11 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
           {...stylex.attrs(styles.activeFile)}
           title={activeLabel()}
         >
+          <FileCollapse
+            review={props.review}
+            index={model().activeFileIndex}
+            label={activeLabel()}
+          />
           <span {...stylex.attrs(styles.truncate)}>{activeLabel()}</span>
           <span
             aria-atomic="true"
@@ -472,6 +508,11 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
           >
             {activeFile()?.content.kind === "binary" ? "Copy unavailable" : "Copy file"}
           </Button>
+          <FileReviewed
+            review={props.review}
+            index={model().activeFileIndex}
+            label={activeLabel()}
+          />
         </div>
       </div>
       <div
@@ -504,6 +545,7 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
                 const matches = createMemo(() => matchesForRow(search(), index));
                 return (
                   <DiffRowView
+                    review={props.review}
                     copyPending={copy().kind === "writing"}
                     index={index}
                     matches={matches()}
@@ -544,6 +586,7 @@ export const DiffView = (props: { diff: PullRequestDiff }) => {
 };
 
 const DiffRowView = (props: {
+  review: DiffReview | undefined;
   copyPending: boolean;
   index: number;
   matches: MountedSearchMatch[];
@@ -559,6 +602,7 @@ const DiffRowView = (props: {
     style={{ height: `${props.size}px` }}
   >
     <DiffRowCells
+      review={props.review}
       copyPending={props.copyPending}
       matches={props.matches}
       send={props.send}
@@ -568,6 +612,7 @@ const DiffRowView = (props: {
 );
 
 const DiffRowCells = (props: {
+  review: DiffReview | undefined;
   copyPending: boolean;
   matches: MountedSearchMatch[];
   send: (msg: Msg) => void;
@@ -591,6 +636,11 @@ const DiffRowCells = (props: {
             {...stylex.attrs(styles.fullCell, styles.headerCell)}
             role="cell"
           >
+            <FileCollapse
+              review={props.review}
+              index={row().fileIndex}
+              label={fileLabel(row().file)}
+            />
             <span {...stylex.attrs(styles.truncate)}>{filePath(row())}</span>
             <Button
               aria-label={
@@ -612,6 +662,11 @@ const DiffRowCells = (props: {
             >
               {row().file.content.kind === "binary" ? "Copy unavailable" : "Copy file"}
             </Button>
+            <FileReviewed
+              review={props.review}
+              index={row().fileIndex}
+              label={fileLabel(row().file)}
+            />
           </div>
         )}
       </Match>
@@ -696,6 +751,63 @@ const DiffRowCells = (props: {
         )}
       </Match>
     </Switch>
+  );
+};
+
+type FileControlProps = { review: DiffReview | undefined; index: number; label: string };
+
+const FileCollapse = (props: FileControlProps) => (
+  <Show when={props.review}>
+    <Button
+      type="button"
+      size="compact"
+      aria-label={`${props.review?.files[props.index]?.collapsed ? "Expand" : "Collapse"} ${props.label}`}
+      aria-expanded={!props.review?.files[props.index]?.collapsed}
+      disabled={props.review?.disabled || !props.review?.files[props.index]?.available}
+      onClick={() =>
+        props.review?.collapse(props.index, !props.review.files[props.index]?.collapsed)
+      }
+    >
+      <span aria-hidden="true">{props.review?.files[props.index]?.collapsed ? "▸" : "▾"}</span>
+    </Button>
+  </Show>
+);
+
+const FileReviewed = (props: FileControlProps) => {
+  const id = createUniqueId();
+  const explanation = () =>
+    !props.review?.files[props.index]?.available
+      ? "Review unavailable until this diff has a trustworthy Git version. Sync the pull request from GitHub."
+      : props.review.files[props.index]?.invalidated
+        ? "Marked unreviewed because this file changed."
+        : "Reviewed on this device only. Applies to this exact file version, not GitHub approval.";
+  return (
+    <Show when={props.review}>
+      <label for={id} title={explanation()} {...stylex.attrs(styles.reviewLabel)}>
+        <Show when={props.review?.files[props.index]?.invalidated}>
+          <span {...stylex.attrs(styles.changeBadge)}>Changed · </span>
+        </Show>
+        Reviewed
+        <Tooltip>
+          <Tooltip.Trigger
+            as="input"
+            id={id}
+            type="checkbox"
+            aria-label={`Reviewed ${props.label}`}
+            checked={props.review?.files[props.index]?.reviewed ?? false}
+            disabled={props.review?.disabled || !props.review?.files[props.index]?.available}
+            onChange={(event: Event & { currentTarget: HTMLInputElement }) =>
+              props.review?.review(props.index, event.currentTarget.checked)
+            }
+          />
+          <Tooltip.Portal>
+            <Tooltip.Content {...stylex.attrs(styles.reviewTooltip)}>
+              {explanation()}
+            </Tooltip.Content>
+          </Tooltip.Portal>
+        </Tooltip>
+      </label>
+    </Show>
   );
 };
 

@@ -54,7 +54,8 @@ export type Msg =
   | { kind: "ClipboardWriteFinished"; ok: boolean; requestId: number; revision: number }
   | { kind: "CopyFileRequested"; fileIndex: number }
   | { kind: "CopyHunkRequested"; fileIndex: number; hunkIndex: number }
-  | { kind: "DiffChanged"; diff: PullRequestDiff }
+  | { kind: "DiffChanged"; diff: PullRequestDiff; collapsed?: readonly boolean[] }
+  | { kind: "VisibilityChanged"; collapsed: readonly boolean[] }
   | { kind: "FindRequested" }
   | ({ kind: "GeometryObserved"; geometry: Geometry } & Configuration)
   | { kind: "HorizontalOffsetObserved"; offset: number; revision: number }
@@ -102,7 +103,7 @@ type Change = Transition<Model, Effect>;
 const NONE: readonly Effect[] = [];
 const MAX_MOUNTED_MATCHES_PER_ROW = 200;
 
-export const init = (diff: PullRequestDiff): Model => ({
+export const init = (diff: PullRequestDiff, collapsed: readonly boolean[] = []): Model => ({
   activeFileIndex: 0,
   configuration: 0,
   copy: { kind: "idle", outcome: null },
@@ -115,7 +116,7 @@ export const init = (diff: PullRequestDiff): Model => ({
     scrollMargin: 0,
     stickyHeight: 0,
   },
-  layout: buildDiffLayout(diff),
+  layout: buildDiffLayout(diff, collapsed),
   pointer: null,
   reveal: null,
   revealId: 0,
@@ -127,11 +128,18 @@ export const init = (diff: PullRequestDiff): Model => ({
 
 export const update = (msg: Msg, model: Model): Change => {
   switch (msg.kind) {
-    case "DiffChanged": {
-      if (model.layout.diff === msg.diff) return [model, NONE];
+    case "DiffChanged":
+    case "VisibilityChanged": {
+      const diff = msg.kind === "DiffChanged" ? msg.diff : model.layout.diff;
+      const collapsed = msg.collapsed ?? [];
+      if (
+        model.layout.diff === diff &&
+        diff.files.every((_, index) => !!model.layout.collapsed[index] === !!collapsed[index])
+      )
+        return [model, NONE];
       const revision = model.revision + 1;
       const configuration = model.configuration + 1;
-      const layout = buildDiffLayout(msg.diff);
+      const layout = buildDiffLayout(diff, collapsed);
       const searchRequestId = model.searchRequestId + 1;
       const search: Search =
         model.search.kind === "idle"
@@ -144,7 +152,7 @@ export const update = (msg: Msg, model: Model): Change => {
             };
       const next: Model = {
         ...model,
-        activeFileIndex: 0,
+        activeFileIndex: model.layout.diff === diff ? model.activeFileIndex : 0,
         configuration,
         copy: model.copy.kind === "writing" ? model.copy : { kind: "idle", outcome: null },
         layout,

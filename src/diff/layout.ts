@@ -79,6 +79,7 @@ export type DiffRow =
 
 export type DiffLayout = {
   readonly diff: PullRequestDiff;
+  readonly collapsed: readonly boolean[];
   readonly rowCount: number;
   readonly maxSourceColumns: number;
   readonly metadataByteLength: number;
@@ -91,7 +92,10 @@ export type DiffLayout = {
   readonly fileHunkOffsets: Uint32Array;
 };
 
-export const buildDiffLayout = (diff: PullRequestDiff): DiffLayout => {
+export const buildDiffLayout = (
+  diff: PullRequestDiff,
+  collapsed: readonly boolean[] = [],
+): DiffLayout => {
   if (diff.files.length > MAX_INDEX) {
     throw new RangeError("Diff has too many files");
   }
@@ -107,6 +111,7 @@ export const buildDiffLayout = (diff: PullRequestDiff): DiffLayout => {
     fileHunkOffsets[fileIndex] = hunkCount;
     hunkCount = checkedAdd(hunkCount, hunks.length, "Diff has too many hunks");
     rowCount = checkedAdd(rowCount, 1, "Diff has too many rows");
+    if (collapsed[fileIndex]) continue;
     if (file.content.kind === "binary" || hunks.length === 0) {
       rowCount = checkedAdd(rowCount, 1, "Diff has too many rows");
     }
@@ -127,6 +132,7 @@ export const buildDiffLayout = (diff: PullRequestDiff): DiffLayout => {
   lineIndexes.fill(NONE);
   const fileStartRows = new Uint32Array(diff.files.length);
   const hunkStartRows = new Uint32Array(hunkCount);
+  hunkStartRows.fill(NONE);
 
   let rowIndex = 0;
   let flatHunkIndex = 0;
@@ -139,6 +145,10 @@ export const buildDiffLayout = (diff: PullRequestDiff): DiffLayout => {
     rowIndex += 1;
 
     const hunks = diffFileHunks(file);
+    if (collapsed[fileIndex]) {
+      flatHunkIndex += hunks.length;
+      continue;
+    }
     if (file.content.kind === "binary" || hunks.length === 0) {
       kinds[rowIndex] = ROW_NOTICE;
       fileIndexes[rowIndex] = fileIndex;
@@ -181,6 +191,7 @@ export const buildDiffLayout = (diff: PullRequestDiff): DiffLayout => {
 
   return {
     diff,
+    collapsed,
     fileHunkOffsets,
     fileIndexes,
     fileStartRows,
@@ -261,6 +272,7 @@ export const rowHeight = (layout: DiffLayout, index: number): number => {
 
 export const hunkStartRow = (layout: DiffLayout, fileIndex: number, hunkIndex: number): number => {
   assertArrayIndex(fileIndex, layout.diff.files.length, "file");
+  if (layout.collapsed[fileIndex]) throw new RangeError("Diff hunk is collapsed");
   const start = layout.fileHunkOffsets[fileIndex] as number;
   const end = layout.fileHunkOffsets[fileIndex + 1] as number;
   assertArrayIndex(hunkIndex, end - start, "hunk");

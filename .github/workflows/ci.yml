@@ -41,6 +41,12 @@ jobs:
           node-version: 24
           cache: npm
 
+      - uses: dtolnay/rust-toolchain@stable
+        if: matrix.name == 'Build'
+        with:
+          targets: wasm32-unknown-unknown
+      - run: cargo install wasm-bindgen-cli --version 0.2.128 --locked
+        if: matrix.name == 'Build'
       - run: npm ci
       - run: ${{ matrix.command }}
 
@@ -70,8 +76,8 @@ jobs:
 
       - run: ${{ matrix.command }}
 
-  review-spike:
-    name: Review core / WASM interoperability
+  review-workspace:
+    name: Review workspace / PR page and WASM
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -90,6 +96,7 @@ jobs:
       - run: cargo clippy --locked --manifest-path crates/Cargo.toml --all-targets -- -D warnings
       - run: cargo clippy --locked --manifest-path crates/Cargo.toml -p review-wasm --target wasm32-unknown-unknown -- -D warnings
       - run: npm run review:check
+      - run: git diff --exit-code -- src/review/generated/review_wasm.d.ts
 
   api-schema:
     name: API schema

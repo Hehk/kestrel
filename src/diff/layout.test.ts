@@ -86,6 +86,18 @@ const canonicalDiff = (): PullRequestDiff => ({
 });
 
 describe("diff layout", () => {
+  it("removes collapsed content, not file headers or original source data", () => {
+    const diff = canonicalDiff();
+    const layout = buildDiffLayout(diff, [true, true, false]);
+    expect(layout.diff).toBe(diff);
+    expect(layout.rowCount).toBe(4);
+    expect(Array.from(layout.fileStartRows)).toEqual([0, 1, 2]);
+    expect(
+      Array.from({ length: layout.rowCount }, (_, index) => rowAt(layout, index).kind),
+    ).toEqual(["file", "file", "file", "notice"]);
+    expect(buildDiffLayout(diff, [false, false, false]).rowCount).toBe(10);
+    expect(diffFileHunks(diff.files[0]!)).toHaveLength(2);
+  });
   it("maps canonical files, hunks, lines, and notices to stable rows", () => {
     const diff = canonicalDiff();
     const layout = buildDiffLayout(diff);

@@ -4,7 +4,7 @@
 
 Implementation in progress, not a library selection. The separate Automerge proposal and original diff-review specification are not included in this branch. Sources: that specification, [LUN-22](https://linear.app/lunch/issue/LUN-22/investigate-crdts-for-pr-review-state-synchronization), and our subsequent discussion about offline review and backend agents.
 
-**Current gate: shared-core/interoperability spike implemented; untrusted binary synchronization blocked.** See [results, measurements, tests and next decisions](docs/loro-spike.md). The application has no review UI or sync endpoint yet. Steps 2–5 remain outstanding; this branch does not claim a production workspace or approval of the proposed product decisions.
+**Current implementation: local review on the existing PR diff page.** See [integration, tests and limitations](docs/loro-integration.md). Reviewed/collapsed controls, exact Git identities, durable local history, cross-tab coordination and export are implemented. The standalone demo is removed. Untrusted binary network synchronization remains [gated](docs/loro-spike.md); backend review durability, cross-device transport, offline app-shell reload and agent UI remain outstanding.
 
 Build a local-first, personal PR review workspace. A reviewer can keep working through poor connectivity while Rust agents independently add context and assessments. Reconnection must preserve contributions, respect explicit human decisions, and never apply an old review mark to unseen changes.
 
@@ -105,7 +105,7 @@ Compute an opaque, versioned fingerprint on the backend from canonical input con
 
 Include the repository hash algorithm where relevant. Do not include the PR head SHA merely as an invalidation shortcut. Identical contents and reviewable changes after a rebase must retain identity; unrelated file changes must not affect it.
 
-Current gap: `backend/src/pull_request_diff.rs` retains parsed hunks but discards binary payloads, has no full before/after blob IDs, and represents unchanged modes without their actual values. Hashing its current DTO alone cannot satisfy the specification. Extend the GitHub ingestion/snapshot path to obtain full object identities and modes for the exact comparison represented by the stored diff, including its merge-base semantics. Avoid combining metadata fetched from different PR revisions.
+Implemented for fresh syncs: `backend/src/pull_requests/review_identity.rs` obtains full before/after objects and modes from the pinned comparison's merge-base/head trees and persists them with a canonical manifest. `pull_request_diff.rs` alone still cannot provide trustworthy identity; its DTO is not hashed in isolation. Legacy or incomplete snapshots remain readable but cannot receive review marks until trustworthy identity is available.
 
 Store a snapshot manifest linking files to version IDs and explicit predecessor relationships. That history explains changed-version invalidation without using path equality as a universal file identity. Copies get distinct entries; ambiguous rename lineage must not inherit review state by guesswork. Missing trustworthy identity is a visible unavailable/loading condition, not permission to reuse an old review mark.
 
@@ -193,25 +193,25 @@ Agents call the shared core through a service API. Jobs may compute from an olde
 
 ### 2. Snapshot identity prerequisite
 
-- [ ] Extend GitHub ingestion to persist complete, revision-consistent identity inputs.
-- [ ] Add canonical fingerprinting, manifests, and lineage fixtures.
-- [ ] Extend diff DTOs and regenerate `src/api/schema.ts` through the existing API generation scripts.
+- [x] Extend GitHub ingestion to persist complete, revision-consistent identity inputs. Pinned comparison/merge-base trees supply full before/after objects, paths and modes; incomplete identities remain unavailable.
+- [ ] Add canonical fingerprinting, manifests, and lineage fixtures. Fingerprinting and manifests are implemented; a full server-side lineage/archive model remains outstanding. Local invalidation explanations use conservative path-pair history without transferring flags.
+- [x] Extend diff DTOs and regenerate `src/api/schema.ts` through the existing API generation scripts.
 
 ### 3. Durable document and transport
 
-- [ ] Implement the shared schema/commands and deterministic view projection.
+- [x] Implement the shared schema/commands and deterministic view projection.
 - [ ] Add strict SQLite migration, authenticated workspace discovery/sync, and fake agent service integration.
 - [ ] Add version-vector handshake, update exchange, dependency recovery, and persistence acknowledgments.
-- [ ] Add IndexedDB persistence, cross-tab storage coordination, and reconnect/error states.
-- [ ] Add offline app-shell and opened-PR snapshot caching, account isolation, and recovery/export flow.
+- [ ] Add IndexedDB persistence, cross-tab storage coordination, and reconnect/error states. Local persistence, Web Locks, notifications, quota rollback/retry and truthful local-only status are implemented; network reconnection remains outstanding.
+- [ ] Add offline app-shell and opened-PR snapshot caching, account isolation, and recovery/export flow. Account isolation and export are implemented; offline reload and recovery import are not.
 
 ### 4. Review UI
 
-- [ ] Integrate a route-owned review runtime with `src/repositoriesSlice.ts`, `src/PullRequestPage.tsx`, and `src/diff/DiffView.tsx` without putting mutable documents in pure MVU state.
-- [ ] Use commit/import subscriptions to publish batched materialized views; guard against update/echo loops.
-- [ ] Wire both flags and all idempotent transitions into the diff view model/runtime.
-- [ ] Preserve active-tab visibility on remote imports; maintain virtualization/search behavior when collapsing files.
-- [ ] Add accessible reviewed controls, invalidation explanations, and truthful local/sync/error indicators.
+- [x] Integrate a route-owned review runtime with `src/repositoriesSlice.ts`, `src/PullRequestPage.tsx`, and `src/diff/DiffView.tsx` without putting mutable documents in pure MVU state.
+- [x] Publish batched materialized views after explicit command/import boundaries; guard against update/echo loops. The serialized runtime publishes directly rather than subscribing to intermediate Loro writes.
+- [x] Wire both flags and all idempotent transitions into the diff view model/runtime.
+- [x] Preserve active-tab visibility on imports from other tabs; maintain virtualization/search behavior when collapsing files. Search explicitly covers expanded files.
+- [x] Add accessible reviewed controls, invalidation explanations, and truthful local/sync/error indicators. Server synchronization is clearly labeled unavailable.
 - [ ] Add a minimal attributed importance/context surface behind the experiment flag; no full agent feature suite.
 
 ### 5. Hardening and rollout

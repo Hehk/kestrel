@@ -31,5 +31,8 @@ target
 
 .ai/
 
-# Generated experimental review WASM
+# Generated review runtime (the TypeScript declarations are committed)
 crates/review-wasm/pkg/
+src/review/generated/*.js
+src/review/generated/*.wasm
+src/review/generated/*_bg.wasm.d.ts

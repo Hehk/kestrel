@@ -1,4 +1,4 @@
-//! Experimental shared review domain, not an untrusted synchronization endpoint.
+//! Shared review domain for the PR page. Binary imports are local/trusted-only.
 //!
 //! A runtime must serialize commands/imports and persist candidates before replacing the durable
 //! replica. Independent writers must use `restore_trusted`, never keep multiple command candidates.
@@ -85,7 +85,7 @@ impl Workspace {
             .export(ExportMode::updates(&VersionVector::decode(version)?))?)
     }
 
-    /// Trusted-only spike API: byte limits are NOT a decompression/allocation budget.
+    /// Trusted local storage only: byte limits are NOT a decompression/allocation budget.
     /// Missing dependencies discard the entire candidate, including any pending imports.
     pub fn import_trusted(&self, update: &[u8]) -> Result<Self> {
         check_blob(update)?;
