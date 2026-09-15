@@ -305,10 +305,10 @@ const Content = (props: JSX.HTMLAttributes<HTMLDivElement>) => {
           typeof local.style === "string"
             ? `${local.style};position-anchor:${tooltip.anchor};--tooltip-gutter:${tooltip.gutter()}px;`
             : {
-              ...local.style,
-              "position-anchor": tooltip.anchor,
-              "--tooltip-gutter": `${tooltip.gutter()}px`,
-            }
+                ...local.style,
+                "position-anchor": tooltip.anchor,
+                "--tooltip-gutter": `${tooltip.gutter()}px`,
+              }
         }
         data-placement={tooltip.placement()}
       />
